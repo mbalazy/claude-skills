@@ -3,13 +3,21 @@
 
 Finds the red (anchor) and lime (rendered frame) overlay rects in a full-res
 screenshot and reports their top/bottom/height in pt plus the gap between them.
-Requires Pillow: use /opt/homebrew/bin/python3.11 (system python3 has no PIL).
+Needs Pillow, and takes care of that itself (see `_pillow.py`). Run it with plain
+`python3` - or just execute it, the shebang is enough.
 
     xcrun simctl io <udid> screenshot --type=png shot.png
-    /opt/homebrew/bin/python3.11 measure-boxes.py shot.png 3
+    ./measure-boxes.py shot.png 3
 """
-import sys
+import os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import _pillow  # noqa: F401  - guarantees Pillow; may re-exec into a venv
+
 from PIL import Image
+
+if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+    sys.exit(f"usage: {os.path.basename(sys.argv[0])} SCREENSHOT.png [SCALE=3]")
 
 img = Image.open(sys.argv[1]).convert('RGB')
 W, H = img.size

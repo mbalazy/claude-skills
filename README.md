@@ -77,9 +77,17 @@ inside that repo as well. That is needed because `pm executor doctor` looks up
 the runtime-verification skill by project path, not in the user-wide directory.
 For plain Claude Code use, the user-wide link is enough.
 
-Requirements: macOS with Xcode command-line tools (`xcrun simctl`), a booted
-simulator with WebDriverAgent installed, Python 3 with Pillow for the two
-measuring scripts.
+Requirements: macOS with Xcode command-line tools (`xcrun simctl`) and a booted
+simulator with WebDriverAgent installed.
+
+The two measuring scripts need Pillow and sort that out themselves - on first run
+they build a small venv at `~/.local/share/mobile-claude-toolkit/venv` (using `uv`
+if it is on PATH, otherwise `python3 -m venv`) and re-exec into it. That is not
+gold plating: the scripts were silently broken on the machine they were written
+on, because Homebrew moved `python3` from 3.11 to 3.14 and Pillow stayed behind,
+and `pip install` into a Homebrew Python is refused outright under PEP 668. An
+ImportError in the middle of a verification reads like a bug in the script rather
+than in the environment, and costs a session to work out.
 
 ## Per-repo configuration
 

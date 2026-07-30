@@ -7,7 +7,9 @@ container blob (e.g. a pill/badge) inside a search region, then the inner conten
 (e.g. the text glyphs) inside that blob, and reports center deltas in device px and
 logical pt. The verdict is a number, not "looks ok".
 
-Requires Pillow (`python3 -c "import PIL"`). Take the screenshot first:
+Needs Pillow, and takes care of that itself (see `_pillow.py` - it finds or
+builds a shared venv rather than failing mid-verification). Take the screenshot
+first:
     xcrun simctl io booted screenshot shot.png
 
 Usage:
@@ -26,7 +28,11 @@ and VERTICAL/HORIZONTAL delta of content-center vs container-center.
 Negative vertical = content sits HIGH (above center); positive = LOW (below).
 A well-centered label reads ~0pt; |delta| >= ~1pt is a real, fixable defect.
 """
-import argparse, json, sys
+import argparse, json, os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import _pillow  # noqa: F401  - guarantees Pillow; may re-exec into a venv
+
 from PIL import Image
 
 
