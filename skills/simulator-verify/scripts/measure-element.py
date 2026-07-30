@@ -30,7 +30,7 @@ A well-centered label reads ~0pt; |delta| >= ~1pt is a real, fixable defect.
 """
 import argparse, json, os, sys
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"))
 import _pillow  # noqa: F401  - guarantees Pillow; may re-exec into a venv
 
 from PIL import Image

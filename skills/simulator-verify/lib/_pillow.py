@@ -14,6 +14,11 @@ outside any repo, shared by every project that links this toolkit.
 Order: use PIL if it is already importable; else re-exec into the toolkit venv;
 else build that venv (announced on stderr, never silently) and re-exec into it;
 else fail with the exact command to run by hand.
+
+Why `lib/` and not `scripts/`: this is a private module, not a tool anybody
+reaches for, and `pm executor doctor` treats everything under a runtime skill's
+`scripts/` as a tool the playbook has to explain. It warned about this file the
+moment it landed there, correctly.
 """
 
 import os
