@@ -43,9 +43,13 @@ comments, fresh.**
 
 ### Step 1: Branch + signal start on the board
 
-Confirm the base branch *(config)* is checked out and up to date (`git fetch`,
-check status). Create or check out the feature branch. If you are already on the
-right feature branch, stay on it.
+Create the feature branch with the exact command the config gives under "how to
+create the branch". If you are already on the right feature branch, stay on it.
+
+Use that command literally rather than a `git checkout -b` of your own: where a
+repo insists on branching off the *remote* base, "the base looked up to date"
+is not the same check, and a branch cut from a stale local base drags
+already-merged commits into the PR and into every diff-based gate.
 
 If a ticket key was given, move the ticket to the in-progress state *(config)*
 now - that is the start-of-work signal, so the board reflects reality. Skip it

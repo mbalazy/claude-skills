@@ -40,6 +40,35 @@ quietly becomes wrong everywhere except the repo it was written in.
    against the running app, and hands off to the pre-PR gate.
 3. Add `--yolo` to run continuously without pausing between checkpoints.
 
+Invoked with **no feature at all**? That is the config check - see below. Do not
+guess at what to build.
+
+## No feature given: check the config against the repo
+
+With no ticket and no description, do this instead of asking what to build:
+**re-derive every value in `config.md` and report where it disagrees with the
+repo.**
+
+Each value in the config carries the command that produces it (that is what the
+`measure with:` lines are for). Run them. Report per value: matches / disagrees
+with what the repo actually says / still a placeholder. Then stop - propose the
+corrections and let the user decide. Do not edit the config unasked, and do not
+touch repo config files (lint, test, CI) at all: a value being wrong in this file
+is one problem, and a broken gate in the repo is a different one with a different
+owner.
+
+Why this is worth a whole mode: **this config is trusted blind by every later
+phase.** It tells the build phase what command gates a commit and the ship phase
+what a PR body should contain. Nothing else re-checks it, so without a deliberate
+pass it goes stale silently, and staleness here does not announce itself - it just
+produces work in a format nobody uses. The first real run of this skill found four
+wrong values in a config written the day before, one of which had been wrong in
+its predecessor since June and had been faithfully copied forward.
+
+Also worth reporting while you are in there: a claim in the config that no longer
+has a source (a CI workflow filename that does not exist, a threshold that appears
+nowhere in the repo). A number with no source is not a fact, whoever wrote it.
+
 ## Phases
 
 ### 1. spec -> `prompts/spec.md`
