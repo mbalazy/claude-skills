@@ -16,11 +16,19 @@ REPO=$(cd "$(dirname "$0")" && pwd)
 SKILLS="$REPO/skills"
 PROJECT=""
 
-# Skills that must ALSO be linked inside a project repo, because a tool other
-# than Claude Code looks them up by project path. `pm executor doctor` resolves
-# handoff.runtime_skill only under <repo>/.claude/skills, so simulator-verify
-# has to be visible there or the acceptance contract reports it missing.
-PROJECT_SCOPED="simulator-verify"
+# Skills that are ALSO linked inside a project repo, each for its own reason:
+#
+#   simulator-verify    - required. `pm executor doctor` resolves
+#                         handoff.runtime_skill only under <repo>/.claude/skills,
+#                         so it has to be visible there or the acceptance
+#                         contract reports it missing.
+#   developing-features - the repo-facing workflow skill. A project-local link
+#                         means anyone who opens this repo has it, without having
+#                         installed the toolkit user-wide first.
+#
+# figma-pp stays user-wide: nothing resolves it by project path, and it is only
+# relevant in repos that actually have designs to implement.
+PROJECT_SCOPED="simulator-verify developing-features"
 
 while [ $# -gt 0 ]; do
   case "$1" in
