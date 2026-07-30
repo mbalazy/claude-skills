@@ -11,7 +11,7 @@ Needs Pillow, and takes care of that itself (see `_pillow.py`). Run it with plai
 """
 import os, sys
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"))
 import _pillow  # noqa: F401  - guarantees Pillow; may re-exec into a venv
 
 from PIL import Image
