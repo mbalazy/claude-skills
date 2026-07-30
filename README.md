@@ -1,11 +1,12 @@
 # mobile-claude-toolkit
 
-Claude Code skills for React Native / Expo work on iOS. Two of them, both built
-out of real debugging sessions rather than written up front.
+Claude Code skills for React Native / Expo work on iOS. Three of them, built out
+of real sessions rather than written up front.
 
-The point of a skill here is to replace guessing with observing. Neither of
-these tells Claude what your app looks like - they give it a way to go and
-find out, and to prove a claim with a number instead of "looks about right".
+The point of a skill here is to replace guessing with observing. None of these
+tells Claude what your app looks like or how your team works - they give it a way
+to go and find out, and to prove a claim with a number instead of "looks about
+right".
 
 ## What is in here
 
@@ -43,6 +44,20 @@ from scratch with a slightly different set of tokens.
 Scripts export assets at the right scale, open a screen by deep link, and build
 a side-by-side comparison for sign-off.
 
+### `developing-features`
+
+Takes a feature from a ticket to an open PR in three phases - spec, build, ship.
+It writes a checkpoint-driven spec from code it actually read, implements one
+committable checkpoint at a time behind the project's validation gate, then hands
+off to runtime verification and the pre-PR gate before opening the PR.
+
+It owns the workflow and nothing else. The repo's own architecture document keeps
+owning the code patterns; the skill points at it rather than carrying a second
+copy that would drift. Two rules in it come from real losses: the live ticket
+plus its **comments** beat any local copy of it (most ticket APIs need a separate
+call for comments, and that is where the decisions live), and instrumentation
+added to observe something comes back out before the commit.
+
 ## Install
 
 ```sh
@@ -77,10 +92,18 @@ to create from a template on first run:
   SMS or email.
 - `figma-pp` reads `<repo>/.figma-pp/config.md` - Figma account, URL scheme,
   assets path, design-system package, fonts.
+- `developing-features` reads `<repo>/.developing-features/config.md` - ticket
+  system and its board state names, base branch and branch convention, the
+  validation command, whether every component needs a test file, and which skill
+  or command is the pre-PR gate.
 
-**Keep both directories out of git.** They fill up with real account data as you
+**Keep these directories out of git.** They fill up with real account data as you
 work: test users, phone numbers, what the dev account actually contains. The
 templates say so too.
+
+A wrong value in one of these files is worse than a blank one, because the skills
+trust them. They are written to ask when they hit a placeholder, so leaving a
+placeholder is a valid answer and guessing is not.
 
 Treat these files as living documents. A screen you had to find by trial and
 error, a deep link that works, a flow that turned out to text a real customer -

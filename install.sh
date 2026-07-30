@@ -92,8 +92,10 @@ cat <<'EOF'
 Next: each skill reads its own per-repo config directory and will offer to
 create it from a template on first run.
 
-  simulator-verify -> <repo>/.simulator-verify/config.md
-  figma-pp         -> <repo>/.figma-pp/config.md
+  simulator-verify    -> <repo>/.simulator-verify/config.md
+  figma-pp            -> <repo>/.figma-pp/config.md
+  developing-features -> <repo>/.developing-features/config.md
 
-Both directories hold real account data. Keep them out of git.
+These directories hold real account data and project specifics. Keep them out
+of git.
 EOF

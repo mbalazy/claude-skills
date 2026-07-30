@@ -42,11 +42,30 @@ here. The skill stays generic; this file is where the project knowledge lives.
   session.** List here any port that is known to belong to something else.
 - **Reload the JS bundle from the shell**: `curl -s localhost:PORT/reload`, then
   wait ~5s.
-- **Wrong bundle loaded** (a redbox naming another app's module): repoint the
-  installed app without rebuilding, then terminate + launch:
-  ```sh
-  xcrun simctl spawn booted defaults write <bundle-id> RCT_jsLocation "localhost:PORT"
-  ```
+- **The app looks for Metro on a port decided at BUILD time** (`RCT_METRO_PORT`,
+  default `8081`). Put Metro on the port the app expects. Do not try to repoint
+  an installed build - see below.
+- **Wrong bundle loaded** (a redbox naming another app's module, or a white
+  screen): the app is talking to the wrong Metro. Move Metro, not the app.
+
+### Repointing an installed build does not work
+
+Verified in a real project on 2026-07-30, at the cost of half a session. This
+file used to recommend the first item below. Do not spend time on any of it:
+
+- `xcrun simctl spawn booted defaults write <bundle-id> RCT_jsLocation
+  "localhost:PORT"` writes to the simulator's **global** preferences domain, not
+  the app's sandbox. The app never reads it.
+- Writing `RCT_jsLocation` into the app-sandbox plist by hand loses too, because
+  the native delegate resolves the bundle URL itself on every launch - typically
+  from an `ip.txt` inside the app bundle (newline-separated `host:port`
+  candidates, first reachable wins), falling back to `localhost:<baked port>`.
+- Editing that `ip.txt` inside the installed `.app` does not take effect either.
+
+If you genuinely need a second isolated Metro (two sessions on two branches), the
+only reliable route is a **second build with a different `RCT_METRO_PORT`**.
+Budget 15-40 minutes. Record here what this project's delegate actually does, so
+the next session does not re-derive it.
 
 ## Cold start (only when the app is not installed or Metro is down)
 
