@@ -32,9 +32,19 @@ Run the pre-PR gate *(config)* - a skill, a command, or nothing declared.
 
 No suppressions to get a gate green.
 
-### Step 3: Open the PR
+### Step 3: Open the PR - only on an explicit go
 
-Only after Step 1 is green and Step 2 is clean:
+**Stop here and ask.** Report what is ready (branch, checkpoints delivered, Step 1
+result, Step 2 result) and wait for the user to say open it. Do not push and do
+not create the PR on your own initiative, and do not treat a green Step 1 and 2 as
+the go-ahead - they are the precondition for asking, not the answer.
+
+`--yolo` does **not** cover this. It suppresses pauses between checkpoints, which
+are yours to make; a PR is outward-facing - it notifies reviewers, triggers CI
+minutes, and moves a ticket on a board other people read. That is the user's call
+every time, and a flag they set an hour ago is not consent for it.
+
+Once you have the go:
 
 - Push the feature branch.
 - Open the PR against the base branch *(config)*, with the title format
@@ -49,9 +59,11 @@ Only after Step 1 is green and Step 2 is clean:
 
 ## Output
 
-PR open against the base branch, verified against the running app, locally clean.
+Verified against the running app, locally clean, and either a PR open against the
+base branch or a branch waiting on the user's go.
 
 ## Done
 
-Report: branch, PR link, checkpoints delivered, ticket key. Do **not** mark the
-ticket or the tracker task done - that is the user's call.
+Report: branch, PR link (or that you are waiting for the go), checkpoints
+delivered, ticket key. Do **not** mark the ticket or the tracker task done - that
+is the user's call.

@@ -37,8 +37,14 @@ are `[x]`, go to `prompts/ship.md`.
 
 If the project requires a test file per component or screen *(config)* - a
 performance baseline, a snapshot, a unit test - add or update it in the same
-checkpoint. Copy the shape from a real existing one. Where CI gates on it, a
-missing file fails the build, so it is not optional cleanup for later.
+checkpoint. Copy the shape from a real existing one. Note what actually enforces
+it *(config)*: a CI job that fails without the file and a convention the reviewers
+expect are different situations, though both mean write it.
+
+Before treating a green test run as evidence, check the config's "mocks needed
+before green means anything". A suite that crashes at import - typically on an
+unmocked native module - can read as green-adjacent noise while hiding every real
+failure behind it.
 
 ### 3. Validate
 
@@ -52,8 +58,22 @@ without checking.
 
 ### 4. Commit
 
-Follow the commit convention *(config)*, including the ticket key where the
-project uses one.
+Check what is staged first: `git diff --cached --stat`, and confirm the set is
+exactly the files for this checkpoint. A bare `git commit` takes the whole staged
+index, not what you just added - and a repo with parallel sessions or leftover
+stashes regularly has foreign files staged. Unstage them with
+`git reset -q HEAD <path>` (the change stays in the working tree), or commit with
+an explicit pathspec when racing another session. The config's "staging
+discipline" note says whether this repo is one of those.
+
+Then commit, following the commit convention *(config)* including the ticket key
+where the project uses one.
+
+Expect the pre-commit hooks *(config)* to reject the commit, and read the config's
+"surprising behaviour" line before fighting one - a hook that scans whole files
+rather than your diff will block on a violation you did not introduce, which is
+behaviour, not breakage. Fix at the source; a hook is never bypassed with
+`--no-verify`.
 
 - Default: commit, note briefly what was done, continue.
 - `--yolo`: auto-commit and continue without pausing.
