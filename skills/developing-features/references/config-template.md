@@ -28,7 +28,13 @@ Two rules that follow from it:
   top is unfalsifiable, ages invisibly, and tells the next reader not to check -
   it is worse than no claim at all.
 
-Run the skill with no feature argument to re-derive everything and report drift.
+Run the skill with no feature argument to re-derive everything and report drift;
+`scripts/check-config.sh` does the mechanical half of that pass.
+
+**Write paths in full, from the repo root** (`.claude/skills/foo/SKILL.md`, not
+`foo/SKILL.md`). The checker resolves them from there, and so does the next
+reader.
+
 Treat this file as a living document: a convention discovered the hard way goes in
 here, not into the skill.
 

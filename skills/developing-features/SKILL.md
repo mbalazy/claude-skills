@@ -49,13 +49,30 @@ With no ticket and no description, do this instead of asking what to build:
 **re-derive every value in `config.md` and report where it disagrees with the
 repo.**
 
-Each value in the config carries the command that produces it (that is what the
-`measure with:` lines are for). Run them. Report per value: matches / disagrees
-with what the repo actually says / still a placeholder. Then stop - propose the
-corrections and let the user decide. Do not edit the config unasked, and do not
-touch repo config files (lint, test, CI) at all: a value being wrong in this file
-is one problem, and a broken gate in the repo is a different one with a different
-owner.
+Start with the mechanical half:
+
+```sh
+scripts/check-config.sh          # from this skill's directory; takes an optional repo path
+```
+
+It gathers evidence and mostly does not judge. `[FAIL]` is a binary fact and
+fails the run - a path that is not there, a script package.json does not have, a
+base branch that disagrees with `origin/HEAD`. Everything else prints as `[info]`
+for you to read, because a checker that adjudicates prose produces false alarms,
+and one false alarm is how a checker gets switched off for good. Read the info
+lines properly - the citation section in particular, which prints the line each
+`file:line` reference currently points at. That is the part that rots silently as
+the cited document gets edited.
+
+Then do the half the script cannot: work through the remaining fields with their
+`measure with:` commands, and judge the prose ones (PR body policy, squash
+policy) against the cited lines. Report per value: matches / disagrees with what
+the repo says / still a placeholder.
+
+Then stop - propose the corrections and let the user decide. Do not edit the
+config unasked, and do not touch repo config files (lint, test, CI) at all: a
+value being wrong in this file is one problem, and a broken gate in the repo is a
+different one with a different owner.
 
 Why this is worth a whole mode: **this config is trusted blind by every later
 phase.** It tells the build phase what command gates a commit and the ship phase
