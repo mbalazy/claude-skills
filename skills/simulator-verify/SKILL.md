@@ -11,8 +11,10 @@ The skill is generic: everything app-specific (bundle id, device, Metro port, sc
 
 ## Prerequisites
 
+- **`scripts/rig-check.sh`** - proves the app is running the code you are testing. Run it before anything else (see Rig gate).
 - **`scripts/sim-ui.sh`** - the driver for everything: observation and interaction via WebDriverAgent's HTTP API (localhost:8100), lifecycle via `xcrun simctl`. No MCP server needed. Run it with no args for the command list. It auto-starts WDA (`com.facebook.WebDriverAgentRunner.xctrunner` must be installed on the sim).
 - The app's dev build installed on a booted simulator. If not installed / Metro down, see Cold start in `.simulator-verify/config.md`.
+- **A simulator is named after what it serves.** With two or three booted, a model name ("iPhone 17 Pro") identifies nothing - and picking the wrong sim produces confident, false readings. The device name is the one thing visible at a glance (Simulator window title, `simctl list`, the candidate list `rig-check.sh` prints when it refuses to guess), so make it carry the answer: `xcrun simctl rename <udid> "<model> - <worktree basename>"`, run the moment a sim is built for a worktree. Treat it as a label, not as evidence - confirm by connection when a wrong answer would be expensive.
 
 ## Setup gate (first thing, every run)
 
@@ -20,6 +22,24 @@ Look for `<repo-root>/.simulator-verify/config.md`. It holds everything project-
 
 - **Missing?** Copy `references/config-template.md` to `<repo-root>/.simulator-verify/config.md`, fill what you can infer from the repo (bundle id and scheme from the iOS project / `app.config.js`, Metro port from the start script), then ask the user to confirm the bundle id and device before driving anything. Also make sure `.simulator-verify/` is git-ignored - it accumulates real account data (test users, appointments, phone numbers) that must not be committed.
 - **Present?** Read it first. Keep it current: whenever you learn a new screen, deep link or gotcha, append it there rather than to this skill.
+
+## Rig gate (second thing, every run) - no green rig check, no report
+
+The simulator will happily run **different code than the tree you are testing** - a Release build with an embedded `main.jsbundle` that never contacts Metro, a Metro serving another worktree, a stale binary after a native upgrade, a persisted store masking the change. Every one of those looks completely normal and produces a confident, false result. The worst is silence from instrumentation, which reads as "the feature never runs" and sends you off fixing an imaginary bug.
+
+So before observing anything, prove your code reaches the running app:
+
+```
+scripts/rig-check.sh                     # from the repo under test
+scripts/rig-check.sh --reload            # keeps navigation state, needs the right --port
+scripts/rig-check.sh --repo <worktree> --udid <udid> --port <n>
+```
+
+It injects a unique marker as the first line of the entry file, makes the app pick JS up again, reads the marker back out of the simulator log, and always removes the marker (also on Ctrl-C). `RIG OK` = your tree reaches the app; `RIG DEAD` names the cause it could identify (no booted sim, app not installed, embedded `main.jsbundle`, no Metro serving this tree) and prints every listener with its working directory.
+
+**It never guesses which simulator is yours.** With several booted it resolves the sim from the Metro that serves this repo (a simulator app runs as a host process whose path carries its device UDID, so the connection identifies it); if that does not single one out it exits **2** with the booted candidates and their Metro ports, and says plainly that this is a question, not a dead rig. Answer it with `--udid` / `SIM_UDID`. Taking "the first booted one" is what made this script report `RIG DEAD` for a perfectly live rig on 2026-08-03 - a false verdict is worse than no verdict.
+
+**The gate:** on `RIG DEAD`, fix the rig and re-run. Do not navigate, do not screenshot, do not report - and never report an observation, PASS, FAIL, or "the screen looks right", from a session whose rig check did not pass. Silence from instrumentation is never evidence about the code; it is a suspicion about the rig. Re-run the check after anything that could swap what the app runs (a rebuild, a reinstall, a branch switch, a Metro restart).
 
 ## The loop
 
@@ -150,6 +170,7 @@ A flip-above popover positioned from an over-estimated height gets a gap of `est
 Remove every bit of this before committing (`git status` clean); instrument in a scratch worktree with its own Metro port so the main checkout stays untouched.
 
 ### 4. Report
+- **Rig first**: state that the rig check passed (marker seen). A report without it is not a result - see the Rig gate.
 - **PASS**: state what was verified and how (which elements, which navigation).
 - **FAIL**: concrete, ordered list of discrepancies - element, expected vs actual, coordinates/screenshot reference. Enough for the calling flow to fix without re-observing.
 
