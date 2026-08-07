@@ -3,7 +3,7 @@
 Confirm the feature works against the running app, pass the local pre-PR gate,
 open the PR. This phase delegates - it does not re-implement checks.
 
-Values marked *(config)* come from `<repo-root>/.developing-features/config.md`.
+Values marked *(config)* come from `<repo-root>/.claude/developing-features/config.md`.
 
 ## Process
 
