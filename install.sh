@@ -102,7 +102,7 @@ create it from a template on first run.
 
   simulator-verify    -> <repo>/.simulator-verify/config.md
   figma-pp            -> <repo>/.figma-pp/config.md
-  developing-features -> <repo>/.developing-features/config.md
+  developing-features -> <repo>/.claude/developing-features/config.md
 
 These directories hold real account data and project specifics. Keep them out
 of git.

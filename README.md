@@ -100,7 +100,7 @@ to create from a template on first run:
   SMS or email.
 - `figma-pp` reads `<repo>/.figma-pp/config.md` - Figma account, URL scheme,
   assets path, design-system package, fonts.
-- `developing-features` reads `<repo>/.developing-features/config.md` - ticket
+- `developing-features` reads `<repo>/.claude/developing-features/config.md` - ticket
   system and its board state names, base branch and branch convention, the
   validation command, whether every component needs a test file, and which skill
   or command is the pre-PR gate.

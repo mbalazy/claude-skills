@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-config.sh - gather evidence about .developing-features/config.md.
+# check-config.sh - gather evidence about .claude/developing-features/config.md.
 #
 #   check-config.sh [repo-path]     # defaults to the enclosing git repo
 #
@@ -41,8 +41,10 @@ if [ -z "$REPO" ]; then
     echo "not in a git repo and no path given" >&2; exit 2; }
 fi
 REPO=$(cd "$REPO" 2>/dev/null && pwd) || { echo "no such directory: ${1:-}" >&2; exit 2; }
-CONFIG="$REPO/.developing-features/config.md"
-[ -f "$CONFIG" ] || { echo "no config at $CONFIG" >&2; exit 2; }
+CONFIG="$REPO/.claude/developing-features/config.md"
+# legacy location, kept working so an existing repo does not have to migrate
+[ -f "$CONFIG" ] || CONFIG="$REPO/.developing-features/config.md"
+[ -f "$CONFIG" ] || { echo "no config at $REPO/.claude/developing-features/config.md" >&2; exit 2; }
 cd "$REPO" || exit 2
 
 TMP=$(mktemp -d) || exit 2

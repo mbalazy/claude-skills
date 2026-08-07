@@ -1,6 +1,6 @@
 ---
 name: developing-features
-description: Takes a feature from a ticket or a description through spec, implementation, live verification and PR, in a React Native / Expo repo. Use when the user wants to build a feature, implement a ticket, add functionality, names a ticket key to build, or says "/developing-features". Phases - spec, build, ship. Supports --yolo for continuous runs. Generic across projects; reads per-repo config from .developing-features/.
+description: Takes a feature from a ticket or a description through spec, implementation, live verification and PR, in a React Native / Expo repo. Use when the user wants to build a feature, implement a ticket, add functionality, names a ticket key to build, or says "/developing-features". Phases - spec, build, ship. Supports --yolo for continuous runs. Generic across projects; reads per-repo config from .claude/developing-features/.
 ---
 
 # developing-features
@@ -15,15 +15,22 @@ command, required test files, handoff skills) lives in the per-repo config.
 
 ## Setup gate (first thing, every run)
 
-Look for `<repo-root>/.developing-features/config.md`.
+Look for `<repo-root>/.claude/developing-features/config.md`, falling back to the
+legacy `<repo-root>/.developing-features/config.md` if only that one exists.
 
 - **Missing?** Copy `references/config-template.md` there, fill in everything you
   can read out of the repo (`package.json` scripts, CI workflows, the
   architecture doc, `git remote`, the default branch, existing branch names in
   `git branch -a`), then ask the user to confirm the handful of facts a repo
   cannot tell you: the ticket system, the board state names, and which skill or
-  command is the pre-PR gate. Make sure `.developing-features/` is git-ignored -
-  it accumulates ticket keys and account specifics.
+  command is the pre-PR gate. Make sure the config is kept out of git - it
+  accumulates ticket keys and account specifics. Excluding it locally (via
+  `.git/info/exclude`) beats a `.gitignore` entry, which itself announces the
+  directory to everyone else on the repo. Note that a local exclude hides the
+  file from git but NOT from repo-wide tooling: a `prettier --check "**/*.md"`
+  or an eslint sweep still walks into it, which is the reason the config now
+  lives under `.claude/` - repos already ignore that path in their formatter and
+  linter config.
 - **Present?** Read it before doing anything else. Every value below marked
   *(config)* comes from it. Keep it current: a convention you had to discover
   goes back into the config, not into this skill.

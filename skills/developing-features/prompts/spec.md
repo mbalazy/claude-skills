@@ -3,7 +3,7 @@
 Turn a request (a ticket or a description) into a checkpoint-driven spec, on a
 feature branch, ready to build.
 
-Values marked *(config)* come from `<repo-root>/.developing-features/config.md`.
+Values marked *(config)* come from `<repo-root>/.claude/developing-features/config.md`.
 Read it first if you have not already.
 
 ## Input resolution

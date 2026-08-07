@@ -3,7 +3,7 @@
 Implement the spec checkpoint by checkpoint. This is the only phase that writes
 code.
 
-Values marked *(config)* come from `<repo-root>/.developing-features/config.md`.
+Values marked *(config)* come from `<repo-root>/.claude/developing-features/config.md`.
 
 ## Prerequisites
 

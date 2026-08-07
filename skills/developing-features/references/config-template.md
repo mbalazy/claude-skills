@@ -1,10 +1,11 @@
 # developing-features config - <app name>
 
 Everything project-specific that the `developing-features` skill reads. Copy this
-file to `<repo-root>/.developing-features/config.md` and fill it in.
+file to `<repo-root>/.claude/developing-features/config.md` and fill it in.
 
-**Keep this directory out of git.** Add `.developing-features/` to `.gitignore`,
-or to `.git/info/exclude` if you would rather not touch the shared ignore file.
+**Keep this directory out of git.** Add `.claude/developing-features/` to
+`.git/info/exclude` rather than to `.gitignore` - a local exclude keeps the
+directory off everyone else's radar instead of announcing it in a shared file.
 
 ## How to fill this in, and why it is strict about it
 
