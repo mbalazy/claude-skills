@@ -33,12 +33,25 @@ udid() {
 
 ensure_wda() {
   if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then return; fi
-  xcrun simctl launch "$(udid)" "$WDA_RUNNER" >/dev/null
+  # SIMCTL_CHILD_ is load-bearing: WDA reads USE_PORT from the ENVIRONMENT, and
+  # anything after the bundle id is a launch argument simctl never turns into one.
+  # Without the prefix this relaunch lands on WDA's default 8100 whatever WDA_PORT says.
+  SIMCTL_CHILD_USE_PORT="$WDA_PORT" xcrun simctl launch "$(udid)" "$WDA_RUNNER" >/dev/null
   for _ in $(seq 1 20); do
     sleep 1
     if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then return; fi
   done
-  echo "ERROR: WebDriverAgent did not come up on :$WDA_PORT (is $WDA_RUNNER installed on the sim?)" >&2
+  echo "ERROR: WebDriverAgent did not come up on :$WDA_PORT" >&2
+  # Name the likely cause instead of sending the reader off to reinstall a runner
+  # that is installed and healthy one port over.
+  if [ "$WDA_PORT" != "8100" ] && curl -s -m 2 "http://localhost:8100/status" >/dev/null 2>&1; then
+    echo "  WDA IS answering on the default :8100, so the runner is installed and running." >&2
+    echo "  It was almost certainly launched without the SIMCTL_CHILD_USE_PORT=$WDA_PORT prefix" >&2
+    echo "  (a bare 'simctl launch <udid> $WDA_RUNNER USE_PORT=$WDA_PORT' is silently ignored)." >&2
+    echo "  Either relaunch WDA with that prefix, or re-run with WDA_PORT=8100." >&2
+  else
+    echo "  Nothing is answering on :8100 either - is $WDA_RUNNER installed on $(udid)?" >&2
+  fi
   exit 1
 }
 
