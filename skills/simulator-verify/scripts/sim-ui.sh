@@ -12,8 +12,9 @@
 #   sim-ui.sh type "text"                   # types into the focused element
 #   sim-ui.sh button HOME|ENTER|VOLUME_UP|VOLUME_DOWN
 #   sim-ui.sh screenshot [OUT.png] [--width N]   # default: resampled to device pt width (1px == 1pt); --width N overrides, 0 = full res
-#   sim-ui.sh launch  BUNDLE_ID             # terminate+launch = guaranteed cold start not included; plain launch/foreground
-#   sim-ui.sh relaunch BUNDLE_ID            # terminate first -> fresh JS bundle from Metro
+#   sim-ui.sh launch  BUNDLE_ID [ARG...]    # terminate+launch = guaranteed cold start not included; plain launch/foreground
+#   sim-ui.sh relaunch BUNDLE_ID [ARG...]   # terminate first -> fresh JS bundle from Metro
+#                                           # ARG... goes to `simctl launch`, e.g. -RCT_jsLocation localhost:8090
 #   sim-ui.sh terminate BUNDLE_ID
 #   sim-ui.sh openurl URL
 #   sim-ui.sh devices                       # booted simulators
@@ -179,8 +180,12 @@ print(json.dumps(out, separators=(",", ":")))
     echo "$out"
     ;;
 
-  launch)     xcrun simctl launch "$(udid)" "$1" ;;
-  relaunch)   xcrun simctl terminate "$(udid)" "$1" 2>/dev/null || true; xcrun simctl launch "$(udid)" "$1" ;;
+  # Everything after the bundle id is forwarded to `simctl launch` as a launch argument.
+  # The one that matters in practice is `-RCT_jsLocation localhost:<port>`, which points the
+  # app at another Metro than the port baked into the binary - it belongs to a single launch,
+  # so a relaunch without it silently sends the app back to its baked port.
+  launch)     bundle="$1"; shift; xcrun simctl launch "$(udid)" "$bundle" "$@" ;;
+  relaunch)   bundle="$1"; shift; xcrun simctl terminate "$(udid)" "$bundle" 2>/dev/null || true; xcrun simctl launch "$(udid)" "$bundle" "$@" ;;
   terminate)  xcrun simctl terminate "$(udid)" "$1" ;;
   openurl)    xcrun simctl openurl "$(udid)" "$1" ;;
 

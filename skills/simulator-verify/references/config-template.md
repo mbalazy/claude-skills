@@ -43,29 +43,46 @@ here. The skill stays generic; this file is where the project knowledge lives.
 - **Reload the JS bundle from the shell**: `curl -s localhost:PORT/reload`, then
   wait ~5s.
 - **The app looks for Metro on a port decided at BUILD time** (`RCT_METRO_PORT`,
-  default `8081`). Put Metro on the port the app expects. Do not try to repoint
-  an installed build - see below.
+  default `8081`) - that is the port a plain launch uses, but it can be
+  overridden per launch, see below.
 - **Wrong bundle loaded** (a redbox naming another app's module, or a white
-  screen): the app is talking to the wrong Metro. Move Metro, not the app.
+  screen): the app is talking to the wrong Metro. Now check which of the two you
+  want to move.
 
-### Repointing an installed build does not work
+### Repointing an installed simulator build at another Metro
 
-Verified in a real project on 2026-07-30, at the cost of half a session. This
-file used to recommend the first item below. Do not spend time on any of it:
+Two ways, both real, and they differ in how long they last:
 
-- `xcrun simctl spawn booted defaults write <bundle-id> RCT_jsLocation
-  "localhost:PORT"` writes to the simulator's **global** preferences domain, not
-  the app's sandbox. The app never reads it.
-- Writing `RCT_jsLocation` into the app-sandbox plist by hand loses too, because
-  the native delegate resolves the bundle URL itself on every launch - typically
-  from an `ip.txt` inside the app bundle (newline-separated `host:port`
-  candidates, first reachable wins), falling back to `localhost:<baked port>`.
-- Editing that `ip.txt` inside the installed `.app` does not take effect either.
+```sh
+# one launch only - no residue, must be repeated every time
+xcrun simctl launch <udid> <bundle-id> -RCT_jsLocation localhost:PORT
 
-If you genuinely need a second isolated Metro (two sessions on two branches), the
-only reliable route is a **second build with a different `RCT_METRO_PORT`**.
-Budget 15-40 minutes. Record here what this project's delegate actually does, so
-the next session does not re-derive it.
+# sticky - survives relaunches until deleted
+xcrun simctl spawn <udid> defaults write <bundle-id> RCT_jsLocation -string "localhost:PORT"
+xcrun simctl spawn <udid> defaults delete <bundle-id> RCT_jsLocation
+```
+
+`simctl` turns `-key value` launch arguments into NSUserDefaults argument-domain
+values, which is where `RCTBundleURLProvider` reads `RCT_jsLocation`; the
+argument domain beats the written default when both are set. Prefer the launch
+argument for a one-off check and the written default for a simulator that should
+stay on one port for a whole session - and remember the written default is
+invisible state that a later session cannot see the reason for.
+
+Two things that do NOT work: editing `ip.txt` or any plist inside the installed
+`.app`.
+
+**On a physical device this is not reliable.** A device build carries an `ip.txt`
+in its bundle (`react-native-xcode.sh` writes it only for non-simulator
+platforms), and while stock `RCTBundleURLProvider` still prefers `jsLocation`, it
+drops `jsLocation` when its packager-reachability probe fails, and an app with a
+custom `bundleURL()` may read `ip.txt` first and overwrite `jsLocation` with it.
+Record here what THIS project's delegate actually does, so the next session does
+not re-derive it.
+
+A **second build with a different `RCT_METRO_PORT`** (15-40 minutes) is still the
+answer when you want the port baked in - a long-lived parallel slot - rather than
+asserted at launch.
 
 ## Cold start (only when the app is not installed or Metro is down)
 
