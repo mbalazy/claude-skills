@@ -26,8 +26,16 @@ here. The skill stays generic; this file is where the project knowledge lives.
 
 - **default**: booted simulator (resolve via `sim-ui.sh devices`)
 - **known good**: `<iPhone model + iOS version that has WebDriverAgent installed>`
-- **pin a specific device**: export `SIM_UDID=<udid>`, otherwise the first
-  booted simulator wins.
+- **pin a specific device**: export `SIM_UDID=<udid>`. With one simulator booted
+  the scripts find it themselves; with several they refuse to pick.
+- **WebDriverAgent port**: do NOT record a port-to-simulator mapping here as if it
+  were stable - the assignment changes between sessions, and a stale number sends
+  every observation to the other device. `sim-ui.sh` checks the port's owner
+  against `SIM_UDID` and names the right port when they disagree. Record instead
+  which ports are habitually in use on this machine, and by what.
+- **`read-rn-logs.sh` reads a different variable** (`--udid`, `SIMCTL_DEVICE`,
+  `SIM_UDID`) than `sim-ui.sh` (`SIM_UDID`, `WDA_PORT`). Exporting both is the
+  cheap way to stay out of trouble.
 
 ## Metro
 
@@ -48,6 +56,10 @@ here. The skill stays generic; this file is where the project knowledge lives.
 - **Wrong bundle loaded** (a redbox naming another app's module, or a white
   screen): the app is talking to the wrong Metro. Now check which of the two you
   want to move.
+- **A wedged Metro still holds its port.** After it stops answering
+  `packager-status:running` on `/status` the app finds no packager and shows a
+  redbox about a missing script URL, while `lsof` still shows a healthy-looking
+  process. Restarting that Metro is the fix; the build is not the suspect.
 
 ### Repointing an installed simulator build at another Metro
 
