@@ -11,6 +11,10 @@
 #   sim-ui.sh swipe X1 Y1 X2 Y2 [DURATION_MS]
 #   sim-ui.sh type "text"                   # types into the focused element
 #   sim-ui.sh button HOME|ENTER|VOLUME_UP|VOLUME_DOWN
+#   sim-ui.sh alert                         # text of the alert on screen now (exit 1 if none)
+#   sim-ui.sh alert wait [SECONDS]          # poll until an alert shows up (default 15s)
+#   sim-ui.sh alert accept [--all]          # accept the front alert; --all drains the queue
+#   sim-ui.sh alert dismiss
 #   sim-ui.sh screenshot [OUT.png] [--width N]   # default: resampled to device pt width (1px == 1pt); --width N overrides, 0 = full res
 #   sim-ui.sh launch  BUNDLE_ID [ARG...]    # terminate+launch = guaranteed cold start not included; plain launch/foreground
 #   sim-ui.sh relaunch BUNDLE_ID [ARG...]   # terminate first -> fresh JS bundle from Metro
@@ -19,7 +23,12 @@
 #   sim-ui.sh openurl URL
 #   sim-ui.sh devices                       # booted simulators
 #
-# Device selection: $SIM_UDID if set, else the first booted simulator.
+# Device selection: $SIM_UDID if set, else the only booted simulator. With more than
+# one booted and $SIM_UDID unset the script REFUSES rather than picking one, and it
+# checks that the WDA answering on $WDA_PORT really drives that device.
+#
+# Coordinates are POINTS. Screenshots are PIXELS - divide by the device scale (3 on
+# every current iPhone) before tapping what you measured on an image.
 
 set -euo pipefail
 
@@ -29,18 +38,69 @@ WDA_RUNNER="com.facebook.WebDriverAgentRunner.xctrunner"
 
 udid() {
   if [ -n "${SIM_UDID:-}" ]; then echo "$SIM_UDID"; return; fi
-  xcrun simctl list devices booted | grep -oE '[0-9A-F-]{36}' | head -1
+  local booted count
+  booted="$(xcrun simctl list devices booted | grep -oE '[0-9A-F-]{36}')"
+  count="$(printf '%s\n' "$booted" | grep -c . || true)"
+  # Picking the first of several booted sims is a coin flip that looks like a
+  # decision - and the wrong device answers just as confidently as the right one.
+  if [ "$count" -gt 1 ]; then
+    echo "ERROR: $count simulators are booted and SIM_UDID is not set - refusing to guess." >&2
+    xcrun simctl list devices booted | grep -i booted | sed 's/^/  /' >&2
+    echo "  Pin one: SIM_UDID=<udid> $(basename "$0") ..." >&2
+    exit 2
+  fi
+  printf '%s\n' "$booted" | head -1
+}
+
+# Which simulator does the process listening on a port belong to? CoreSimulator
+# runs every simulated process out of .../Devices/<UDID>/..., so the answer is in
+# the process path. Empty output = could not tell.
+port_owner_udid() {
+  local pid
+  pid="$(lsof -ti tcp:"$1" -sTCP:LISTEN 2>/dev/null | head -1)"
+  [ -n "$pid" ] || return 0
+  ps -o command= -p "$pid" 2>/dev/null \
+    | sed -nE 's#.*/Devices/([0-9A-F-]{36})/.*#\1#p' | head -1
+}
+
+# A live WDA on the port proves something is listening - NOT that it drives the
+# simulator you asked for. When it does not, every element tree and every tap
+# silently goes to the other device (journal sim-rig 20260809-c2f3, 20260811-8beb).
+assert_wda_owner() {
+  local want="$1" owner p other
+  owner="$(port_owner_udid "$WDA_PORT")"
+  if [ -z "$owner" ]; then
+    echo "WARN: something answers on :$WDA_PORT but its owning simulator could not be" >&2
+    echo "      determined (no listening process found via lsof) - continuing unverified." >&2
+    return 0
+  fi
+  [ "$owner" = "$want" ] && return 0
+  echo "ERROR: :$WDA_PORT is WebDriverAgent for simulator $owner, not $want." >&2
+  echo "  Everything read or tapped through this port would land on the other device." >&2
+  for p in $(seq 8100 8110); do
+    [ "$p" = "$WDA_PORT" ] && continue
+    other="$(port_owner_udid "$p")"
+    if [ "$other" = "$want" ]; then
+      echo "  WDA for $want is already up on :$p - re-run with WDA_PORT=$p." >&2
+      exit 1
+    fi
+  done
+  echo "  No WDA for $want found on :8100-8110. Start one on a free port:" >&2
+  echo "    SIMCTL_CHILD_USE_PORT=<free-port> xcrun simctl launch $want $WDA_RUNNER" >&2
+  echo "    then re-run with WDA_PORT=<free-port>." >&2
+  exit 1
 }
 
 ensure_wda() {
-  if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then return; fi
+  local want; want="$(udid)"
+  if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; return; fi
   # SIMCTL_CHILD_ is load-bearing: WDA reads USE_PORT from the ENVIRONMENT, and
   # anything after the bundle id is a launch argument simctl never turns into one.
   # Without the prefix this relaunch lands on WDA's default 8100 whatever WDA_PORT says.
-  SIMCTL_CHILD_USE_PORT="$WDA_PORT" xcrun simctl launch "$(udid)" "$WDA_RUNNER" >/dev/null
+  SIMCTL_CHILD_USE_PORT="$WDA_PORT" xcrun simctl launch "$want" "$WDA_RUNNER" >/dev/null
   for _ in $(seq 1 20); do
     sleep 1
-    if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then return; fi
+    if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; return; fi
   done
   echo "ERROR: WebDriverAgent did not come up on :$WDA_PORT" >&2
   # Name the likely cause instead of sending the reader off to reinstall a runner
@@ -51,9 +111,43 @@ ensure_wda() {
     echo "  (a bare 'simctl launch <udid> $WDA_RUNNER USE_PORT=$WDA_PORT' is silently ignored)." >&2
     echo "  Either relaunch WDA with that prefix, or re-run with WDA_PORT=8100." >&2
   else
-    echo "  Nothing is answering on :8100 either - is $WDA_RUNNER installed on $(udid)?" >&2
+    echo "  Nothing is answering on :8100 either - is $WDA_RUNNER installed on $want?" >&2
   fi
   exit 1
+}
+
+# "<width-pt> <height-pt> <scale>" for the target device, or nothing if unreadable.
+device_points() {
+  local w h s
+  w="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_WIDTH 2>/dev/null || true)"
+  h="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_HEIGHT 2>/dev/null || true)"
+  s="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_SCALE 2>/dev/null | cut -d. -f1 || true)"
+  [ -n "$w" ] && [ -n "$h" ] && [ -n "$s" ] && [ "$s" -gt 0 ] 2>/dev/null || return 0
+  echo "$((w / s)) $((h / s)) $s"
+}
+
+# WDA accepts an out-of-screen tap without complaining and nothing happens, which
+# reads exactly like a frozen app (journal sim-rig 20260803-8f3d). The usual source
+# is a coordinate measured on a screenshot, which is in pixels.
+assert_in_bounds() {
+  local dims w h s x y
+  dims="$(device_points "$(udid)")"
+  if [ -z "$dims" ]; then
+    echo "WARN: could not read the screen size - coordinates not range-checked." >&2
+    return 0
+  fi
+  read -r w h s <<<"$dims"
+  while [ "$#" -ge 2 ]; do
+    x="$1"; y="$2"; shift 2
+    case "$x,$y" in
+      ,*|*,|*[!0-9,]*) echo "ERROR: coordinates must be non-negative integers, got '$x','$y'" >&2; exit 2 ;;
+    esac
+    if [ "$x" -ge "$w" ] || [ "$y" -ge "$h" ]; then
+      echo "ERROR: $x,$y is off-screen - this device is ${w}x${h} POINTS." >&2
+      echo "  Screenshots of it are $((w * s))x$((h * s)) PIXELS: divide by $s to get points." >&2
+      exit 2
+    fi
+  done
 }
 
 session() {
@@ -63,6 +157,20 @@ session() {
 }
 
 end_session() { curl -s -X DELETE "$WDA/session/$1" -o /dev/null; }
+
+# Prints the front alert's text, or nothing and returns 1 when there is no alert.
+alert_text() {
+  curl -s -m 5 "$WDA/session/$1/alert/text" | python3 -c '
+import sys, json
+try:
+    v = json.load(sys.stdin).get("value")
+except Exception:
+    sys.exit(1)
+if v is None or isinstance(v, dict):   # {"error": "no such alert"} arrives as a dict
+    sys.exit(1)
+print(v)
+'
+}
 
 pointer_actions() {
   local sid; sid=$(session)
@@ -81,6 +189,10 @@ case "$cmd" in
     ensure_wda
     ALL=""
     [ "${1:-}" = "--all" ] && ALL=1
+    # Answering this query makes UITabBarController instantiate EVERY child controller,
+    # so a screen you never navigated to can mount just because you measured
+    # (journal sim-rig 20260730-74da). Never use it to prove a screen was not mounted.
+    echo "NOTE: reading the a11y tree mounts every tab's controller - it is not a passive read." >&2
     curl -s -m 20 "$WDA/source?format=json" | ALL="$ALL" python3 -c '
 import sys, json, os
 src = json.load(sys.stdin)["value"]
@@ -113,18 +225,21 @@ print(json.dumps(out, separators=(",", ":")))
 
   tap)
     ensure_wda
+    assert_in_bounds "${1:-}" "${2:-}"
     pointer_actions "[{\"type\":\"pointerMove\",\"duration\":0,\"x\":$1,\"y\":$2},{\"type\":\"pointerDown\",\"button\":0},{\"type\":\"pause\",\"duration\":100},{\"type\":\"pointerUp\",\"button\":0}]"
     echo "tapped $1,$2"
     ;;
 
   doubletap)
     ensure_wda
+    assert_in_bounds "${1:-}" "${2:-}"
     pointer_actions "[{\"type\":\"pointerMove\",\"duration\":0,\"x\":$1,\"y\":$2},{\"type\":\"pointerDown\",\"button\":0},{\"type\":\"pause\",\"duration\":50},{\"type\":\"pointerUp\",\"button\":0},{\"type\":\"pause\",\"duration\":100},{\"type\":\"pointerDown\",\"button\":0},{\"type\":\"pause\",\"duration\":50},{\"type\":\"pointerUp\",\"button\":0}]"
     echo "double-tapped $1,$2"
     ;;
 
   longpress)
     ensure_wda
+    assert_in_bounds "${1:-}" "${2:-}"
     dur="${3:-800}"
     pointer_actions "[{\"type\":\"pointerMove\",\"duration\":0,\"x\":$1,\"y\":$2},{\"type\":\"pointerDown\",\"button\":0},{\"type\":\"pause\",\"duration\":$dur},{\"type\":\"pointerUp\",\"button\":0}]"
     echo "long-pressed $1,$2 (${dur}ms)"
@@ -132,6 +247,7 @@ print(json.dumps(out, separators=(",", ":")))
 
   swipe)
     ensure_wda
+    assert_in_bounds "${1:-}" "${2:-}" "${3:-}" "${4:-}"
     dur="${5:-300}"
     pointer_actions "[{\"type\":\"pointerMove\",\"duration\":0,\"x\":$1,\"y\":$2},{\"type\":\"pointerDown\",\"button\":0},{\"type\":\"pointerMove\",\"duration\":$dur,\"x\":$3,\"y\":$4},{\"type\":\"pointerUp\",\"button\":0}]"
     echo "swiped $1,$2 -> $3,$4"
@@ -160,6 +276,45 @@ print(json.dumps(out, separators=(",", ":")))
       -d "{\"name\":\"$name\"}" -o /dev/null
     end_session "$sid"
     echo "pressed $1"
+    ;;
+
+  # Alerts arrive on their own schedule and QUEUE UP. A single read a few seconds
+  # after a tap that came back "no alert" is not evidence the tap did nothing
+  # (journal sim-rig 20260811-3699) - wait for one, and drain the queue afterwards.
+  alert)
+    ensure_wda
+    sub="${1:-text}"; shift || true
+    sid=$(session)
+    trap 'end_session "$sid" 2>/dev/null || true' EXIT
+    case "$sub" in
+      text)
+        if txt=$(alert_text "$sid"); then echo "$txt"; else echo "no alert on screen" >&2; exit 1; fi
+        ;;
+      wait)
+        deadline=$(( SECONDS + ${1:-15} ))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          if txt=$(alert_text "$sid"); then echo "$txt"; exit 0; fi
+          sleep 1
+        done
+        echo "no alert appeared within ${1:-15}s" >&2
+        exit 1
+        ;;
+      accept|dismiss)
+        all=""; [ "${1:-}" = "--all" ] && all=1
+        n=0
+        while txt=$(alert_text "$sid"); do
+          curl -s -X POST "$WDA/session/$sid/alert/$sub" -H 'Content-Type: application/json' -d '{}' -o /dev/null
+          n=$((n + 1))
+          echo "${sub}ed: $txt"
+          [ -n "$all" ] || break
+          sleep 1
+        done
+        if [ "$n" = "0" ]; then echo "no alert on screen" >&2; exit 1; fi
+        # More alerts than you ever saw on screen is the signal that the taps DID land.
+        if [ -n "$all" ]; then echo "$n alert(s) drained"; fi
+        ;;
+      *) echo "unknown: alert $sub (text|wait|accept|dismiss)" >&2; exit 1 ;;
+    esac
     ;;
 
   screenshot)
