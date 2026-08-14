@@ -251,6 +251,9 @@ fi
 # --- marker --------------------------------------------------------------------------
 MARKER="RIGCHECK_$(date +%s)_$$"
 BACKUP="$(mktemp -t rigcheck)"
+# Timestamp reference for "did a crash report appear during THIS run": created here, a
+# moment before the app is launched, so the comparison needs no clock arithmetic.
+CRASH_REF="$(mktemp -t rigcheck-crashref)"
 cp "$ENTRY_PATH" "$BACKUP"
 
 restore() {
@@ -271,6 +274,56 @@ fi
 
 { echo "console.log('$MARKER');"; cat "$BACKUP"; } > "$ENTRY_PATH"
 
+# --- is the app even running? --------------------------------------------------------
+# "No marker" has two very different causes: the app ran and did not execute your code, or
+# the app is not there at all because it died. Without telling them apart, an app that
+# aborts at launch (a JS/native version skew after an RN bump is the usual reason - pure
+# JS/TS changes cannot abort natively) reads as a mysteriously dead rig; journal sim-rig
+# 20260721-f19d cost a session to "the PR's code crashes the app".
+APP_PID=""
+
+app_alive() {
+  if [[ -n "$APP_PID" ]]; then
+    kill -0 "$APP_PID" 2>/dev/null
+    return
+  fi
+  # No PID (the reload trigger never launches anything): ask the simulator's launchd.
+  # The trailing bracket keeps com.example.app from matching com.example.app.dev.
+  xcrun simctl spawn "$UDID" launchctl list 2>/dev/null \
+    | grep -qF "UIKitApplication:$BUNDLE_ID["
+}
+
+# Path of the newest crash report for THIS bundle newer than the reference file $1, if any.
+# `-newer <file>` is POSIX; `-newermt @<epoch>` is a GNU extension that the /usr/bin/find
+# every Mac ships rejects outright ("Can't parse date/time: @1786741447").
+crash_report_since() {
+  local dir="$HOME/Library/Logs/DiagnosticReports" f header
+  [[ -d "$dir" && -f "$1" ]] || return 0
+  while IFS= read -r f; do
+    # Read the header line directly instead of `head -1 | grep`: grep -q exits on the
+    # first match, head takes SIGPIPE, and with `set -o pipefail` the pipeline then
+    # reports failure - so the pipe version rejects exactly the files that DO match.
+    IFS= read -r header < "$f" 2>/dev/null || continue
+    case "$header" in
+      *"\"bundleID\":\"$BUNDLE_ID\""*) echo "$f"; return 0 ;;
+    esac
+  done < <(find "$dir" -maxdepth 1 -name '*.ips' -newer "$1" 2>/dev/null | sort -r)
+}
+
+# "<indicator> (<signal>)" from a crash report, e.g. "Abort trap: 6 (SIGABRT)".
+crash_reason() {
+  tail -n +2 "$1" 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+ind = (d.get("termination") or {}).get("indicator") or ""
+sig = (d.get("exception") or {}).get("signal") or ""
+print(f"{ind} ({sig})".strip() if ind or sig else "", end="")
+' 2>/dev/null
+}
+
 # --- trigger -------------------------------------------------------------------------
 TS="$(date '+%Y-%m-%d %H:%M:%S')"
 if [[ "$TRIGGER" == "reload" ]]; then
@@ -285,7 +338,13 @@ else
     ARGS+=(-RCT_jsLocation "localhost:$PORT")
   fi
   xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1
-  xcrun simctl launch "$UDID" "$BUNDLE_ID" ${ARGS[@]+"${ARGS[@]}"} >/dev/null 2>&1
+  # `simctl launch` answers "<bundle-id>: <pid>"; that pid is a real host process (the
+  # simulator runs apps on the host), so `kill -0` is all it takes to ask if it is alive.
+  LAUNCH_OUT="$(xcrun simctl launch "$UDID" "$BUNDLE_ID" ${ARGS[@]+"${ARGS[@]}"} 2>&1)" || true
+  case "${LAUNCH_OUT##*: }" in
+    ''|*[!0-9]*) : ;;
+    *) APP_PID="${LAUNCH_OUT##*: }" ;;
+  esac
   if (( ${#ARGS[@]} )); then
     note "trigger: terminate + launch (cold start) with ${ARGS[*]}"
     note "         those launch arguments live for THIS launch only - a plain simctl launch drops them"
@@ -296,22 +355,56 @@ fi
 
 # --- read the marker back ------------------------------------------------------------
 FOUND=""
+APP_DIED=""
 WAITED=0
+# Only a process seen alive can be seen to die - otherwise "not running" is the ordinary
+# case of an app that was never started, which the verdicts below already cover.
+ALIVE_AT_START=""
+app_alive && ALIVE_AT_START=1
 while (( WAITED < TIMEOUT )); do
   sleep 2; WAITED=$((WAITED + 2))
   if SIMCTL_DEVICE="$UDID" "$READ_LOGS" --since "$TS" --grep "$MARKER" 2>/dev/null | grep -q "$MARKER"; then
     FOUND=1; break
   fi
+  if [[ -n "$ALIVE_AT_START" ]] && ! app_alive; then
+    APP_DIED=1; break
+  fi
 done
 
 restore
 trap - EXIT INT TERM
+# The reference file outlives restore() - the crash lookup below still needs it - so it
+# gets its own cleanup covering every exit path, verdicts included.
+trap 'rm -f "$CRASH_REF"' EXIT INT TERM
 # leave the app running marker-free code, best effort
 curl -s -m 5 "localhost:$PORT/reload" >/dev/null 2>&1
 
 if [[ -n "$FOUND" ]]; then
   note "marker:  $MARKER seen in the app log after ${WAITED}s"
   verdict OK ""
+fi
+
+if [[ -n "$APP_DIED" ]]; then
+  note "marker:  $MARKER never appeared - the app process is gone (checked after ${WAITED}s)"
+  # ReportCrash writes the .ips a second or two AFTER the process is gone, so looking once
+  # at the moment of death finds nothing and makes a real crash look like an outside kill.
+  # A few seconds of slack on the cutoff: -newermt wants the file STRICTLY newer, and the
+  # report lands in the same second the run started, so an exact cutoff misses it every time.
+  REPORT=""
+  for _ in $(seq 1 8); do
+    REPORT="$(crash_report_since "$CRASH_REF")"
+    [[ -n "$REPORT" ]] && break
+    sleep 1
+  done
+  if [[ -n "$REPORT" ]]; then
+    REASON="$(crash_reason "$REPORT")"
+    note "crash:   ${REASON:-crash report written, reason not parsed}"
+    note "         $REPORT"
+  else
+    note "crash:   no crash report for $BUNDLE_ID since the launch - it may have been"
+    note "         terminated from outside (another session, Simulator.app, simctl)."
+  fi
+  verdict DEAD "the app TERMINATED instead of running your code - this is not a rig problem to debug through the log. If it aborts natively, suspect a JS/native version skew first: pure JS/TS changes cannot abort natively, so reinstall node_modules and rebuild the app before blaming the branch."
 fi
 
 note "marker:  $MARKER NEVER appeared (waited ${TIMEOUT}s)"
