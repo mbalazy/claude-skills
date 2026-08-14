@@ -138,6 +138,7 @@ note "bundle:  $BUNDLE_ID"
 # This runs BEFORE the simulator is resolved on purpose: when several sims are booted, the
 # Metro serving this repo is the only thing that says which of them is ours.
 METRO_FOR_REPO=""
+WEDGED_METRO=""   # node from this repo that listens but does not answer as a packager
 SIM_PAIRS=""   # lines "<port> <udid>": simulator apps connected to that Metro
 while read -r cmd pid port; do
   [[ -z "$pid" ]] && continue
@@ -149,6 +150,12 @@ while read -r cmd pid port; do
     if [[ "$(curl -s -m 2 "http://localhost:$port/status" 2>/dev/null)" == *packager-status:running* ]]; then
       METRO_FOR_REPO="$port"
       note "listen:  :$port $cmd pid $pid  <- serves this repo"
+    elif [[ "$cmd" == node ]]; then
+      # A node process serving this repo that will not say packager-status:running is a
+      # Metro that WEDGED, not a stranger on the port - it keeps the socket open while the
+      # app finds no packager and comes up on a redbox (journal sim-rig 20260730-fd2d).
+      WEDGED_METRO="$port"
+      note "listen:  :$port $cmd pid $pid  <- node serving this repo, but /status is silent: WEDGED Metro"
     else
       note "listen:  :$port $cmd pid $pid  (this repo's cwd, but not a packager - ignored)"
     fi
@@ -231,6 +238,9 @@ fi
 # another session, another worktree. Refuse instead of guessing.
 if [[ -z "$PORT" ]]; then
   if [[ -z "$METRO_FOR_REPO" ]]; then
+    if [[ -n "$WEDGED_METRO" ]]; then
+      verdict DEAD "Metro on :$WEDGED_METRO is WEDGED - it still holds the port for $REPO but does not answer packager-status:running, so the app finds no packager. Restart that Metro; do not go looking for a broken build."
+    fi
     verdict DEAD "no Metro is serving $REPO. Start one (or pass --port if you know the app talks to another tree's Metro on purpose)."
   fi
   PORT="$METRO_FOR_REPO"
@@ -307,6 +317,8 @@ fi
 note "marker:  $MARKER NEVER appeared (waited ${TIMEOUT}s)"
 if [[ -n "$EMBEDDED" ]]; then
   verdict DEAD "the app never ran your code - it has an embedded main.jsbundle (Release build). Rebuild with a Debug configuration."
+elif [[ -n "$WEDGED_METRO" && -z "$METRO_FOR_REPO" ]]; then
+  verdict DEAD "the app never ran your code - Metro on :$WEDGED_METRO is WEDGED (holds the port, does not answer packager-status:running). Restart that Metro."
 elif [[ -z "$METRO_FOR_REPO" ]]; then
   verdict DEAD "the app never ran your code - no Metro is serving $REPO. Start one on the port the app expects (:$PORT)."
 else
