@@ -91,18 +91,57 @@ assert_wda_owner() {
   exit 1
 }
 
+# Why the XCTest runner may refuse to start on an otherwise healthy, booted simulator.
+# WDA is an XCTest bundle, and Xcode will not background a test runner on a device that
+# has no Simulator.app window - a sim booted by `simctl boot` while Simulator.app is
+# closed, or created fresh and never opened (`XCTest 10300, failed to background test
+# runner`, journal sim-rig 20260811-8beb). That never shows up in the 20 s of silence this
+# function otherwise ends in, so name it. The booted-sim COUNT is printed as context only:
+# three windowed sims hosted WDA fine on 2026-08-20, so the count alone is not a cause.
+wda_start_diagnostics() {
+  local want="$1" name windows booted
+  name="$(xcrun simctl list devices 2>/dev/null | grep -F "($want)" | head -1 | sed -E 's/^ *//; s/ \(.*//' || true)"
+  if ! pgrep -x Simulator >/dev/null 2>&1; then
+    echo "  Simulator.app is NOT running: the device is booted headless (simctl boot), and the" >&2
+    echo "  XCTest runner does not start on a sim without a window. Start Simulator.app on it, then retry:" >&2
+    echo "    open -a Simulator --args -CurrentDeviceUDID $want" >&2
+  else
+    windows="$(osascript -e 'tell application "System Events" to get name of every window of process "Simulator"' 2>/dev/null || true)"
+    if [ -n "$name" ] && [ -n "$windows" ] && ! printf '%s\n' "$windows" | grep -qF "$name"; then
+      echo "  Simulator.app shows no window for '$name' ($want) - a booted device without a" >&2
+      echo "  window cannot host the XCTest runner. A device booted WHILE Simulator.app runs gets" >&2
+      echo "  a window (open --args is ignored by a running Simulator.app), so re-boot it, then retry:" >&2
+      echo "    xcrun simctl shutdown $want && xcrun simctl boot $want" >&2
+    fi
+  fi
+  booted="$(xcrun simctl list devices booted 2>/dev/null | grep -c '(Booted)' || true)"
+  if [ "${booted:-0}" -ge 2 ]; then
+    echo "  booted simulators now ($booted):" >&2
+    xcrun simctl list devices booted 2>/dev/null | grep '(Booted)' | sed 's/^ */    /' >&2
+  fi
+}
+
 ensure_wda() {
-  local want; want="$(udid)"
+  local want launch_out; want="$(udid)"
   if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; return; fi
   # SIMCTL_CHILD_ is load-bearing: WDA reads USE_PORT from the ENVIRONMENT, and
   # anything after the bundle id is a launch argument simctl never turns into one.
   # Without the prefix this relaunch lands on WDA's default 8100 whatever WDA_PORT says.
-  SIMCTL_CHILD_USE_PORT="$WDA_PORT" xcrun simctl launch "$want" "$WDA_RUNNER" >/dev/null
+  # `|| true`: under set -e a refused launch would end the script here, before the
+  # diagnostics below get to say why it was refused.
+  launch_out="$(SIMCTL_CHILD_USE_PORT="$WDA_PORT" xcrun simctl launch "$want" "$WDA_RUNNER" 2>&1 || true)"
   for _ in $(seq 1 20); do
     sleep 1
     if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; return; fi
   done
   echo "ERROR: WebDriverAgent did not come up on :$WDA_PORT" >&2
+  # simctl's own words first - a refused launch says why here and nowhere else.
+  case "$launch_out" in
+    "$WDA_RUNNER: "[0-9]*) ;;   # "<bundle>: <pid>" = launched normally, nothing to add
+    "") ;;
+    *) printf '%s\n' "$launch_out" | sed 's/^/  simctl: /' >&2 ;;
+  esac
+  wda_start_diagnostics "$want"
   # Name the likely cause instead of sending the reader off to reinstall a runner
   # that is installed and healthy one port over.
   if [ "$WDA_PORT" != "8100" ] && curl -s -m 2 "http://localhost:8100/status" >/dev/null 2>&1; then
