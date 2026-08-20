@@ -324,6 +324,57 @@ print(f"{ind} ({sig})".strip() if ind or sig else "", end="")
 ' 2>/dev/null
 }
 
+# --- did the JS throw while loading? -------------------------------------------------
+# An app that is alive, talks to the right Metro and still never logs the marker may have
+# thrown while EVALUATING the bundle: imports are hoisted above the marker line, so a module
+# that cannot load takes the marker down with it. The usual reason is a native module the
+# JS requires that the installed binary does not carry (JS/native skew after a native
+# dependency landed in the tree). The redbox text lands in the same log subsystem as
+# console.log, so it is readable right here - journal sim-rig 20260820-baf2 is what it
+# costs not to: "neither the build nor Metro explains why", read as "not installed", read as
+# a 40-minute rebuild, when a newer build already sat in DerivedData.
+js_startup_error() {
+  local lines pick
+  lines="$(SIMCTL_DEVICE="$UDID" "$READ_LOGS" --since "$TS" 2>/dev/null \
+    | grep -E 'Invariant Violation|Unhandled JS Exception|\[runtime not ready\]')"
+  [[ -n "$lines" ]] || return 0
+  # Prefer the line that names the cause. Terminating the previous instance logs its own
+  # "[runtime not ready]: ... stopSurface failed" noise BEFORE the new one throws, and
+  # the invariant that took the bundle down comes before the "has not been registered"
+  # it causes - so: first Invariant/Unhandled, else the first runtime-not-ready line.
+  pick="$(printf '%s\n' "$lines" | grep -E 'Invariant Violation|Unhandled JS Exception' | head -1)"
+  [[ -n "$pick" ]] || pick="$(printf '%s\n' "$lines" | head -1)"
+  printf '%s\n' "$pick" | sed -E 's/.*\[com\.facebook\.react\.log:[^]]*\] //; s/^\[runtime not ready\]: //'
+}
+
+# mtime (epoch) of the app bundle's executable = when the installed binary was BUILT.
+# `simctl install` copies the product with its timestamps, so this survives the install
+# (checked: installed exec and DerivedData product carry the same second).
+app_built_epoch() {
+  local exe
+  exe="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$1/Info.plist" 2>/dev/null)"
+  [[ -n "$exe" && -f "$1/$exe" ]] || return 0
+  stat -f %m "$1/$exe" 2>/dev/null
+}
+
+fmt_epoch() { date -r "$1" '+%Y-%m-%d %H:%M' 2>/dev/null; }
+
+# Simulator products in DerivedData with THIS bundle id, built after the installed binary,
+# newest first - each line "<epoch> <path>". A build that already exists is a seconds-long
+# `simctl install` (same bundle id = upgrade in place, the data container and the logged-in
+# session survive), not a rebuild.
+newer_products() {
+  local installed="$1" app bid e
+  for app in "$HOME"/Library/Developer/Xcode/DerivedData/*/Build/Products/*-iphonesimulator/*.app; do
+    [[ -d "$app" ]] || continue
+    bid="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist" 2>/dev/null)"
+    [[ "$bid" == "$BUNDLE_ID" ]] || continue
+    e="$(app_built_epoch "$app")"
+    [[ -n "$e" && "$e" -gt "$installed" ]] || continue
+    printf '%s %s\n' "$e" "$app"
+  done | sort -rn
+}
+
 # --- trigger -------------------------------------------------------------------------
 TS="$(date '+%Y-%m-%d %H:%M:%S')"
 if [[ "$TRIGGER" == "reload" ]]; then
@@ -415,6 +466,43 @@ elif [[ -n "$WEDGED_METRO" && -z "$METRO_FOR_REPO" ]]; then
 elif [[ -z "$METRO_FOR_REPO" ]]; then
   verdict DEAD "the app never ran your code - no Metro is serving $REPO. Start one on the port the app expects (:$PORT)."
 else
+  JS_ERR="$(js_startup_error)"
+  if [[ -n "$JS_ERR" ]]; then
+    note "js-error: $JS_ERR"
+    case "$JS_ERR" in
+      *"could not be found"*|*TurboModule*)
+        # A module the JS asks for is not in the native binary. Say how old the binary is
+        # against this tree's native dependencies, and whether a usable build already exists.
+        BUILT="$(app_built_epoch "$APP")"
+        [[ -n "$BUILT" ]] && note "binary:  built $(fmt_epoch "$BUILT") ($APP)"
+        DEP_COMMIT="$(git -C "$REPO" log -1 --format='%ct %h %cs' -- ios/Podfile.lock package.json 2>/dev/null)"
+        if [[ -n "$DEP_COMMIT" ]]; then
+          DEP_EPOCH="${DEP_COMMIT%% *}"
+          note "native deps of this tree last changed: ${DEP_COMMIT#* } (ios/Podfile.lock, package.json)"
+          if [[ -n "$BUILT" && "$DEP_EPOCH" -gt "$BUILT" ]]; then
+            note "         => the installed binary PREDATES that change in this tree's history - it was built"
+            note "            without the module unless it came off a branch that already carried it"
+          fi
+        fi
+        NEWER="$(newer_products "${BUILT:-0}")"
+        if [[ -n "$NEWER" ]]; then
+          note "newer builds of $BUNDLE_ID already in DerivedData (newest first):"
+          while read -r e p; do
+            note "         $(fmt_epoch "$e")  $p"
+          done <<< "$NEWER"
+          FIRST="${NEWER%%$'\n'*}"; FIRST="${FIRST#* }"
+          note "         install one in seconds, keeping the data container (login survives):"
+          note "         xcrun simctl install $UDID \"$FIRST\""
+          note "         (a build from before the native-dep change most likely lacks the module too -"
+          note "          prefer one built after it, or from the branch that introduced it)"
+        else
+          note "         no newer build of $BUNDLE_ID in DerivedData - pod install + one build is the move"
+        fi
+        verdict DEAD "the app is ALIVE but its JS threw while loading the bundle, before your code could run - a module it requires is missing from the NATIVE binary (JS/native skew: the JS is from this tree, the binary is older). This is not 'not installed' and not a Metro problem: install a newer build (see notes), or rebuild once; do not debug the branch."
+        ;;
+    esac
+    verdict DEAD "the app is ALIVE but its JS threw while loading the bundle, before your code could run (see js-error above). Fix that error first - the rig cannot be judged through it."
+  fi
   if [[ "$TRIGGER" == "relaunch" && -z "$AUTO_JSLOCATION" ]]; then
     note "HINT:    --no-jslocation was given, so this launch could not repoint the app. If the"
     note "         app had been started by hand with -RCT_jsLocation, this run just undid it."
