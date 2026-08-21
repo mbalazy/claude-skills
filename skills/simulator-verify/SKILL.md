@@ -139,6 +139,13 @@ The `--since "$TS"` (timestamp captured before the action) is the "which logs ar
 
 **Device selection is not the same variable as `sim-ui.sh`'s.** `read-rn-logs.sh` takes `--udid`, `$SIMCTL_DEVICE` or `$SIM_UDID`; with several simulators booted and none of them set it refuses instead of reading an arbitrary device. An empty result now prints the device and the time window it searched - read that before concluding the instrumentation never fired, because "no logs" from the wrong simulator looks identical to "the code never ran".
 
+**RN >= 0.77 (New Architecture + Hermes): os_log is DEAD for JS logs.** Fusebox routes `console.*` exclusively to React Native DevTools over CDP - nothing reaches `com.facebook.react.log` and Metro's terminal no longer prints client logs either, so `read-rn-logs.sh` comes back empty however correct the query is (verified on RN 0.83: LogBox showed a live warning while os_log had zero lines). Use the CDP tap instead:
+```
+# stream console.* straight from Metro's inspector proxy (stdlib only, no deps):
+scripts/read-rn-logs-cdp.py --port 8090 --seconds 10 --grep '[LAYOUT]'
+```
+It auto-picks the app's MAIN JS runtime (`prefersFuseboxFrontend: true`; worklet runtimes like Reanimated's UI need `--all-runtimes`), refuses to guess between devices (`--device <name-substring>`), and `Runtime.enable` makes Hermes replay its buffered console history with original timestamps - so logs from just BEFORE the tap connected still show up. One debugger per page: if React Native DevTools is attached to the same app, close it first.
+
 Reading the numbers beats reading the pixels: in ACME-1164 the logs showed `SEARCH_INPUT height=64` on one step and `height=16` on the buggy step - that single number ended ~3 sessions of guessing. When a layout bug survives one round of eyeballing, instrument immediately; don't iterate on hunches.
 
 **3. An HTTP probe, when the log channel is not usable.** `console.log` is only worth instrumenting if you can read it back. On a **physical device** you usually cannot: on the New Architecture with Hermes, JS logs go to the DevTools inspector rather than to anything `idevicesyslog` relays. The same problem appears on the simulator whenever the payload is large - a whole element tree or a serialized object gets truncated and line-wrapped into something you cannot parse.
