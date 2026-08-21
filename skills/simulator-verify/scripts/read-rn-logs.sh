@@ -6,6 +6,11 @@
 #   category  == "javascript"  (your console.log/warn/error)   | "native" (RN bridge)
 # JS logs land at INFO level, so `log show` needs --info --debug or it returns nothing.
 #
+# RN >= 0.77 (New Architecture + Hermes / Fusebox): console.* NO LONGER reaches
+# os_log at all - it goes only to React Native DevTools over CDP. On such apps
+# this script always comes back empty; use read-rn-logs-cdp.py (same directory)
+# which taps Metro's inspector proxy instead. Verified empty on RN 0.83.
+#
 # Usage:
 #   read-rn-logs.sh [seconds]                 # JS logs from the last N seconds (default 20)
 #   read-rn-logs.sh --since "YYYY-MM-DD HH:MM:SS"   # JS logs since an exact timestamp
@@ -87,6 +92,9 @@ if [[ -z "${RESULT//[$'\n\t ']/}" ]]; then
   echo "no matching lines" >&2
   echo "  device: $DEVICE_LABEL" >&2
   echo "  since:  $START${GREP:+   pattern: $GREP}" >&2
+  echo "  NOTE: on RN >= 0.77 (New Arch/Hermes) console.* never reaches os_log -" >&2
+  echo "  an empty result here proves NOTHING about the app. Try the CDP tap:" >&2
+  echo "    read-rn-logs-cdp.py --port <metro-port> --seconds 10 [--grep PATTERN]" >&2
   exit 1
 fi
 
