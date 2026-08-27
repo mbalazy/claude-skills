@@ -22,6 +22,10 @@
 #   sim-ui.sh terminate BUNDLE_ID
 #   sim-ui.sh openurl URL
 #   sim-ui.sh devices                       # booted simulators
+#   sim-ui.sh waitfor REGEX [--timeout S] [--all]   # poll the tree until it matches (beats a fixed sleep)
+#   sim-ui.sh wait [SECONDS]                # plain pause, for use inside `do`
+#   sim-ui.sh do 'STEP' 'STEP' ...          # run several of the above in ONE process and ONE round trip
+#                                           # (steps read from stdin when no args; '?step' may fail; '#step' is a comment)
 #
 # Device selection: $SIM_UDID if set, else the only booted simulator. With more than
 # one booted and $SIM_UDID unset the script REFUSES rather than picking one, and it
@@ -35,6 +39,20 @@ set -euo pipefail
 WDA_PORT="${WDA_PORT:-8100}"
 WDA="http://localhost:${WDA_PORT}"
 WDA_RUNNER="com.facebook.WebDriverAgentRunner.xctrunner"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- setup caches -----------------------------------------------------------
+# Every command used to re-derive the same three immutable facts: the device's screen
+# geometry (3 `simctl getenv` round trips), which simulator owns $WDA_PORT (lsof + ps),
+# and a fresh WDA session (POST + DELETE). Measured on an idle sim that was ~1.0s of
+# the 1.4s a `tap` cost. The geometry of a given UDID can never change, so it is cached
+# on disk; the other two are memoised per process, which is what makes `do` (a whole
+# route in one invocation) cheap without weakening a single check.
+# SIMUI_NO_CACHE=1 disables the disk cache.
+SIMUI_CACHE_DIR="${SIMUI_CACHE_DIR:-${TMPDIR:-/tmp}/sim-ui-cache}"
+_MEMO_POINTS=""      # "<w-pt> <h-pt> <scale>" for the target device
+_MEMO_WDA=""         # non-empty once WDA answered AND was confirmed to drive our sim
+_MEMO_SID=""         # a WDA session reused by every interaction in this process
 
 udid() {
   if [ -n "${SIM_UDID:-}" ]; then echo "$SIM_UDID"; return; fi
@@ -122,8 +140,10 @@ wda_start_diagnostics() {
 }
 
 ensure_wda() {
-  local want launch_out; want="$(udid)"
-  if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; return; fi
+  local want launch_out
+  [ -n "$_MEMO_WDA" ] && return 0
+  want="$(udid)"
+  if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; _MEMO_WDA=1; return; fi
   # SIMCTL_CHILD_ is load-bearing: WDA reads USE_PORT from the ENVIRONMENT, and
   # anything after the bundle id is a launch argument simctl never turns into one.
   # Without the prefix this relaunch lands on WDA's default 8100 whatever WDA_PORT says.
@@ -132,7 +152,7 @@ ensure_wda() {
   launch_out="$(SIMCTL_CHILD_USE_PORT="$WDA_PORT" xcrun simctl launch "$want" "$WDA_RUNNER" 2>&1 || true)"
   for _ in $(seq 1 20); do
     sleep 1
-    if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; return; fi
+    if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; _MEMO_WDA=1; return; fi
   done
   echo "ERROR: WebDriverAgent did not come up on :$WDA_PORT" >&2
   # simctl's own words first - a refused launch says why here and nowhere else.
@@ -157,12 +177,22 @@ ensure_wda() {
 
 # "<width-pt> <height-pt> <scale>" for the target device, or nothing if unreadable.
 device_points() {
-  local w h s
+  local w h s f
+  if [ -n "$_MEMO_POINTS" ]; then echo "$_MEMO_POINTS"; return 0; fi
+  f="$SIMUI_CACHE_DIR/points-$1"
+  if [ -z "${SIMUI_NO_CACHE:-}" ] && [ -s "$f" ]; then
+    _MEMO_POINTS="$(cat "$f")"; echo "$_MEMO_POINTS"; return 0
+  fi
   w="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_WIDTH 2>/dev/null || true)"
   h="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_HEIGHT 2>/dev/null || true)"
   s="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_SCALE 2>/dev/null | cut -d. -f1 || true)"
   [ -n "$w" ] && [ -n "$h" ] && [ -n "$s" ] && [ "$s" -gt 0 ] 2>/dev/null || return 0
-  echo "$((w / s)) $((h / s)) $s"
+  _MEMO_POINTS="$((w / s)) $((h / s)) $s"
+  if [ -z "${SIMUI_NO_CACHE:-}" ]; then
+    mkdir -p "$SIMUI_CACHE_DIR" 2>/dev/null || true
+    printf '%s\n' "$_MEMO_POINTS" > "$f" 2>/dev/null || true
+  fi
+  echo "$_MEMO_POINTS"
 }
 
 # WDA accepts an out-of-screen tap without complaining and nothing happens, which
@@ -189,13 +219,23 @@ assert_in_bounds() {
   done
 }
 
+# One session per PROCESS, not per command: a batch of taps through `do` pays the
+# create/delete round trip once.
+#
+# It sets the global $_MEMO_SID instead of printing the id, and it must NOT be called
+# as `sid=$(session)`: a command substitution is a subshell, so both the assignment and
+# any trap installed inside it would die with that subshell - measured 2026-08-27 as a
+# tap that reported "tapped 220,904" while the session had already been torn down and
+# nothing happened on screen. Teardown is the one EXIT trap installed below.
 session() {
-  curl -s -X POST "$WDA/session" -H 'Content-Type: application/json' \
+  [ -n "$_MEMO_SID" ] && return 0
+  _MEMO_SID="$(curl -s -X POST "$WDA/session" -H 'Content-Type: application/json' \
     -d '{"capabilities":{"alwaysMatch":{"platformName":"iOS"}}}' \
-    | python3 -c "import sys,json;print(json.load(sys.stdin)['value']['sessionId'])"
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['value']['sessionId'])")"
 }
 
-end_session() { curl -s -X DELETE "$WDA/session/$1" -o /dev/null; }
+end_session() { [ -n "${1:-}" ] && curl -s -X DELETE "$WDA/session/$1" -o /dev/null; }
+trap 'end_session "$_MEMO_SID" 2>/dev/null || true' EXIT
 
 # Prints the front alert's text, or nothing and returns 1 when there is no alert.
 alert_text() {
@@ -212,12 +252,19 @@ print(v)
 }
 
 pointer_actions() {
-  local sid; sid=$(session)
-  curl -s -X POST "$WDA/session/$sid/actions" -H 'Content-Type: application/json' \
-    -d "{\"actions\":[{\"type\":\"pointer\",\"id\":\"f1\",\"parameters\":{\"pointerType\":\"touch\"},\"actions\":$1}]}" -o /dev/null
-  end_session "$sid"
+  local sid resp
+  session; sid="$_MEMO_SID"
+  resp="$(curl -s -X POST "$WDA/session/$sid/actions" -H 'Content-Type: application/json' \
+    -d "{\"actions\":[{\"type\":\"pointer\",\"id\":\"f1\",\"parameters\":{\"pointerType\":\"touch\"},\"actions\":$1}]}")"
+  case "$resp" in
+    *'"error"'*) echo "WARN: WebDriverAgent refused the gesture: $resp" >&2 ;;
+  esac
 }
 
+# Every command lives in this function so `do` can run a whole route inside ONE
+# process - one WDA session, one geometry lookup, one ownership check - and, far more
+# importantly, inside ONE Claude round trip.
+dispatch() {
 cmd="${1:-}"; shift || true
 case "$cmd" in
   devices)
@@ -227,39 +274,12 @@ case "$cmd" in
   elements)
     ensure_wda
     ALL=""
-    [ "${1:-}" = "--all" ] && ALL=1
+    [ "${1:-}" = "--all" ] && ALL="--all"
     # Answering this query makes UITabBarController instantiate EVERY child controller,
     # so a screen you never navigated to can mount just because you measured
     # (journal sim-rig 20260730-74da). Never use it to prove a screen was not mounted.
     echo "NOTE: reading the a11y tree mounts every tab's controller - it is not a passive read." >&2
-    curl -s -m 20 "$WDA/source?format=json" | ALL="$ALL" python3 -c '
-import sys, json, os
-src = json.load(sys.stdin)["value"]
-show_all = bool(os.environ.get("ALL"))
-ACCEPTED = {"TextField","Button","Switch","Icon","SearchField","StaticText","Image"}
-out = []
-seen = set()
-def walk(n):
-    r = n.get("rect", {})
-    visible = n.get("isVisible") == "1" and r.get("width", 0) > 0 and r.get("height", 0) > 0
-    labeled = n.get("label") or n.get("name") or n.get("rawIdentifier")
-    if n.get("type") in ("TextField", "SearchField"):
-        labeled = labeled or n.get("value")
-    if visible and (show_all or (n.get("type") in ACCEPTED and labeled)):
-        e = {"type": n.get("type")}
-        if n.get("label"): e["label"] = n["label"]
-        if n.get("name") and n.get("name") != n.get("label"): e["name"] = n["name"]
-        if n.get("value"): e["value"] = n["value"]
-        e["rect"] = [round(r["x"]), round(r["y"]), round(r["width"]), round(r["height"])]
-        key = json.dumps(e)
-        if key not in seen:
-            seen.add(key)
-            out.append(e)
-    for c in n.get("children") or []:
-        walk(c)
-walk(src)
-print(json.dumps(out, separators=(",", ":")))
-'
+    curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" $ALL
     ;;
 
   tap)
@@ -294,10 +314,9 @@ print(json.dumps(out, separators=(",", ":")))
 
   type)
     ensure_wda
-    sid=$(session)
+    session; sid="$_MEMO_SID"
     printf '%s' "$1" | python3 -c 'import sys,json; print(json.dumps({"value":[sys.stdin.read()]}))' \
       | curl -s -X POST "$WDA/session/$sid/wda/keys" -H 'Content-Type: application/json' -d @- -o /dev/null
-    end_session "$sid"
     echo "typed: $1"
     ;;
 
@@ -310,10 +329,9 @@ print(json.dumps(out, separators=(",", ":")))
       VOLUME_DOWN) name="volumedown" ;;
       *) echo "unsupported button: $1" >&2; exit 1 ;;
     esac
-    sid=$(session)
+    session; sid="$_MEMO_SID"
     curl -s -X POST "$WDA/session/$sid/wda/pressButton" -H 'Content-Type: application/json' \
       -d "{\"name\":\"$name\"}" -o /dev/null
-    end_session "$sid"
     echo "pressed $1"
     ;;
 
@@ -323,8 +341,7 @@ print(json.dumps(out, separators=(",", ":")))
   alert)
     ensure_wda
     sub="${1:-text}"; shift || true
-    sid=$(session)
-    trap 'end_session "$sid" 2>/dev/null || true' EXIT
+    session; sid="$_MEMO_SID"
     case "$sub" in
       text)
         if txt=$(alert_text "$sid"); then echo "$txt"; else echo "no alert on screen" >&2; exit 1; fi
@@ -363,10 +380,16 @@ print(json.dumps(out, separators=(",", ":")))
     dev="$(udid)"
     xcrun simctl io "$dev" screenshot "$out" >/dev/null 2>&1
     if [ -z "$width" ]; then
-      # default: resample to the device's point width so 1px == 1pt on any simulator
-      pxw=$(sips -g pixelWidth "$out" | awk '/pixelWidth/ {print $2}')
-      scale=$(xcrun simctl getenv "$dev" SIMULATOR_MAINSCREEN_SCALE 2>/dev/null | cut -d. -f1)
-      width=$(( pxw / ${scale:-3} ))
+      # default: resample to the device's point width so 1px == 1pt on any simulator.
+      # The width comes from the cached geometry - reading it back with `sips -g pixelWidth`
+      # plus a `simctl getenv` cost ~0.2s per screenshot for a number that IS the point width.
+      dims="$(device_points "$dev")"
+      if [ -n "$dims" ]; then
+        read -r dpw _dph _dps <<<"$dims"; width="$dpw"
+      else
+        pxw=$(sips -g pixelWidth "$out" | awk '/pixelWidth/ {print $2}')
+        width=$(( pxw / 3 ))
+      fi
     fi
     if [ "$width" != "0" ]; then
       sips --resampleWidth "$width" "$out" >/dev/null 2>&1
@@ -383,8 +406,66 @@ print(json.dumps(out, separators=(",", ":")))
   terminate)  xcrun simctl terminate "$(udid)" "$1" ;;
   openurl)    xcrun simctl openurl "$(udid)" "$1" ;;
 
+  # --- batching and waiting --------------------------------------------------
+  # `do` is the answer to the real cost of driving a simulator: not the milliseconds
+  # WDA takes, but the fact that every single step used to be its own Claude round
+  # trip. A known route belongs in ONE call.
+  #   sim-ui.sh do 'tap 220 904' 'waitfor Schedule' 'elements'
+  # Steps are the script's own subcommands. A step prefixed with ? may fail without
+  # aborting the batch; a step starting with # is a comment. With no arguments the
+  # steps are read from stdin, one per line.
+  do)
+    if [ "$#" -eq 0 ]; then
+      _steps=()
+      while IFS= read -r _line; do _steps+=("$_line"); done
+    else
+      _steps=("$@")
+    fi
+    for _step in "${_steps[@]}"; do
+      _tol=""
+      case "$_step" in
+        ""|\#*) continue ;;
+        \?*) _tol=1; _step="${_step#\?}" ;;
+      esac
+      printf '\xc2\xbb %s\n' "$_step"
+      if [ -n "$_tol" ]; then
+        eval "dispatch $_step" || echo "  (step failed - tolerated)"
+      else
+        eval "dispatch $_step"
+      fi
+    done
+    ;;
+
+  # A named pause, so a route reads as a route. Prefer `waitfor` - it costs what the
+  # app needs rather than a constant somebody guessed.
+  wait)
+    sleep "${1:-1}"
+    ;;
+
+  # Poll the element tree until something matches, instead of sleeping a fixed number
+  # of seconds and hoping. Prints the matching elements; exit 1 on timeout.
+  #   sim-ui.sh waitfor 'Sara Jogurt' --timeout 15
+  waitfor)
+    ensure_wda
+    _pat="${1:-}"
+    if [ -z "$_pat" ]; then echo "usage: waitfor REGEX [--timeout S] [--all]" >&2; exit 2; fi
+    shift
+    _wf_args=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --timeout) _wf_args+=(--timeout "$2"); shift 2 ;;
+        --all)     _wf_args+=(--all); shift ;;
+        *) echo "unknown flag for waitfor: $1" >&2; exit 2 ;;
+      esac
+    done
+    python3 "$HERE/wda_tree.py" --port "$WDA_PORT" --match "$_pat" "${_wf_args[@]+"${_wf_args[@]}"}"
+    ;;
+
   *)
     grep '^#   sim-ui.sh' "$0" | sed 's/^# *//'
     exit 1
     ;;
 esac
+}
+
+dispatch "$@"
