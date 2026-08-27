@@ -23,13 +23,31 @@ import time
 ACCEPTED = {"TextField", "Button", "Switch", "Icon", "SearchField", "StaticText", "Image"}
 
 
-def fetch(port, timeout=20):
+def _get(url, timeout=20):
     import urllib.request
-    url = f"http://localhost:{port}/source?format=json"
     with urllib.request.urlopen(url, timeout=timeout) as r:
-        return json.load(r)["value"]
+        return json.load(r)
 
 
+def fetch(port, timeout=20):
+    return _get(f"http://localhost:{port}/source?format=json", timeout)["value"]
+
+
+# A cheap WebDriverAgent predicate search (POST /session/<sid>/elements with
+# "predicate string") answers in 0.17s against 1.10s for /source on the same screen, so
+# it looks like the obvious way to poll. It was implemented, measured and REMOVED:
+#
+#   - it cannot express the filter this file applies. The pattern is matched against
+#     "type label name value" joined, so a multi-word pattern spans field boundaries
+#     and any per-field CONTAINS predicate produces false NEGATIVES - `waitfor
+#     "StaticText Schedule"` timed out on a screen that plainly had it.
+#   - adding `visible == 1` to make it agree costs ~1.8s per query, worse than /source.
+#   - and on the one case where polling actually waits - an app cold start - the cheap
+#     predicate matched on the FIRST poll while the element was still invisible, so the
+#     tree read happened every poll anyway and the saving was zero (measured: 16
+#     predicate polls, 16 tree polls, 8.2s).
+#
+# Left here so the next person does not re-derive it. The poll interval is what to tune.
 def elements(src, show_all):
     out, seen = [], set()
 
@@ -74,25 +92,27 @@ def main():
         return 0
 
     pat = re.compile(a.match, re.I)
-    deadline = time.time() + a.timeout
+    started = time.time()
+    deadline = started + a.timeout
     polls = 0
+    n_last = 0
     while True:
         polls += 1
         try:
             els = elements(fetch(a.port), a.all)
-        except Exception as exc:
+        except Exception:
             els = []
-            last_err = exc
+        n_last = len(els)
         hits = [e for e in els
                 if pat.search(" ".join(str(e.get(k, "")) for k in ("type", "label", "name", "value")))]
         if hits:
             print(json.dumps(hits, separators=(",", ":")))
             print(f"matched /{a.match}/ after {polls} poll(s), "
-                  f"{time.time() - (deadline - a.timeout):.1f}s", file=sys.stderr)
+                  f"{time.time() - started:.1f}s", file=sys.stderr)
             return 0
         if time.time() >= deadline:
             print(f"waitfor: nothing matching /{a.match}/ within {a.timeout:g}s "
-                  f"({polls} polls, {len(els)} elements on the last one)", file=sys.stderr)
+                  f"({polls} polls, {n_last} elements on the last one)", file=sys.stderr)
             return 1
         time.sleep(a.interval)
 
