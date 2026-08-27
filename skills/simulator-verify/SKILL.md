@@ -13,6 +13,7 @@ The skill is generic: everything app-specific (bundle id, device, Metro port, sc
 
 - **`scripts/rig-check.sh`** - proves the app is running the code you are testing. Run it before anything else (see Rig gate).
 - **`scripts/sim-ui.sh`** - the driver for everything: observation and interaction via WebDriverAgent's HTTP API (localhost:8100), lifecycle via `xcrun simctl`. No MCP server needed. Run it with no args for the command list. It auto-starts WDA (`com.facebook.WebDriverAgentRunner.xctrunner` must be installed on the sim).
+- **`scripts/simbench.sh`** and **`scripts/regress.sh`** - only needed when changing the driver itself: `simbench.sh` separates tool time from round-trip time (its header carries the reference numbers), `regress.sh` captures the driver's whole observable surface so a change can be shown not to alter it.
 - The app's dev build installed on a booted simulator. If not installed / Metro down, see Cold start in `.simulator-verify/config.md`.
 - **In a throwaway `git worktree`, none of this exists locally.** Both the skill directory and `.simulator-verify/` are typically git-ignored, so a fresh worktree of the same repo has neither - and no amount of re-running will create them. Call the scripts by their absolute path from wherever the skill is installed and point them at the tree under test: `<skill-dir>/scripts/rig-check.sh --repo <worktree>`. `rig-check.sh` then reads the project config from the repo's MAIN worktree by itself, so `--bundle-id` is only needed when even that has no config. For `sim-ui.sh`, export `SIM_UDID` and `WDA_PORT` - it derives nothing.
 - **A simulator is named after what it serves.** With two or three booted, a model name ("iPhone 17 Pro") identifies nothing - and picking the wrong sim produces confident, false readings. The device name is the one thing visible at a glance (Simulator window title, `simctl list`, the candidate list `rig-check.sh` prints when it refuses to guess), so make it carry the answer: `xcrun simctl rename <udid> "<model> - <worktree basename>"`, run the moment a sim is built for a worktree. Treat it as a label, not as evidence - confirm by connection when a wrong answer would be expensive.
@@ -48,6 +49,40 @@ It injects a unique marker as the first line of the entry file, makes the app pi
 
 **The gate:** on `RIG DEAD`, fix the rig and re-run. Do not navigate, do not screenshot, do not report - and never report an observation, PASS, FAIL, or "the screen looks right", from a session whose rig check did not pass. Silence from instrumentation is never evidence about the code; it is a suspicion about the rig. Re-run the check after anything that could swap what the app runs (a rebuild, a reinstall, a branch switch, a Metro restart).
 
+## What actually costs the time - one command per step is the bug
+
+Measured 2026-08-27 on an idle iPhone 17 Pro Max simulator, and it is not what it looks
+like. The tools are fast: an element tree is ~1.1s (almost all of it the app answering
+`/source`), a tap 0.7s, a screenshot 0.3s, `rig-check.sh` 8.6s cold or 5.7s with
+`--reload`. What is slow is the **round trip**: every separate Bash call costs ~3.6s of
+model time before its command even starts. A perfectly ordinary reach - relaunch, wait,
+three tab taps, open a row, four tree reads to confirm each one - ran as eleven calls
+took **62s, of which 36s was gaps between calls and only 26s was work**.
+
+The same route as ONE `sim-ui.sh do ...` call took **25s**, three runs in a row, with the
+fixed sleeps replaced by `waitfor`. Nothing about the simulator got faster; ten round
+trips stopped existing.
+
+So the rule for this loop:
+
+- **Batch every step whose coordinates you already know into one `do` call.** Only break
+  out of the batch when the next coordinate genuinely depends on reading the last result.
+- **Never a bare `sleep` after a relaunch or a tap.** `waitfor 'REGEX'` polls the tree
+  and returns the moment the thing is there, and it FAILS LOUDLY when it is not - a fixed
+  `sleep 5` that happens to be long enough today silently becomes a flake tomorrow.
+- **A tap is not a checkpoint.** Follow it with `waitfor` on something only the new screen
+  has, inside the same batch - that is what makes a batch safe to run unattended.
+- **Prefer the element tree to a screenshot** when the tree can answer: ~750 bytes of text
+  against an 870KB image, and a screenshot also costs you the tokens to look at it.
+- **After a code change, reach for `rig-check.sh --reload` first.** It keeps the app's
+  navigation state, so the whole re-navigation - the expensive part - does not happen at
+  all. The default terminate+launch trigger throws the screen away and makes you drive
+  back to it.
+
+The benchmark that produced those numbers is `scripts/simbench.sh` (see its header). Re-run
+it before and after touching this loop instead of guessing; `scripts/regress.sh` captures
+the 16 stdout/stderr/rc cases that prove the driver still behaves identically.
+
 ## The loop
 
 Run these phases in order. Each iteration of fix-and-recheck repeats observe -> assert.
@@ -68,8 +103,25 @@ PASS requires every enumerated instance checked or marked N/A. For layout-sensit
 ### 1. Reach
 All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **Set `SIM_UDID`** - with more than one simulator booted the script refuses to run rather than pick one, and it checks that the WebDriverAgent answering on `WDA_PORT` really drives that device (a stranger's WDA on the port used to return the other simulator's screen without a word).
 - Resolve the device: `$S devices` -> pick the booted simulator.
-- Launch the app: `$S launch <bundle-id>` (the bundle id from `config.md`; foregrounds if already running). Use `$S relaunch <id>` when you changed code - it terminates first, so the sim fetches a fresh JS bundle from Metro. RN cold start takes a few seconds - wait ~5s before inspecting.
-- Navigate to the target screen by tapping element rects from the tree: `$S tap X Y` (tap the rect center: `x + w/2`, `y + h/2`). Prefer deep links via `$S openurl` only if the config confirms a registered scheme.
+- Launch the app: `$S launch <bundle-id>` (the bundle id from `config.md`; foregrounds if already running). Use `$S relaunch <id>` when you changed code - it terminates first, so the sim fetches a fresh JS bundle from Metro. A cold start measured 8-9s on this app, so do not guess it: `$S waitfor '<something on the first screen>' --timeout 30` returns as soon as it is up and tells you if it never is.
+- Navigate to the target screen by tapping element rects from the tree: `$S tap X Y` (tap the rect center: `x + w/2`, `y + h/2`). Prefer deep links via `$S openurl` only if the config confirms a registered scheme - and only if a probe shows the URL actually reaches JS, which is a separate question from the scheme being registered (see Gotchas).
+- **Run the whole known route in one call.** Steps are this script's own subcommands; a
+  step whose own arguments contain spaces needs inner quotes, a `?` prefix lets a step
+  fail without aborting the batch, and `#` starts a comment:
+
+  ```sh
+  $S do "relaunch $BUNDLE -RCT_jsLocation localhost:$PORT" \
+        'waitfor "Search clients" --timeout 30' \
+        'tap 220 904' 'waitfor "StaticText Schedule"' \
+        'tap 220 317' 'waitfor "Button Back"'
+  ```
+
+  `waitfor` matches its regex, case-insensitively, against each element's
+  `type label name value` joined with spaces - which is why `'StaticText Schedule'` finds
+  a screen title without also matching the tab button of the same name. It prints the
+  elements it matched, so a batch leaves a readable trail of what each step reached.
+- Once a route is known, write it into `config.md` next to the screen map. Re-deriving tab
+  coordinates from `elements --all` is a round trip you only need to pay once per device.
 
 ### 2. Observe
 - `$S elements` -> the accessibility tree as compact JSON (`rect` is `[x,y,w,h]` in pt). This is the primary signal: assert on real elements, not pixels.
@@ -258,4 +310,5 @@ then Read the PNG. You lose the element tree and tap control (observe-only), but
 - **On a physical device the same flag is not reliable.** A device build carries an `ip.txt` inside its bundle holding the Mac's address (`react-native-xcode.sh` writes it only when `PLATFORM_NAME` is not a simulator - which is why a simulator build never has one). Stock `RCTBundleURLProvider` still prefers `jsLocation` over that file, but it drops `jsLocation` whenever its own packager-reachability probe fails, and an app with a custom `bundleURL()` in its AppDelegate may read `ip.txt` FIRST and overwrite `jsLocation` with it - that is what one app does when `ip.txt` lists more than one candidate. Before relying on the flag on a device, read the app's `bundleURL()`; otherwise move Metro to the address the build expects.
 - **WebDriverAgent ports belong to a simulator, and the assignment changes between sessions.** Any WDA answering on `WDA_PORT` will happily serve a tree from ITS device, so a stale port number in `config.md` used to produce a confident description of the wrong screen. `sim-ui.sh` now compares the port's owning device against `SIM_UDID` (CoreSimulator runs simulated processes out of `.../Devices/<UDID>/...`, so `lsof -ti tcp:PORT` plus `ps -o command=` answers it) and refuses on a mismatch, naming the port that does serve your device. Start a runner on a free port with `SIMCTL_CHILD_USE_PORT=<port> xcrun simctl launch <udid> com.facebook.WebDriverAgentRunner.xctrunner`.
 - **WDA refuses to start on a simulator that has no Simulator.app window** (`XCTest 10300, failed to background test runner`): a sim booted by `simctl boot` while Simulator.app is closed, or created fresh and never opened - building a dedicated sim alongside a slot pool puts you there by default. `sim-ui.sh` now says so when the runner does not come up (it checks Simulator.app and its window list) and prints the move that gives the device a window: `open -a Simulator --args -CurrentDeviceUDID <udid>` when Simulator.app is not running, `xcrun simctl shutdown <udid> && xcrun simctl boot <udid>` when it is (a running Simulator.app ignores `--args` - verified 2026-08-20 - but opens a window for every device booted while it runs). The booted COUNT is not a cause on its own - three windowed sims hosted WDA fine on 2026-08-20 - so the error lists the booted devices as context only.
+- **A registered URL scheme is not proof `openurl` reaches JS, and the failure is silent.** Measured on this app 2026-08-27: `CFBundleURLSchemes` contained `orbit`, `xcrun simctl openurl` returned 0, `SceneDelegate` forwarded `openURLContexts` to the AppDelegate, and `Linking.addEventListener('url', ...)` still never fired - for the app's own documented debug link, for a bare `scheme://`, for anything. A `fetch` probe (3c technique 3) placed both at listener-install time and inside the handler proved it: the install probe arrived, the handler probe never did. So before building any workflow on a deep link, prove ONE link end to end with a probe; and when a deep link "does nothing", suspect the native forwarding chain rather than your URL. The consequence for this loop is real - deep links would collapse a multi-tap reach into one command, and on an app where they do not reach JS that option simply is not available.
 - Glass buttons sometimes don't expose an accessibility label - if an expected button is missing from the filtered tree, check `$S elements --all` first (unlabeled controls show up as `type:"Other"` with an exact rect), then screenshot, before reporting it absent.
