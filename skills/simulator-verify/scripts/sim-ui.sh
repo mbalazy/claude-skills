@@ -429,7 +429,9 @@ case "$cmd" in
       esac
       printf '\xc2\xbb %s\n' "$_step"
       if [ -n "$_tol" ]; then
-        eval "dispatch $_step" || echo "  (step failed - tolerated)"
+        # A subshell, not just `|| true`: several branches report failure with `exit`,
+        # which ends the whole script however the caller guards it.
+        ( eval "dispatch $_step" ) || echo "  (step failed - tolerated)"
       else
         eval "dispatch $_step"
       fi
