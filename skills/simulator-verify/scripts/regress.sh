@@ -32,12 +32,39 @@ run button_bad       "$S" button NOPE
 run badcmd           "$S" frobnicate
 run waitfor_miss     "$S" waitfor 'zzz-nothing-matches-this' --timeout 2
 run waitfor_nopat    "$S" waitfor
+run waitfor_badflag  "$S" waitfor 'x' --nope
+run waitfor_all_miss "$S" waitfor 'zzz-nothing-matches-this' --all --timeout 2
 run do_comment       "$S" do '# just a comment' 'wait 0'
 run do_tolerated     "$S" do '?alert' 'wait 0'
+# fail-fast: an untolerated failing step must stop the batch, so the marker never prints
+run do_failfast      "$S" do 'alert' 'wait 0' '# UNREACHED-MARKER'
+run do_stdin         bash -c "printf '%s\n' '# from stdin' 'wait 0' | '$S' do"
+# the gesture commands share one bounds check - prove each is actually wired to it
+run doubletap_oob    "$S" doubletap 100 9999
+run longpress_oob    "$S" longpress 100 9999
+run swipe_oob2       "$S" swipe 100 9999 100 100
+# the disk geometry cache must not change what a bounds error says
+run nocache_tap_oob  env SIMUI_NO_CACHE=1 "$S" tap 999 100
 # a WDA on another port drives another simulator: this must REFUSE, not read it
 if [ -n "${OTHER_WDA_PORT:-}" ]; then
   run wrong_wda_port env WDA_PORT="$OTHER_WDA_PORT" "$S" elements
 fi
 # no SIM_UDID with several booted: must REFUSE rather than guess
 run no_udid          env -u SIM_UDID "$S" elements
+
+# Screenshots are compared by SIZE, never by bytes: the pixels change with whatever is on
+# screen, while the point-width resampling is exactly what a change to the driver can break.
+# The output path is `screenshot OUT [--width N]`, so the flags go AFTER it.
+shot() {
+  local name="$1"; shift
+  local f="$OUT/$name.png"
+  { echo "--- dims for: screenshot <out> $* ---"
+    "$S" screenshot "$f" "$@" >/dev/null 2>&1
+    sips -g pixelWidth -g pixelHeight "$f" 2>/dev/null | tail -2
+    rm -f "$f"
+  } > "$OUT/$name.txt"
+}
+shot screenshot_default
+shot screenshot_w300  --width 300
+shot screenshot_full  --width 0
 echo "captured $(ls "$OUT" | wc -l | tr -d ' ') cases into $OUT"
