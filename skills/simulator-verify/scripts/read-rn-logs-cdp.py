@@ -23,11 +23,20 @@ Usage:
   --all-runtimes  include worklet runtimes (Reanimated UI, etc.), not just
                   the main JS runtime
   --json          print raw consoleAPICalled params as JSON lines
+  --no-follow     stop when the runtime goes away instead of waiting for it
+                  to come back
 
 Notes:
 - Runtime.enable makes Hermes REPLAY its buffered console history, so logs
   emitted shortly before the tap connects still show up (they carry their
   original timestamps).
+- Metro closes the socket every time the app restarts (relaunch, reload with
+  a new runtime, crash) - that is normal, not a fault. By default the tap
+  therefore WAITS for the same app on the same device to reappear in
+  /json/list and reconnects; Runtime.enable on the new runtime replays what
+  it logged while nobody was attached, so a relaunch loses nothing. Before
+  2026-08-29 the script exited on the first close and a whole flow could run
+  unlogged (journal sim-rig). --no-follow restores the old behaviour.
 - One debugger per page: if React Native DevTools is already attached to the
   same runtime, the proxy may drop one of the clients. Disconnect DevTools
   first if the tap gets no events.
@@ -53,11 +62,15 @@ def fetch_targets(port):
         return json.load(r)
 
 
-def pick_target(targets, args):
+def pick_target(targets, args, quiet=False):
+    """Choose the runtime to tap. quiet=True returns None instead of exiting when
+    nothing matches - the reconnect loop polls with it while the app restarts."""
     if args.page is not None:
         for t in targets:
             if t["webSocketDebuggerUrl"].endswith(f"page={args.page}"):
                 return t
+        if quiet:
+            return None
         sys.exit(f"no target with page={args.page}; run with no --page to list candidates")
 
     candidates = [t for t in targets if t.get("type") == "node"]
@@ -76,12 +89,16 @@ def pick_target(targets, args):
 
     devices = {t.get("deviceName", "?") for t in candidates}
     if len(devices) > 1:
+        if quiet:
+            return None
         print("Multiple devices on this Metro - refusing to guess. Pass --device:", file=sys.stderr)
         for d in sorted(devices):
             print(f"  {d}", file=sys.stderr)
         sys.exit(2)
 
     if not candidates:
+        if quiet:
+            return None
         print(f"No matching inspector targets on port {args.port}. All targets:", file=sys.stderr)
         for t in targets:
             print(f"  {t.get('appId')} | {t.get('deviceName')} | {t.get('description')} | "
@@ -210,6 +227,7 @@ def main():
     parser.add_argument("--page", type=int)
     parser.add_argument("--all-runtimes", action="store_true")
     parser.add_argument("--json", action="store_true", dest="raw_json")
+    parser.add_argument("--no-follow", action="store_true")
     args = parser.parse_args()
 
     try:
@@ -223,47 +241,82 @@ def main():
     print(f"# tapping {target.get('appId')} on {target.get('deviceName')} "
           f"[{target.get('description')}] via port {args.port}", file=sys.stderr)
 
+    # After a restart the app comes back as a NEW page id; what identifies "the
+    # same app" across restarts is bundle id + device, so pin both for the
+    # reconnect search even when the first pick was made by elimination.
+    args.app = args.app or target.get("appId")
+    args.device = args.device or target.get("deviceName")
+    args.page = None
+
     pattern = re.compile(args.grep) if args.grep else None
     deadline = time.monotonic() + args.seconds if args.seconds > 0 else None
-    ws = WsClient(target["webSocketDebuggerUrl"], timeout=1.0)
-    ws.send_text(json.dumps({"id": 1, "method": "Runtime.enable"}))
-
     matched = 0
+
+    def expired():
+        return deadline is not None and time.monotonic() > deadline
+
+    def wait_for_target():
+        """Poll /json/list until the pinned app is back (or the deadline hits)."""
+        while not expired():
+            time.sleep(0.5)
+            try:
+                found = pick_target(fetch_targets(args.port), args, quiet=True)
+            except OSError:
+                found = None
+            if found is not None:
+                return found
+        return None
+
     try:
         while True:
-            if deadline and time.monotonic() > deadline:
-                break
+            ws = WsClient(target["webSocketDebuggerUrl"], timeout=1.0)
+            ws.send_text(json.dumps({"id": 1, "method": "Runtime.enable"}))
+            closed = False
             try:
-                message = ws.recv_message()
-            except socket.timeout:
-                continue
-            except ConnectionError:
-                print("# connection closed by Metro (another debugger attached?)", file=sys.stderr)
+                while not expired():
+                    try:
+                        message = ws.recv_message()
+                    except socket.timeout:
+                        continue
+                    except ConnectionError:
+                        message = None
+                    if message is None:
+                        closed = True
+                        break
+                    try:
+                        event = json.loads(message)
+                    except ValueError:
+                        continue
+                    if event.get("method") != "Runtime.consoleAPICalled":
+                        continue
+                    params = event["params"]
+                    text = " ".join(format_arg(a) for a in params.get("args", []))
+                    if pattern and not pattern.search(text):
+                        continue
+                    matched += 1
+                    if args.raw_json:
+                        print(json.dumps(params))
+                    else:
+                        ts = datetime.fromtimestamp(params.get("timestamp", 0) / 1000).strftime("%H:%M:%S.%f")[:-3]
+                        print(f"[{ts}] {params.get('type', 'log').upper()} {text}")
+                    sys.stdout.flush()
+            finally:
+                ws.close()
+            if not closed or args.no_follow or expired():
+                if closed:
+                    print("# websocket closed by Metro (app restarted, or another debugger attached) - not following",
+                          file=sys.stderr)
                 break
-            if message is None:
-                print("# websocket closed by Metro", file=sys.stderr)
+            print("# websocket closed by Metro (app restarted?) - waiting for "
+                  f"{args.app} on {args.device} to come back", file=sys.stderr)
+            target = wait_for_target()
+            if target is None:
+                print("# runtime did not come back before the deadline", file=sys.stderr)
                 break
-            try:
-                event = json.loads(message)
-            except ValueError:
-                continue
-            if event.get("method") != "Runtime.consoleAPICalled":
-                continue
-            params = event["params"]
-            text = " ".join(format_arg(a) for a in params.get("args", []))
-            if pattern and not pattern.search(text):
-                continue
-            matched += 1
-            if args.raw_json:
-                print(json.dumps(params))
-            else:
-                ts = datetime.fromtimestamp(params.get("timestamp", 0) / 1000).strftime("%H:%M:%S.%f")[:-3]
-                print(f"[{ts}] {params.get('type', 'log').upper()} {text}")
-            sys.stdout.flush()
+            print(f"# reconnected to {target.get('appId')} on {target.get('deviceName')} "
+                  f"[{target.get('description')}] - buffered logs replay below", file=sys.stderr)
     except KeyboardInterrupt:
         pass
-    finally:
-        ws.close()
 
     if matched == 0:
         print("# no console events matched. If DevTools is open on this app, close it and retry.",

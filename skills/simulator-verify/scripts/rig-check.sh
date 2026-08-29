@@ -85,6 +85,14 @@ verdict() { # verdict OK|DEAD "reason"
   echo "----------------------------------------------------------------"
   if [[ "$1" == "OK" ]]; then
     echo "RIG OK - the app is running code from $REPO"
+    # JS is live from Metro, the native layer is frozen at build time. Say when
+    # that was on EVERY green verdict, not only on a detected skew: a native fix
+    # merged after this date (2026-08-29: custom-scheme deep links, merged
+    # 2026-08-28 into a binary built 2026-08-27) is simply absent, silently.
+    if [[ -n "${APP:-}" ]]; then
+      local built; built="$(app_built_epoch "$APP")"
+      [[ -n "$built" ]] && echo "  native binary built $(fmt_epoch "$built") - native changes merged after that are NOT in this app"
+    fi
   else
     echo "RIG DEAD: $2"
     echo "  => no observation from this session is valid, including screenshots."
