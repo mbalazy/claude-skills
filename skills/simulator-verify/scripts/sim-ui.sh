@@ -4,7 +4,8 @@
 # (same backend mobile-mcp uses; the WDA runner app must be installed on the sim).
 #
 # Usage:
-#   sim-ui.sh elements [--all]              # a11y element tree as compact JSON (--all: every visible element incl. unlabeled)
+#   sim-ui.sh elements [--all] [--settled]  # a11y element tree as compact JSON (--all: every visible element incl. unlabeled;
+#                                           #  --settled: two reads $SIMUI_SETTLE_SECONDS (2) apart, exit 3 if they differ = still animating)
 #   sim-ui.sh tap X Y                       # coordinates in pt
 #   sim-ui.sh doubletap X Y
 #   sim-ui.sh longpress X Y [DURATION_MS]
@@ -274,12 +275,40 @@ case "$cmd" in
   elements)
     ensure_wda
     ALL=""
-    [ "${1:-}" = "--all" ] && ALL="--all"
+    SETTLED=0
+    for _a in "$@"; do
+      case "$_a" in
+        --all) ALL="--all" ;;
+        --settled) SETTLED=1 ;;
+        *) echo "unknown flag for elements: $_a" >&2; exit 2 ;;
+      esac
+    done
     # Answering this query makes UITabBarController instantiate EVERY child controller,
     # so a screen you never navigated to can mount just because you measured
     # (journal sim-rig 20260730-74da). Never use it to prove a screen was not mounted.
     echo "NOTE: reading the a11y tree mounts every tab's controller - it is not a passive read." >&2
-    curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" $ALL
+    if [ "$SETTLED" -eq 0 ]; then
+      curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" $ALL
+    else
+      # One read right after a tap is a FRAME of an animation, not the state: a
+      # dismissing keyboard or a sheet mid-transition reads as "gone" and is back
+      # in the next frame (2026-08-29: "no keyboard, grabber Expanded" read once,
+      # keyboard present 4 s later - a false CONFIRMED for tap-to-dismiss). Two
+      # reads that agree are the state; two that differ are refused, with the diff.
+      # The status-bar clock is in the tree, so a minute boundary inside the gap
+      # would read as motion - compare with every HH:MM label normalised.
+      _gap="${SIMUI_SETTLE_SECONDS:-2}"
+      _first="$(curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" $ALL)"
+      sleep "$_gap"
+      _second="$(curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" $ALL)"
+      _norm() { sed -E 's/"label":"[0-9]{1,2}:[0-9]{2}"/"label":"HH:MM"/g'; }
+      if [ "$(printf '%s' "$_first" | _norm)" != "$(printf '%s' "$_second" | _norm)" ]; then
+        echo "ERROR: the a11y tree changed between two reads ${_gap}s apart - the screen is still moving (keyboard, sheet, transition), so neither read is its state. Wait and read again; what changed:" >&2
+        diff <(printf '%s\n' "$_first") <(printf '%s\n' "$_second") | head -20 >&2 || true
+        exit 3
+      fi
+      printf '%s\n' "$_second"
+    fi
     ;;
 
   tap)

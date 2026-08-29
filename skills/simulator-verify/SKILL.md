@@ -130,6 +130,7 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
 - After any tap that should change the screen, re-run `$S elements` and confirm the content actually changed (e.g. header label flipped) - a registered click is not proof of navigation.
 - Interactions: `$S tap|doubletap|longpress|swipe|type|button` (see script header for signatures). Coordinates are POINTS; a coordinate measured on a full-res screenshot must be divided by the scale first. Out-of-range coordinates are rejected rather than silently doing nothing.
 - **Alerts queue and arrive late.** One read a few seconds after a tap that says "no alert" is not evidence the tap did nothing. Use `$S alert wait [seconds]` to wait for one, and `$S alert accept --all` afterwards - if it drains more alerts than you ever saw, every tap landed.
+- **One read right after a tap is a frame of an animation, not the state.** A dismissing keyboard, a sheet mid-transition or a launch screen reads as "gone" and is back in the next frame (a tap-to-dismiss was CONFIRMED off one read; 4 s later the keyboard was there). Assert transitions with **`$S elements --settled`**: two reads 2 s apart (`SIMUI_SETTLE_SECONDS`), exit 3 with the diff when they differ. Only two reads that agree are evidence.
 - `$S elements` is not a passive read: answering it makes `UITabBarController` instantiate every child controller, so it can mount the very screen you are testing for. Never use it to prove a screen was NOT mounted.
 
 ### 3. Assert
@@ -196,6 +197,8 @@ The `--since "$TS"` (timestamp captured before the action) is the "which logs ar
 # stream console.* straight from Metro's inspector proxy (stdlib only, no deps):
 scripts/read-rn-logs-cdp.py --port 8090 --seconds 10 --grep '[LAYOUT]'
 ```
+
+Metro closes the inspector socket on every app restart (relaunch, crash, a reload that replaces the runtime) - that is normal. The tap **follows**: it waits for the same bundle id on the same device to reappear and reconnects, and `Runtime.enable` on the new runtime replays what was logged while nobody was attached, so a relaunch inside the window loses nothing (`# reconnected to ...` on stderr marks it). Start the tap once, before the flow, with `--seconds` covering the whole flow (or `0` = until Ctrl-C); `--no-follow` restores exit-on-close. Before 2026-08-29 the tap died silently on the first close and whole flows ran unlogged.
 It auto-picks the app's MAIN JS runtime (`prefersFuseboxFrontend: true`; worklet runtimes like Reanimated's UI need `--all-runtimes`), refuses to guess between devices (`--device <name-substring>`), and `Runtime.enable` makes Hermes replay its buffered console history with original timestamps - so logs from just BEFORE the tap connected still show up. One debugger per page: if React Native DevTools is attached to the same app, close it first.
 
 Reading the numbers beats reading the pixels: in ACME-1164 the logs showed `SEARCH_INPUT height=64` on one step and `height=16` on the buggy step - that single number ended ~3 sessions of guessing. When a layout bug survives one round of eyeballing, instrument immediately; don't iterate on hunches.
