@@ -67,7 +67,6 @@ Scripts worth knowing in `simulator-verify`:
 | `parallel-guard` | Defensive rules for a session that shares a working tree with another live session: never bulk-stage, verify the branch before every commit, re-read before every edit. |
 | `commit-split` | Splits an accumulated working-tree diff into small logical commits with imperative messages, linked to the related pm task. |
 | `claim-check` | Verifies every factual claim in a text about to leave the session (a PR description, a ticket comment, a report) with a fresh-context agent that never saw how the text was written. |
-| `session-id` | Prints the current session id with a ready-to-paste handoff card for continuing the conversation on another device. |
 | `humanizer` | Removes the signs of AI-generated writing from a text. A trimmed fork of [blader/humanizer](https://github.com/blader/humanizer) (MIT, license kept in the directory). |
 
 ## Install
