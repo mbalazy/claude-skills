@@ -65,6 +65,29 @@ architecture document *(config)* names the layout; use it to find:
   the nearest match rather than inventing one.
 - The data layer: does a query for this server data already exist? does a store
   slice already hold this UI state?
+- **The backend side of every API call the feature will make**, using the backend
+  contract map *(config)* when the project has one: does the route exist in the
+  backend repo, WHO is it for (router prefix, tag, auth dependency name the
+  consumer), which business rules does its handler apply, and does its response
+  match the type you are about to declare. An endpoint that exists is not
+  automatically the endpoint for this client - one that belongs to another
+  consumer (public page, admin, another app) carries that consumer's rules. A
+  wrong-consumer or missing route is a backend ticket to raise in the spec, not a
+  call to make anyway.
+- **Every value the UI will compute itself that the backend also computes**
+  (prices, fees, totals, availability, policy outcomes), and every backend ticket
+  the feature leans on ("until X lands", "assumes the backend will flip"). A
+  feature can depend on the backend with zero new API calls: the screen shows a
+  number derived from app-side constants while the server still charges by its
+  own rules. For each such value or ticket, record where the backend computes it
+  and verify the ticket's status against the backend repo itself (commits, merged
+  PRs, the module on the production branch) - a ticket marked done with no code
+  behind it is a red flag, not a green light. A confirmed gap is a promotion
+  condition that must reach the ticket system (a comment naming the environment
+  it must not be promoted to, and a blocked status when money is involved), never
+  only the PR body, and the dependent UI sits behind a config flag or the PR
+  waits. The backend contract map *(config)* may carry the project's own worked
+  example.
 - The component registry or design-system index *(config)*, if the project has
   one - reuse an existing component before creating a new one.
 - The shared types.
