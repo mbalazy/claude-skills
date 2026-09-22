@@ -14,6 +14,8 @@
 
 ### State & data
 - **Server data**: {the existing query/endpoint this uses, or the new one and where it goes}
+- **Backend contract**: {per endpoint: backend route file:line, router prefix / auth = consumer, handler rules inherited, response vs declared type, backend ticket + real status; or "no API touchpoints"}
+- **Backend-derived values**: {every value the UI computes that the backend also computes (prices, fees, totals, availability, policy outcomes) + where the backend computes it; every backend ticket this leans on with its status verified in the backend repo (commit / merged PR), not only in the tracker; or "none". A confirmed gap = promotion condition on the ticket + blocked status when money is involved}
 - **Local UI state**: {the existing store slice, or the new one and where it goes}
 - **Types**: {where the shared types live}
 
