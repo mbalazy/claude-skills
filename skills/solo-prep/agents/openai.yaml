@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solo Prep"
+  short_description: "Kompletne kolejki parent i suby do solo runów"
+  default_prompt: "Użyj $solo-prep, aby przygotować parent i suby w PM według uzgodnionego planu: najpierw ustal ze mną tryb sprawdzania w przeglądarce, przypnij źródła, na końcu uruchom scripts/check-queue.py. Bez uruchamiania runu."
