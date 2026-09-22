@@ -1,5 +1,5 @@
 #!/bin/sh
-# Wire this toolkit's skills into Claude Code.
+# Wire this repository's skills into Claude Code.
 #
 #   ./install.sh                        # user-wide only (~/.claude/skills)
 #   ./install.sh --project /path/repo   # user-wide + link into one repo
@@ -61,7 +61,7 @@ link() {
   echo "  linked   $dst"
 }
 
-echo "toolkit: $REPO"
+echo "skills: $REPO"
 echo
 echo "user-wide (~/.claude/skills):"
 for dir in "$SKILLS"/*/; do
@@ -80,7 +80,7 @@ if [ -n "$PROJECT" ]; then
   echo "project ($PROJECT):"
   for name in $PROJECT_SCOPED; do
     if [ ! -d "$SKILLS/$name" ]; then
-      echo "  SKIP     $name - not in this toolkit"
+      echo "  SKIP     $name - not in this repository"
       continue
     fi
     link "$SKILLS/$name" "$PROJECT/.claude/skills/$name"

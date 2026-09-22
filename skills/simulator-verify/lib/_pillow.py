@@ -26,8 +26,8 @@ import subprocess
 import sys
 
 VENV = os.environ.get(
-    "MOBILE_TOOLKIT_VENV",
-    os.path.expanduser("~/.local/share/mobile-claude-toolkit/venv"),
+    "CLAUDE_SKILLS_VENV",
+    os.path.expanduser("~/.local/share/claude-skills/venv"),
 )
 VENV_PY = os.path.join(VENV, "bin", "python3")
 
@@ -99,7 +99,7 @@ def _fail():
         "Then re-run this script normally - it finds that venv on its own.\n"
         "Do NOT `pip install` into a Homebrew Python: PEP 668 blocks it, and\n"
         "--break-system-packages is not worth it for one image library.\n"
-        "Override the location with MOBILE_TOOLKIT_VENV.",
+        "Override the location with CLAUDE_SKILLS_VENV.",
         file=sys.stderr,
     )
     sys.exit(2)
