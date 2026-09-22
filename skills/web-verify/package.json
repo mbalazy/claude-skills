@@ -1,0 +1,10 @@
+{
+  "name": "web-verify",
+  "private": true,
+  "description": "Playwright driver for the web-verify skill (see SKILL.md). Installed once by hand: npm install && npx playwright install chromium",
+  "type": "module",
+  "dependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "playwright": "1.63.0"
+  }
+}
