@@ -3,6 +3,7 @@
 #
 #   ./install.sh                        # user-wide only (~/.claude/skills)
 #   ./install.sh --project /path/repo   # user-wide + link into one repo
+#   CLAUDE_CONFIG_DIR=~/.claude-work ./install.sh   # another config dir
 #
 # Skills are linked, never copied: after a `git pull` here, every linked
 # location has the new version immediately.
@@ -15,6 +16,10 @@ set -eu
 REPO=$(cd "$(dirname "$0")" && pwd)
 SKILLS="$REPO/skills"
 PROJECT=""
+# The Claude config dir the user-wide links go into. Claude Code reads
+# CLAUDE_CONFIG_DIR for a second account or a slim worker dir; pm pins one per
+# project and its doctor names it when a skill is missing there.
+CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 
 # Skills that are ALSO linked inside a project repo, each for its own reason:
 #
@@ -33,7 +38,7 @@ PROJECT_SCOPED="simulator-verify developing-features"
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) PROJECT="${2:?--project needs a path}"; shift 2 ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -63,10 +68,10 @@ link() {
 
 echo "skills: $REPO"
 echo
-echo "user-wide (~/.claude/skills):"
+echo "user-wide ($CFG/skills):"
 for dir in "$SKILLS"/*/; do
   name=$(basename "$dir")
-  link "$SKILLS/$name" "$HOME/.claude/skills/$name"
+  link "$SKILLS/$name" "$CFG/skills/$name"
 done
 
 if [ -n "$PROJECT" ]; then
