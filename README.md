@@ -77,6 +77,7 @@ git clone https://github.com/mbalazy/claude-skills ~/repos/claude-skills
 cd ~/repos/claude-skills
 ./install.sh                              # user-wide: ~/.claude/skills
 ./install.sh --project /path/to/your/repo # plus the two repo-scoped skills
+CLAUDE_CONFIG_DIR=~/.claude-work ./install.sh   # into another config dir
 ```
 
 The installer creates symbolic links, so a `git pull` here updates every place
