@@ -17,10 +17,28 @@ here. The skill stays generic; this file is where the project knowledge lives.
 - **bundle id**: `<com.example.app.development>` - the dev build's id, what
   `sim-ui.sh launch` takes.
 - **scheme**: `<Xcode scheme, e.g. MyApp-Development>`
-- **platform**: iOS simulator / physical device. Note here if a physical device
-  is in play - JS `console.log` does NOT reach `idevicesyslog` on a device with
-  the New Architecture, and UI automation needs a signed WebDriverAgent, so on
-  a device the loop degrades to screenshots plus a human tapping.
+- **platform**: iOS simulator, and optionally a physical iPhone on the USB cable.
+  A phone is driven by the same scripts (`SIM_UDID=<phone udid>`); what it needs
+  from this file is the section below.
+
+## Physical iPhone (fill in when one is used)
+
+- **udid**: `<0000XXXX-XXXXXXXXXXXXXXXX from xcrun devicectl list devices>`
+- **device build**: `<scheme / configuration / bundle id that has a provisioning
+  profile for this phone>` - a device build needs a profile, so it may not be the
+  simulator's scheme; note the ENVFILE or equivalent that bakes the backend
+  address, because the phone cannot reach the Mac's `localhost` (use the Mac's
+  address on the USB link, `169.254.x.x` from `ifconfig` while the phone is
+  plugged in).
+- **WebDriverAgent**: `scripts/wda-device.sh <udid> --team <TEAM_ID>` - record
+  the Apple team whose Xcode-managed wildcard profile lists this phone, the
+  runner bundle id if not the default `com.$USER.WebDriverAgentRunner`, and the
+  tunnel port (default 8200). `wda-device.sh --status` says whether it is up.
+- **JS console**: `read-rn-logs-cdp.py --device iPhone` (the phone registers on
+  Metro as plain `iPhone`); `idevicesyslog` carries native `NSLog` only.
+- **traps**: a fresh install waits on the iOS "Local Network" prompt until a
+  human taps Allow (nothing is logged anywhere); `-RCT_jsLocation` is ignored
+  only when the build's `ip.txt` lists more than one Metro candidate.
 
 ## Device
 
