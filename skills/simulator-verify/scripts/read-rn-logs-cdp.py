@@ -122,6 +122,7 @@ class WsClient:
         handshake = (
             f"GET {path} HTTP/1.1\r\n"
             f"Host: {host}:{port}\r\n"
+            f"Origin: http://{host}:{port}\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {key}\r\n"
