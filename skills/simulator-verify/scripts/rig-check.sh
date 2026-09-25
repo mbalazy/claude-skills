@@ -19,6 +19,11 @@
 #     --entry FILE       entry file to mark, relative to repo (default: index.js)
 #     --udid UDID        simulator (default: $SIM_UDID; else the only booted one, or - with
 #                        several booted - the one connected to this repo's Metro. Never a guess.)
+#                        A PHYSICAL iPhone's udid (0000XXXX-<16 hex>, from `xcrun devicectl
+#                        list devices`) switches the whole check to the phone - see below.
+#     --host ADDR        physical iPhone only: the Mac's address on the USB link that the
+#                        phone must fetch JS from (default: the address the phone already
+#                        talks to Metro on, else the only 169.254.* interface)
 #     --port N           Metro port (default: the Metro whose cwd is <repo>, else 8081)
 #     --reload           trigger with `curl /reload` instead of terminate+launch (faster,
 #                        keeps navigation state, but only works if --port is right)
@@ -33,8 +38,16 @@
 # rather than on the port baked into the binary at build time. That redirect lives for one
 # launch only (it is an NSUserDefaults argument-domain value, never persisted), which is why
 # a plain `simctl launch` afterwards drops it and sends the app back to its baked port.
-# Simulator builds accept it; a physical-device build does not, because its bundle carries an
-# `ip.txt` that AppDelegate reads first. Suppress with --no-jslocation.
+# Suppress with --no-jslocation.
+#
+# On a PHYSICAL iPhone the same check runs with the phone's plumbing: the app is found and
+# launched through `xcrun devicectl` (`-- -RCT_jsLocation <mac-usb-address>:<port>`, the `--`
+# being what keeps devicectl from eating the flag), and the marker is read back through
+# Metro's CDP inspector (read-rn-logs-cdp.py) because a phone has no simulator log. Two things
+# a phone cannot answer: whether the binary carries an embedded main.jsbundle, and when it
+# was built - both are said so in the notes instead of guessed. A device build whose `ip.txt`
+# lists MORE than one Metro candidate ignores the launch flag (AppDelegate probes the
+# candidates first); with one line or none, the flag wins.
 #
 # Exit: 0 = RIG OK, 1 = RIG DEAD, 2 = bad usage.
 # The marker is always removed again, including on Ctrl-C or an error mid-run.
@@ -43,8 +56,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 READ_LOGS="$SCRIPT_DIR/read-rn-logs.sh"
+READ_CDP="$SCRIPT_DIR/read-rn-logs-cdp.py"
 
-REPO=""; BUNDLE_ID=""; ENTRY="index.js"; UDID="${SIM_UDID:-}"; PORT=""; PORT_EXPLICIT=""
+REPO=""; BUNDLE_ID=""; ENTRY="index.js"; UDID="${SIM_UDID:-}"; PORT=""; PORT_EXPLICIT=""; HOST=""
+KIND="sim"
 TRIGGER="relaunch"; TIMEOUT=30; AUTO_JSLOCATION=1
 LAUNCH_ARGS=()
 
@@ -54,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --bundle-id)     BUNDLE_ID="$2"; shift 2 ;;
     --entry)         ENTRY="$2"; shift 2 ;;
     --udid)          UDID="$2"; shift 2 ;;
+    --host)          HOST="$2"; shift 2 ;;
     --port)          PORT="$2"; PORT_EXPLICIT=1; shift 2 ;;
     --reload)        TRIGGER="reload"; shift ;;
     --launch-arg)    LAUNCH_ARGS+=("$2"); shift 2 ;;
@@ -80,6 +96,54 @@ sims_on_port() {
   done | sort -u
 }
 
+# A simulator udid is 8-4-4-4-12 hex; a physical iPhone's is 0000XXXX-<16 hex> (or 40 bare
+# hex digits on older hardware). The shape decides the plumbing, so a phone never needs a flag.
+udid_kind() {
+  if [[ "$1" =~ ^0000[0-9A-Fa-f]{4}-[0-9A-Fa-f]{16}$ || "$1" =~ ^[0-9a-f]{40}$ ]]; then echo device; else echo sim; fi
+}
+
+connected_devices() {
+  xcrun devicectl list devices 2>/dev/null \
+    | awk '$0 ~ /physical/ && $0 ~ /connected/' \
+    | grep -oE '0000[0-9A-Fa-f]{4}-[0-9A-Fa-f]{16}|\b[0-9a-f]{40}\b'
+}
+
+# Pid of the app's main process on the phone (devicectl names processes by bundle PATH).
+device_app_pid() {
+  local apps procs
+  apps="$(mktemp -t rigcheck-apps)"; procs="$(mktemp -t rigcheck-procs)"
+  xcrun devicectl device info apps --device "$UDID" --bundle-id "$BUNDLE_ID" --json-output "$apps" >/dev/null 2>&1
+  xcrun devicectl device info processes --device "$UDID" --json-output "$procs" >/dev/null 2>&1
+  python3 - "$apps" "$procs" <<'PYEOF'
+import json, sys, urllib.parse
+try:
+    apps = json.load(open(sys.argv[1]))["result"]["apps"]
+    procs = json.load(open(sys.argv[2]))["result"]["runningProcesses"]
+except Exception:
+    sys.exit(0)
+for app in apps:
+    prefix = urllib.parse.unquote(app.get("url", "")).replace("file://", "").rstrip("/")
+    if not prefix:
+        continue
+    for p in procs:
+        exe = urllib.parse.unquote(p.get("executable", "")).replace("file://", "")
+        if exe.startswith(prefix + "/") and "/PlugIns/" not in exe[len(prefix):]:
+            print(p["processIdentifier"]); sys.exit(0)
+PYEOF
+  rm -f "$apps" "$procs"
+}
+
+# The Mac's address on the USB link to the phone: what the phone already talks to Metro
+# on if it is connected, else the only link-local (169.254.*) interface address.
+mac_usb_host() {
+  local a n
+  a="$(lsof -nP -iTCP:"$PORT" -sTCP:ESTABLISHED 2>/dev/null | awk '{print $9}' | grep -oE '^169\.254\.[0-9.]+' | sort -u | head -1)"
+  [[ -n "$a" ]] && { echo "$a"; return; }
+  a="$(ifconfig 2>/dev/null | awk '/inet 169\.254\./ {print $2}' | sort -u)"
+  n="$(printf '%s\n' "$a" | grep -c . || true)"
+  [[ "$n" -eq 1 ]] && echo "$a"
+}
+
 verdict() { # verdict OK|DEAD "reason"
   echo
   echo "----------------------------------------------------------------"
@@ -89,7 +153,10 @@ verdict() { # verdict OK|DEAD "reason"
     # that was on EVERY green verdict, not only on a detected skew: a native fix
     # merged after this date (2026-08-29: custom-scheme deep links, merged
     # 2026-08-28 into a binary built 2026-08-27) is simply absent, silently.
-    if [[ -n "${APP:-}" ]]; then
+    if [[ "$KIND" == device ]]; then
+      echo "  on a phone the build date of the installed binary is not readable from the Mac - native"
+      echo "  changes merged after it was built are NOT in this app; reinstall after a native change"
+    elif [[ -n "${APP:-}" ]]; then
       local built; built="$(app_built_epoch "$APP")"
       [[ -n "$built" ]] && echo "  native binary built $(fmt_epoch "$built") - native changes merged after that are NOT in this app"
     fi
@@ -193,8 +260,16 @@ done < <(xcrun simctl list devices booted 2>/dev/null)
 
 if [[ -z "$UDID" ]]; then
   if (( ${#BOOTED[@]} == 0 )); then
-    note "sim:     NONE BOOTED"
-    verdict DEAD "no booted simulator"
+    # No simulator: a single plugged-in iPhone is the only thing this can mean. A phone
+    # is never chosen over a booted simulator implicitly.
+    PHONES="$(connected_devices)"
+    if [[ "$(printf '%s\n' "$PHONES" | grep -c . || true)" -eq 1 ]]; then
+      UDID="$PHONES"
+      note "sim:     none booted - targeting the plugged-in iPhone $UDID"
+    else
+      note "sim:     NONE BOOTED"
+      verdict DEAD "no booted simulator (and not exactly one iPhone plugged in - pass --udid for a phone)"
+    fi
   elif (( ${#BOOTED[@]} == 1 )); then
     UDID="${BOOTED[0]}"
   else
@@ -222,23 +297,45 @@ if [[ -z "$UDID" ]]; then
     fi
   fi
 fi
-note "sim:     $UDID"
-
-APP="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" app 2>/dev/null)"
-if [[ -z "$APP" || ! -d "$APP" ]]; then
-  verdict DEAD "$BUNDLE_ID is not installed on $UDID"
-fi
-note "app:     $APP"
-
-# Embedded bundle = a Release build that reads JS from inside the .app and ignores Metro
-# entirely. Not proof on its own (a Debug build still prefers Metro), so it is recorded
-# as a suspect and only named as the cause if the marker never arrives.
-EMBEDDED=""
-if [[ -f "$APP/main.jsbundle" ]]; then
-  EMBEDDED=1
-  note "SUSPECT: $APP/main.jsbundle exists -> looks like a Release build (JS frozen at build time)"
+KIND="$(udid_kind "$UDID")"
+if [[ "$KIND" == device ]]; then
+  note "target:  physical iPhone $UDID (lifecycle via devicectl, marker via Metro's CDP inspector)"
+  if ! connected_devices | grep -qx "$UDID"; then
+    verdict DEAD "iPhone $UDID is not plugged in (xcrun devicectl list devices)"
+  fi
 else
-  note "jsbundle: absent (Debug build - pulls JS from Metro)"
+  note "sim:     $UDID"
+fi
+
+EMBEDDED=""
+APP=""
+if [[ "$KIND" == device ]]; then
+  APPS_JSON="$(mktemp -t rigcheck-apps)"
+  xcrun devicectl device info apps --device "$UDID" --bundle-id "$BUNDLE_ID" --json-output "$APPS_JSON" >/dev/null 2>&1
+  APP="$(python3 -c 'import json,sys,urllib.parse
+try:
+    a=json.load(open(sys.argv[1]))["result"]["apps"][0]; print(urllib.parse.unquote(a["url"]).replace("file://",""))
+except Exception: pass' "$APPS_JSON")"
+  rm -f "$APPS_JSON"
+  [[ -n "$APP" ]] || verdict DEAD "$BUNDLE_ID is not installed on iPhone $UDID"
+  note "app:     $APP (on the phone)"
+  note "jsbundle: not checkable on a device - a Release build (embedded main.jsbundle) would show as 'never ran your code'"
+else
+  APP="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" app 2>/dev/null)"
+  if [[ -z "$APP" || ! -d "$APP" ]]; then
+    verdict DEAD "$BUNDLE_ID is not installed on $UDID"
+  fi
+  note "app:     $APP"
+
+  # Embedded bundle = a Release build that reads JS from inside the .app and ignores Metro
+  # entirely. Not proof on its own (a Debug build still prefers Metro), so it is recorded
+  # as a suspect and only named as the cause if the marker never arrives.
+  if [[ -f "$APP/main.jsbundle" ]]; then
+    EMBEDDED=1
+    note "SUSPECT: $APP/main.jsbundle exists -> looks like a Release build (JS frozen at build time)"
+  else
+    note "jsbundle: absent (Debug build - pulls JS from Metro)"
+  fi
 fi
 
 # --- Metro port ------------------------------------------------------------------------
@@ -272,7 +369,7 @@ restore() {
     fi
   fi
 }
-trap restore EXIT INT TERM
+trap 'restore; stop_device_tap' EXIT INT TERM
 
 # a previous run killed mid-flight would have left its own line behind
 if grep -q 'RIGCHECK_' "$BACKUP"; then
@@ -291,6 +388,10 @@ fi
 APP_PID=""
 
 app_alive() {
+  if [[ "$KIND" == device ]]; then
+    [[ -n "$(device_app_pid)" ]]
+    return
+  fi
   if [[ -n "$APP_PID" ]]; then
     kill -0 "$APP_PID" 2>/dev/null
     return
@@ -343,8 +444,12 @@ print(f"{ind} ({sig})".strip() if ind or sig else "", end="")
 # a 40-minute rebuild, when a newer build already sat in DerivedData.
 js_startup_error() {
   local lines pick
-  lines="$(SIMCTL_DEVICE="$UDID" "$READ_LOGS" --since "$TS" 2>/dev/null \
-    | grep -E 'Invariant Violation|Unhandled JS Exception|\[runtime not ready\]')"
+  if [[ "$KIND" == device ]]; then
+    lines="$(grep -E 'Invariant Violation|Unhandled JS Exception|\[runtime not ready\]|could not be found' "$TAP_FILE" 2>/dev/null)"
+  else
+    lines="$(SIMCTL_DEVICE="$UDID" "$READ_LOGS" --since "$TS" 2>/dev/null \
+      | grep -E 'Invariant Violation|Unhandled JS Exception|\[runtime not ready\]')"
+  fi
   [[ -n "$lines" ]] || return 0
   # Prefer the line that names the cause. Terminating the previous instance logs its own
   # "[runtime not ready]: ... stopSurface failed" noise BEFORE the new one throws, and
@@ -385,9 +490,48 @@ newer_products() {
 
 # --- trigger -------------------------------------------------------------------------
 TS="$(date '+%Y-%m-%d %H:%M:%S')"
+TAP_FILE="$(mktemp -t rigcheck-cdp)"
+TAP_PID=""
+# A phone has no simulator log: the marker comes back over Metro's CDP inspector. The tap
+# is started AFTER the launch (before it, the page it attached to dies with the old
+# process) and retried until the new runtime registers; Runtime.enable then replays the
+# console history, so a marker logged before the tap attached is not lost. The phone
+# registers on Metro as plain "iPhone", an exact name the reader prefers over "iPhone 17".
+start_device_tap() {
+  (
+    deadline=$(( SECONDS + TIMEOUT + 5 ))
+    while (( SECONDS < deadline )); do
+      python3 "$READ_CDP" --port "$PORT" --device iPhone --app "$BUNDLE_ID" --seconds "$TIMEOUT" >> "$TAP_FILE" 2>/dev/null && break
+      sleep 1
+    done
+  ) &
+  TAP_PID=$!
+}
+stop_device_tap() { [[ -n "$TAP_PID" ]] && { pkill -P "$TAP_PID" 2>/dev/null; kill "$TAP_PID" 2>/dev/null; wait "$TAP_PID" 2>/dev/null; }; TAP_PID=""; }
+
 if [[ "$TRIGGER" == "reload" ]]; then
   curl -s -m 5 "localhost:$PORT/reload" >/dev/null 2>&1
   note "trigger: curl localhost:$PORT/reload"
+  [[ "$KIND" == device ]] && start_device_tap
+elif [[ "$KIND" == device ]]; then
+  ARGS=("${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"}")
+  if [[ -n "$AUTO_JSLOCATION" ]] && ! printf '%s\n' "${ARGS[@]+"${ARGS[@]}"}" | grep -qx -- '-RCT_jsLocation'; then
+    [[ -n "$HOST" ]] || HOST="$(mac_usb_host)"
+    if [[ -z "$HOST" ]]; then
+      note "host:    could not derive the Mac's address on the USB link (no phone connection to :$PORT, not exactly one 169.254.* interface)"
+      verdict DEAD "the phone needs the Mac's address to fetch JS from and it could not be derived - pass --host <addr> (ifconfig, the interface that appears when the phone is plugged in)"
+    fi
+    ARGS+=(-RCT_jsLocation "$HOST:$PORT")
+    note "host:    $HOST (the Mac on the USB link; the phone cannot reach 'localhost')"
+  fi
+  LAUNCH_OUT="$(xcrun devicectl device process launch --terminate-existing --device "$UDID" "$BUNDLE_ID" -- ${ARGS[@]+"${ARGS[@]}"} 2>&1)" || true
+  case "$LAUNCH_OUT" in
+    *"Launched application"*) ;;
+    *) note "launch:  $(printf '%s' "$LAUNCH_OUT" | tail -1)" ;;
+  esac
+  note "trigger: devicectl launch --terminate-existing with ${ARGS[*]:-no arguments}"
+  note "         those launch arguments live for THIS launch only - a plain launch drops them"
+  start_device_tap
 else
   ARGS=("${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"}")
   # A launch of our own replaces whatever the app was started with, so an app that had been
@@ -422,7 +566,9 @@ ALIVE_AT_START=""
 app_alive && ALIVE_AT_START=1
 while (( WAITED < TIMEOUT )); do
   sleep 2; WAITED=$((WAITED + 2))
-  if SIMCTL_DEVICE="$UDID" "$READ_LOGS" --since "$TS" --grep "$MARKER" 2>/dev/null | grep -q "$MARKER"; then
+  if [[ "$KIND" == device ]]; then
+    grep -q "$MARKER" "$TAP_FILE" 2>/dev/null && { FOUND=1; break; }
+  elif SIMCTL_DEVICE="$UDID" "$READ_LOGS" --since "$TS" --grep "$MARKER" 2>/dev/null | grep -q "$MARKER"; then
     FOUND=1; break
   fi
   if [[ -n "$ALIVE_AT_START" ]] && ! app_alive; then
@@ -432,9 +578,10 @@ done
 
 restore
 trap - EXIT INT TERM
+stop_device_tap
 # The reference file outlives restore() - the crash lookup below still needs it - so it
 # gets its own cleanup covering every exit path, verdicts included.
-trap 'rm -f "$CRASH_REF"' EXIT INT TERM
+trap 'rm -f "$CRASH_REF" "$TAP_FILE"' EXIT INT TERM
 # leave the app running marker-free code, best effort
 curl -s -m 5 "localhost:$PORT/reload" >/dev/null 2>&1
 
@@ -450,16 +597,21 @@ if [[ -n "$APP_DIED" ]]; then
   # A few seconds of slack on the cutoff: -newermt wants the file STRICTLY newer, and the
   # report lands in the same second the run started, so an exact cutoff misses it every time.
   REPORT=""
+  if [[ "$KIND" == device ]]; then
+    note "crash:   a phone's crash reports stay on the phone (Settings > Privacy & Security > Analytics Data),"
+    note "         or land in Xcode > Window > Devices and Simulators > View Device Logs"
+  else
   for _ in $(seq 1 8); do
     REPORT="$(crash_report_since "$CRASH_REF")"
     [[ -n "$REPORT" ]] && break
     sleep 1
   done
+  fi
   if [[ -n "$REPORT" ]]; then
     REASON="$(crash_reason "$REPORT")"
     note "crash:   ${REASON:-crash report written, reason not parsed}"
     note "         $REPORT"
-  else
+  elif [[ "$KIND" != device ]]; then
     note "crash:   no crash report for $BUNDLE_ID since the launch - it may have been"
     note "         terminated from outside (another session, Simulator.app, simctl)."
   fi
@@ -517,5 +669,15 @@ else
   fi
   note "HINT:    if the app needs launch arguments to reach this Metro, pass them with --launch-arg"
   note "         (a launch here replaces the one that started the app, arguments included)."
+  if [[ "$KIND" == device ]]; then
+    if lsof -nP -iTCP:"$PORT" -sTCP:ESTABLISHED 2>/dev/null | grep -q '169\.254\.'; then
+      note "HINT:    the phone DOES hold a connection to :$PORT, so JS is being served - suspect a Release"
+      note "         build (embedded bundle), or the app waiting on the iOS 'Local Network' prompt on a fresh install"
+    else
+      note "HINT:    no connection from the phone to :$PORT at all. A fresh install waits on the iOS"
+      note "         'Local Network' prompt until a human taps Allow (nothing is logged anywhere); a"
+      note "         device build whose ip.txt lists several Metro candidates ignores -RCT_jsLocation"
+    fi
+  fi
   verdict DEAD "the app never ran your code, and neither the build nor Metro explains why. Check that the app is foregrounded and that it is talking to :$PORT."
 fi

@@ -28,15 +28,27 @@
 #   sim-ui.sh do 'STEP' 'STEP' ...          # run several of the above in ONE process and ONE round trip
 #                                           # (steps read from stdin when no args; '?step' may fail; '#step' is a comment)
 #
-# Device selection: $SIM_UDID if set, else the only booted simulator. With more than
-# one booted and $SIM_UDID unset the script REFUSES rather than picking one, and it
-# checks that the WDA answering on $WDA_PORT really drives that device.
+# Device selection: $SIM_UDID if set, else the only booted simulator (or, with no
+# simulator booted, the only physical iPhone plugged in). With more than one candidate
+# and $SIM_UDID unset the script REFUSES rather than picking one, and it checks that the
+# WDA answering on $WDA_PORT really drives that device.
+#
+# A PHYSICAL iPhone is a first-class target: put its udid (the 0000XXXX-XXXXXXXXXXXXXXXX
+# shape that `xcrun devicectl list devices` prints) in $SIM_UDID and every command above
+# works unchanged. The script tells the two apart by the udid's shape and switches the
+# plumbing underneath: lifecycle through `xcrun devicectl` instead of `simctl`,
+# WebDriverAgent reached through an `iproxy <port> 8100 -u <udid>` tunnel (found by the
+# udid in the iproxy command line when $WDA_PORT is unset; never auto-started - see
+# wda-device.sh), screen geometry from WDA instead of simctl, screenshots via devicectl,
+# and `type` sends ONE character per request with a pause, because a burst drops
+# characters on a device (measured: "5125550199" arrived as "(519) 9").
 #
 # Coordinates are POINTS. Screenshots are PIXELS - divide by the device scale (3 on
 # every current iPhone) before tapping what you measured on an image.
 
 set -euo pipefail
 
+WDA_PORT_GIVEN="${WDA_PORT:-}"
 WDA_PORT="${WDA_PORT:-8100}"
 WDA="http://localhost:${WDA_PORT}"
 WDA_RUNNER="com.facebook.WebDriverAgentRunner.xctrunner"
@@ -54,10 +66,61 @@ SIMUI_CACHE_DIR="${SIMUI_CACHE_DIR:-${TMPDIR:-/tmp}/sim-ui-cache}"
 _MEMO_POINTS=""      # "<w-pt> <h-pt> <scale>" for the target device
 _MEMO_WDA=""         # non-empty once WDA answered AND was confirmed to drive our sim
 _MEMO_SID=""         # a WDA session reused by every interaction in this process
+_MEMO_KIND=""        # "sim" or "device", decided once from the udid's shape
+
+# A simulator udid is 8-4-4-4-12 hex; a physical iPhone's is 0000XXXX-<16 hex> (2018+
+# hardware) or 40 bare hex digits (older). The shape decides which plumbing every command
+# below uses, so a phone never has to be announced with a flag somebody forgets.
+udid_kind() {
+  if [[ "$1" =~ ^0000[0-9A-Fa-f]{4}-[0-9A-Fa-f]{16}$ || "$1" =~ ^[0-9a-f]{40}$ ]]; then
+    echo device
+  else
+    echo sim
+  fi
+}
+
+kind() {
+  [ -n "$_MEMO_KIND" ] || _MEMO_KIND="$(udid_kind "$(udid)")"
+  echo "$_MEMO_KIND"
+}
+
+# Physical iPhones currently plugged in (USB), one udid per line.
+connected_devices() {
+  xcrun devicectl list devices 2>/dev/null \
+    | awk '$0 ~ /physical/ && $0 ~ /connected/' \
+    | grep -oE '0000[0-9A-Fa-f]{4}-[0-9A-Fa-f]{16}|\b[0-9a-f]{40}\b'
+}
+
+# Pid of the app's main process on the phone, or nothing when it is not running.
+# devicectl only terminates by pid, and the process list names executables by bundle
+# path rather than by bundle id, so this resolves the path first.
+device_app_pid() {
+  local dev="$1" bundle="$2" apps procs
+  apps="$(mktemp -t simui-apps)"; procs="$(mktemp -t simui-procs)"
+  xcrun devicectl device info apps --device "$dev" --bundle-id "$bundle" --json-output "$apps" >/dev/null 2>&1
+  xcrun devicectl device info processes --device "$dev" --json-output "$procs" >/dev/null 2>&1
+  python3 - "$apps" "$procs" <<'PYEOF'
+import json, sys, urllib.parse
+try:
+    apps = json.load(open(sys.argv[1]))["result"]["apps"]
+    procs = json.load(open(sys.argv[2]))["result"]["runningProcesses"]
+except Exception:
+    sys.exit(0)
+for app in apps:
+    prefix = urllib.parse.unquote(app.get("url", "")).replace("file://", "").rstrip("/")
+    if not prefix:
+        continue
+    for p in procs:
+        exe = urllib.parse.unquote(p.get("executable", "")).replace("file://", "")
+        if exe.startswith(prefix + "/") and "/PlugIns/" not in exe[len(prefix):]:
+            print(p["processIdentifier"]); sys.exit(0)
+PYEOF
+  rm -f "$apps" "$procs"
+}
 
 udid() {
   if [ -n "${SIM_UDID:-}" ]; then echo "$SIM_UDID"; return; fi
-  local booted count
+  local booted count phones pcount
   booted="$(xcrun simctl list devices booted | grep -oE '[0-9A-F-]{36}')"
   count="$(printf '%s\n' "$booted" | grep -c . || true)"
   # Picking the first of several booted sims is a coin flip that looks like a
@@ -68,6 +131,21 @@ udid() {
     echo "  Pin one: SIM_UDID=<udid> $(basename "$0") ..." >&2
     exit 2
   fi
+  if [ "$count" -eq 0 ]; then
+    # No simulator at all: a single plugged-in iPhone is the only thing this could
+    # mean. A phone is never picked over a booted simulator implicitly - a phone
+    # left on the cable to charge must not silently become the target.
+    phones="$(connected_devices)"
+    pcount="$(printf '%s\n' "$phones" | grep -c . || true)"
+    if [ "$pcount" -eq 1 ]; then
+      echo "NOTE: no simulator booted - targeting the plugged-in iPhone $phones (pin it with SIM_UDID to silence this)." >&2
+      printf '%s\n' "$phones"; return
+    elif [ "$pcount" -gt 1 ]; then
+      echo "ERROR: no simulator booted and $pcount iPhones plugged in - refusing to guess. Pin one: SIM_UDID=<udid>" >&2
+      xcrun devicectl list devices 2>/dev/null | awk '$0 ~ /physical/ && $0 ~ /connected/' | sed 's/^/  /' >&2
+      exit 2
+    fi
+  fi
   printf '%s\n' "$booted" | head -1
 }
 
@@ -75,11 +153,30 @@ udid() {
 # runs every simulated process out of .../Devices/<UDID>/..., so the answer is in
 # the process path. Empty output = could not tell.
 port_owner_udid() {
-  local pid
+  local pid cmd
   pid="$(lsof -ti tcp:"$1" -sTCP:LISTEN 2>/dev/null | head -1)"
   [ -n "$pid" ] || return 0
-  ps -o command= -p "$pid" 2>/dev/null \
-    | sed -nE 's#.*/Devices/([0-9A-F-]{36})/.*#\1#p' | head -1
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
+  case "$cmd" in
+    # An iproxy tunnel to a physical iPhone names its device on the command line
+    # (`iproxy <local> 8100 -u <udid>`), which is the phone-side answer to the
+    # same question.
+    iproxy*|*/iproxy*) printf '%s\n' "$cmd" | grep -oE -- '-u +[0-9A-Fa-f-]+' | awk '{print $2}' | head -1 ;;
+    *) printf '%s\n' "$cmd" | sed -nE 's#.*/Devices/([0-9A-F-]{36})/.*#\1#p' | head -1 ;;
+  esac
+}
+
+# The iproxy tunnel (local port) that leads to a given phone's WebDriverAgent, if one
+# is up. Ports are scanned by listener, not guessed from a table.
+device_wda_port() {
+  local want="$1" pid port cmd
+  for pid in $(pgrep -x iproxy 2>/dev/null); do
+    cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
+    printf '%s\n' "$cmd" | grep -qE -- "-u +$want\b" || continue
+    port="$(printf '%s\n' "$cmd" | awk '{for(i=2;i<=NF;i++) if ($i ~ /^[0-9]+$/) {print $i; exit}}')"
+    [ -n "$port" ] && { echo "$port"; return 0; }
+  done
+  return 0
 }
 
 # A live WDA on the port proves something is listening - NOT that it drives the
@@ -104,6 +201,16 @@ assert_wda_owner() {
       exit 1
     fi
   done
+  if [ "$(kind)" = device ]; then
+    other="$(device_wda_port "$want")"
+    if [ -n "$other" ]; then
+      echo "  An iproxy tunnel to $want is already up on :$other - re-run with WDA_PORT=$other (or unset it)." >&2
+    else
+      echo "  No iproxy tunnel to $want is up. Bring WebDriverAgent up on the phone with:" >&2
+      echo "    $HERE/wda-device.sh $want" >&2
+    fi
+    exit 1
+  fi
   echo "  No WDA for $want found on :8100-8110. Start one on a free port:" >&2
   echo "    SIMCTL_CHILD_USE_PORT=<free-port> xcrun simctl launch $want $WDA_RUNNER" >&2
   echo "    then re-run with WDA_PORT=<free-port>." >&2
@@ -141,9 +248,33 @@ wda_start_diagnostics() {
 }
 
 ensure_wda() {
-  local want launch_out
+  local want launch_out tunnel
   [ -n "$_MEMO_WDA" ] && return 0
   want="$(udid)"
+  if [ "$(kind)" = device ]; then
+    # WDA on a phone is an XCTest run that only `xcodebuild test` can start (an
+    # already-installed runner cannot be launched with devicectl), so it is never
+    # auto-started here. What can be derived is the tunnel: with WDA_PORT unset the
+    # iproxy whose command line names this udid is the port.
+    if [ -z "$WDA_PORT_GIVEN" ]; then
+      tunnel="$(device_wda_port "$want")"
+      if [ -z "$tunnel" ]; then
+        echo "ERROR: no iproxy tunnel to iPhone $want is up, so its WebDriverAgent is unreachable." >&2
+        echo "  Bring it up (WDA via xcodebuild test in a screen + iproxy), then retry:" >&2
+        echo "    $HERE/wda-device.sh $want" >&2
+        exit 1
+      fi
+      WDA_PORT="$tunnel"; WDA="http://localhost:${WDA_PORT}"
+    fi
+    if curl -s -m 3 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; _MEMO_WDA=1; return; fi
+    echo "ERROR: nothing answers on :$WDA_PORT for iPhone $want." >&2
+    if [ -n "$(port_owner_udid "$WDA_PORT")" ]; then
+      echo "  The iproxy tunnel is up but WebDriverAgent on the phone is not answering through it:" >&2
+      echo "  the xcodebuild test run has ended or is still starting (its log ends in ServerURLHere when ready)." >&2
+    fi
+    echo "  Restart it with: $HERE/wda-device.sh $want" >&2
+    exit 1
+  fi
   if curl -s -m 2 "$WDA/status" >/dev/null 2>&1; then assert_wda_owner "$want"; _MEMO_WDA=1; return; fi
   # SIMCTL_CHILD_ is load-bearing: WDA reads USE_PORT from the ENVIRONMENT, and
   # anything after the bundle id is a launch argument simctl never turns into one.
@@ -184,11 +315,33 @@ device_points() {
   if [ -z "${SIMUI_NO_CACHE:-}" ] && [ -s "$f" ]; then
     _MEMO_POINTS="$(cat "$f")"; echo "$_MEMO_POINTS"; return 0
   fi
-  w="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_WIDTH 2>/dev/null || true)"
-  h="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_HEIGHT 2>/dev/null || true)"
-  s="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_SCALE 2>/dev/null | cut -d. -f1 || true)"
-  [ -n "$w" ] && [ -n "$h" ] && [ -n "$s" ] && [ "$s" -gt 0 ] 2>/dev/null || return 0
-  _MEMO_POINTS="$((w / s)) $((h / s)) $s"
+  if [ "$(udid_kind "$1")" = device ]; then
+    # A phone has no simctl environment; WebDriverAgent reports the geometry
+    # (/wda/screen: screenSize in points + scale). Screenshots work without WDA,
+    # so a phone without a tunnel just loses the range check and the pt resampling.
+    if [ -z "$_MEMO_WDA" ]; then
+      _p="$WDA_PORT"; [ -z "$WDA_PORT_GIVEN" ] && _p="$(device_wda_port "$1")"
+      if [ -n "$_p" ] && curl -s -m 2 "http://localhost:$_p/status" >/dev/null 2>&1; then ensure_wda; fi
+    fi
+    if [ -n "$_MEMO_WDA" ]; then
+      session
+      read -r w h s < <(curl -s -m 10 "$WDA/session/$_MEMO_SID/wda/screen" | python3 -c '
+import sys, json
+try:
+    v = json.load(sys.stdin)["value"]; ss = v["screenSize"]
+    print(int(ss["width"]), int(ss["height"]), int(v["scale"]))
+except Exception:
+    pass')
+    fi
+  else
+    w="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_WIDTH 2>/dev/null || true)"
+    h="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_HEIGHT 2>/dev/null || true)"
+    s="$(xcrun simctl getenv "$1" SIMULATOR_MAINSCREEN_SCALE 2>/dev/null | cut -d. -f1 || true)"
+    [ -n "$w" ] && [ -n "$h" ] && [ -n "$s" ] && [ "$s" -gt 0 ] 2>/dev/null || return 0
+    w=$((w / s)); h=$((h / s))
+  fi
+  [ -n "${w:-}" ] && [ -n "${h:-}" ] && [ -n "${s:-}" ] && [ "$s" -gt 0 ] 2>/dev/null || return 0
+  _MEMO_POINTS="$w $h $s"
   if [ -z "${SIMUI_NO_CACHE:-}" ]; then
     mkdir -p "$SIMUI_CACHE_DIR" 2>/dev/null || true
     printf '%s\n' "$_MEMO_POINTS" > "$f" 2>/dev/null || true
@@ -270,6 +423,9 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   devices)
     xcrun simctl list devices booted | grep -i booted
+    # Physical iPhones on the cable, in the same "name (udid) (state)" shape.
+    xcrun devicectl list devices 2>/dev/null | awk '$0 ~ /physical/ && $0 ~ /connected/' \
+      | sed -E 's/^ *(.*[^ ]) +([0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}) \(UDID\).*$/    \1 (\2) (Connected iPhone)/' || true
     ;;
 
   elements)
@@ -344,9 +500,24 @@ case "$cmd" in
   type)
     ensure_wda
     session; sid="$_MEMO_SID"
-    printf '%s' "$1" | python3 -c 'import sys,json; print(json.dumps({"value":[sys.stdin.read()]}))' \
-      | curl -s -X POST "$WDA/session/$sid/wda/keys" -H 'Content-Type: application/json' -d @- -o /dev/null
-    echo "typed: $1"
+    # A device drops characters from a burst ("5125550199" landed as "(519) 9" on an
+    # iPhone 12), so on a phone every character is its own request with a pause between
+    # them. SIMUI_TYPE_DELAY (seconds) forces that mode on a simulator too - segmented
+    # OTP boxes lose characters there the same way.
+    _delay="${SIMUI_TYPE_DELAY:-}"
+    if [ -z "$_delay" ] && [ "$(kind)" = device ]; then _delay=0.35; fi
+    if [ -n "$_delay" ]; then
+      printf '%s' "$1" | python3 -c 'import sys,json; [print(json.dumps({"value":[c]})) for c in sys.stdin.read()]' \
+        | while IFS= read -r _body; do
+            curl -s -X POST "$WDA/session/$sid/wda/keys" -H 'Content-Type: application/json' -d "$_body" -o /dev/null
+            sleep "$_delay"
+          done
+      echo "typed (one character per request, ${_delay}s apart): $1"
+    else
+      printf '%s' "$1" | python3 -c 'import sys,json; print(json.dumps({"value":[sys.stdin.read()]}))' \
+        | curl -s -X POST "$WDA/session/$sid/wda/keys" -H 'Content-Type: application/json' -d @- -o /dev/null
+      echo "typed: $1"
+    fi
     ;;
 
   button)
@@ -407,7 +578,13 @@ case "$cmd" in
     width=""
     if [ "${2:-}" = "--width" ]; then width="${3:-}"; fi
     dev="$(udid)"
-    xcrun simctl io "$dev" screenshot "$out" >/dev/null 2>&1
+    if [ "$(kind)" = device ]; then
+      # devicectl reads the phone's display directly; WDA's /screenshot on a device was
+      # seen to return a stale frame, so it is not used here.
+      xcrun devicectl device capture screenshot --device "$dev" --destination "$out" >/dev/null 2>&1
+    else
+      xcrun simctl io "$dev" screenshot "$out" >/dev/null 2>&1
+    fi
     if [ -z "$width" ]; then
       # default: resample to the device's point width so 1px == 1pt on any simulator.
       # The width comes from the cached geometry - reading it back with `sips -g pixelWidth`
@@ -430,10 +607,40 @@ case "$cmd" in
   # The one that matters in practice is `-RCT_jsLocation localhost:<port>`, which points the
   # app at another Metro than the port baked into the binary - it belongs to a single launch,
   # so a relaunch without it silently sends the app back to its baked port.
-  launch)     bundle="$1"; shift; xcrun simctl launch "$(udid)" "$bundle" "$@" ;;
-  relaunch)   bundle="$1"; shift; xcrun simctl terminate "$(udid)" "$bundle" 2>/dev/null || true; xcrun simctl launch "$(udid)" "$bundle" "$@" ;;
-  terminate)  xcrun simctl terminate "$(udid)" "$1" ;;
-  openurl)    xcrun simctl openurl "$(udid)" "$1" ;;
+  # On a phone the same four go through devicectl. The `--` before the app's arguments is
+  # load-bearing there: without it devicectl parses `-RCT_jsLocation` as its own option.
+  launch)
+    bundle="$1"; shift
+    if [ "$(kind)" = device ]; then
+      xcrun devicectl device process launch --device "$(udid)" "$bundle" -- "$@"
+    else
+      xcrun simctl launch "$(udid)" "$bundle" "$@"
+    fi
+    ;;
+  relaunch)
+    bundle="$1"; shift
+    if [ "$(kind)" = device ]; then
+      xcrun devicectl device process launch --terminate-existing --device "$(udid)" "$bundle" -- "$@"
+    else
+      xcrun simctl terminate "$(udid)" "$bundle" 2>/dev/null || true; xcrun simctl launch "$(udid)" "$bundle" "$@"
+    fi
+    ;;
+  terminate)
+    if [ "$(kind)" = device ]; then
+      _pid="$(device_app_pid "$(udid)" "$1")"
+      if [ -z "$_pid" ]; then echo "$1 is not running on $(udid)" >&2; exit 1; fi
+      xcrun devicectl device process terminate --device "$(udid)" --pid "$_pid"
+    else
+      xcrun simctl terminate "$(udid)" "$1"
+    fi
+    ;;
+  openurl)
+    if [ "$(kind)" = device ]; then
+      xcrun devicectl device process openURL --device "$(udid)" "$1"
+    else
+      xcrun simctl openurl "$(udid)" "$1"
+    fi
+    ;;
 
   # --- batching and waiting --------------------------------------------------
   # `do` is the answer to the real cost of driving a simulator: not the milliseconds
