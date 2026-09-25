@@ -1,6 +1,6 @@
 ---
 name: simulator-verify
-description: Verify a view or feature on the live iOS simulator of a React Native / Expo app. Launches the dev build, navigates to the target screen, inspects the accessibility element tree + screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "sprawdź na symulatorze", "zweryfikuj ekran X", "czy to działa na symulatorze". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
+description: Verify a view or feature on the live iOS simulator - or on a physical iPhone over USB, driven by the same scripts - of a React Native / Expo app. Launches the dev build, navigates to the target screen, inspects the accessibility element tree + screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "sprawdź na symulatorze", "sprawdź na telefonie", "zweryfikuj ekran X", "czy to działa na symulatorze". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
 ---
 
 # simulator-verify
