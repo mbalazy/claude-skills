@@ -25,6 +25,7 @@ Usage:
   --json          print raw consoleAPICalled params as JSON lines
   --no-follow     stop when the runtime goes away instead of waiting for it
                   to come back
+  --max-matches N stop as soon as N lines matched --grep (a marker wait)
 
 Notes:
 - Runtime.enable makes Hermes REPLAY its buffered console history, so logs
@@ -41,6 +42,9 @@ Notes:
   same runtime, the proxy may drop one of the clients. Disconnect DevTools
   first if the tap gets no events.
 - With several simulators on one Metro this refuses to guess: pass --device.
+  A physical iPhone shows up as deviceName "iPhone" - an exact --device match
+  beats the substring match, so `--device iPhone` picks the phone and not
+  "iPhone 17".
 """
 
 import argparse
@@ -77,7 +81,12 @@ def pick_target(targets, args, quiet=False):
     if args.app:
         candidates = [t for t in candidates if t.get("appId") == args.app]
     if args.device:
-        candidates = [t for t in candidates if args.device.lower() in t.get("deviceName", "").lower()]
+        wanted = args.device.lower()
+        exact = [t for t in candidates if t.get("deviceName", "").lower() == wanted]
+        # A physical iPhone registers on Metro as plain "iPhone", which is also a
+        # substring of every simulator's name ("iPhone 17"), so an exact name wins
+        # over the substring match whenever there is one.
+        candidates = exact or [t for t in candidates if wanted in t.get("deviceName", "").lower()]
 
     if not args.all_runtimes:
         main = [
@@ -229,6 +238,7 @@ def main():
     parser.add_argument("--all-runtimes", action="store_true")
     parser.add_argument("--json", action="store_true", dest="raw_json")
     parser.add_argument("--no-follow", action="store_true")
+    parser.add_argument("--max-matches", type=int, default=0)
     args = parser.parse_args()
 
     try:
@@ -301,8 +311,12 @@ def main():
                         ts = datetime.fromtimestamp(params.get("timestamp", 0) / 1000).strftime("%H:%M:%S.%f")[:-3]
                         print(f"[{ts}] {params.get('type', 'log').upper()} {text}")
                     sys.stdout.flush()
+                    if args.max_matches and matched >= args.max_matches:
+                        break
             finally:
                 ws.close()
+            if args.max_matches and matched >= args.max_matches:
+                break
             if not closed or args.no_follow or expired():
                 if closed:
                     print("# websocket closed by Metro (app restarted, or another debugger attached) - not following",
