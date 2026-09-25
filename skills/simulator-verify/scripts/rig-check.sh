@@ -300,7 +300,7 @@ fi
 KIND="$(udid_kind "$UDID")"
 if [[ "$KIND" == device ]]; then
   note "target:  physical iPhone $UDID (lifecycle via devicectl, marker via Metro's CDP inspector)"
-  if ! connected_devices | grep -qx "$UDID"; then
+  if ! connected_devices | grep -x "$UDID" >/dev/null; then
     verdict DEAD "iPhone $UDID is not plugged in (xcrun devicectl list devices)"
   fi
 else
@@ -582,8 +582,16 @@ stop_device_tap
 # The reference file outlives restore() - the crash lookup below still needs it - so it
 # gets its own cleanup covering every exit path, verdicts included.
 trap 'rm -f "$CRASH_REF" "$TAP_FILE"' EXIT INT TERM
-# leave the app running marker-free code, best effort
-curl -s -m 5 "localhost:$PORT/reload" >/dev/null 2>&1
+# leave the app running marker-free code, best effort. On a phone a reload fired right
+# after the marker RACES the app's own startup (the marker is logged by index.js before the
+# surface is up) and lands the app on a redbox - "[runtime not ready]: AppRegistryBinding::
+# startSurface failed. Global was not installed." (seen twice on 2026-09-25, iOS 27 / RN
+# 0.86) - so after a relaunch trigger the phone gets a second clean launch instead.
+if [[ "$KIND" == device && "$TRIGGER" == "relaunch" ]]; then
+  xcrun devicectl device process launch --terminate-existing --device "$UDID" "$BUNDLE_ID" -- ${ARGS[@]+"${ARGS[@]}"} >/dev/null 2>&1
+else
+  curl -s -m 5 "localhost:$PORT/reload" >/dev/null 2>&1
+fi
 
 if [[ -n "$FOUND" ]]; then
   note "marker:  $MARKER seen in the app log after ${WAITED}s"
@@ -670,7 +678,7 @@ else
   note "HINT:    if the app needs launch arguments to reach this Metro, pass them with --launch-arg"
   note "         (a launch here replaces the one that started the app, arguments included)."
   if [[ "$KIND" == device ]]; then
-    if lsof -nP -iTCP:"$PORT" -sTCP:ESTABLISHED 2>/dev/null | grep -q '169\.254\.'; then
+    if lsof -nP -iTCP:"$PORT" -sTCP:ESTABLISHED 2>/dev/null | grep '169\.254\.' >/dev/null; then
       note "HINT:    the phone DOES hold a connection to :$PORT, so JS is being served - suspect a Release"
       note "         build (embedded bundle), or the app waiting on the iOS 'Local Network' prompt on a fresh install"
     else

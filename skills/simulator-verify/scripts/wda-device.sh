@@ -30,6 +30,18 @@
 # prints ServerURLHere). Both processes run in `screen` sessions named wda-<udid8> and
 # iproxy-<udid8>, where udid8 is the first 8 characters of the udid.
 #
+# A human is needed at one point: on a fresh runner install, and again after the phone
+# locked while a run was up, iOS shows "Enter iPhone Passcode for XCTest - Enable UI
+# Automation" on the phone and the run fails with "Timed out while enabling automation
+# mode" unless the passcode is typed within ~1 minute. Keep the phone unlocked while WDA
+# is in use; a run that died this way is restarted with a plain re-run of this script.
+#
+# When a run FAILS, xcodebuild launches `devicectl diagnose --devices <udid>` to pull a
+# sysdiagnose off the phone. Stop the run and that collector is orphaned, still holding the
+# CoreDevice DeviceFS mount - and from then on EVERY `lsof` and `ps -o args` on the Mac
+# hangs in uninterruptible wait (2026-09-25: 15 minutes of "WDA hangs", it was lsof inside
+# sim-ui.sh). Both --stop and a fresh start kill that collector for this phone.
+#
 # Signing, learned the hard way: automatic signing with an existing Xcode-managed wildcard
 # profile ("iOS Team Provisioning Profile: *") that already lists the phone needs no Apple
 # account in Xcode; manual signing with that profile is refused ("profile is Xcode
@@ -75,7 +87,7 @@ if [[ -z "$UDID" ]]; then
     exit 2
   fi
   UDID="$PHONES"
-elif ! connected_devices | grep -qx "$UDID"; then
+elif ! connected_devices | grep -x "$UDID" >/dev/null; then
   echo "ERROR: $UDID is not a plugged-in physical iPhone right now:" >&2
   xcrun devicectl list devices 2>/dev/null | sed 's/^/  /' >&2
   exit 1
@@ -90,7 +102,7 @@ DD="$HOME_DIR/DerivedData"
 
 # `screen -ls` exits non-zero when every session is detached, which under pipefail
 # would hide a match - so its status is dropped and grep's is the answer.
-screen_up() { { screen -ls 2>/dev/null || true; } | grep -qE "[0-9]+\.$1[[:space:]]"; }
+screen_up() { { screen -ls 2>/dev/null || true; } | grep -E "[0-9]+\.$1[[:space:]]" >/dev/null; }
 
 # The tunnel that already leads to this phone, whatever port it was started on.
 existing_tunnel_port() {
@@ -103,7 +115,15 @@ existing_tunnel_port() {
   done
 }
 
-wda_answers() { curl -s -m 3 "http://localhost:$1/status" 2>/dev/null | grep -q '"ready" : true\|"ready":true'; }
+# The sysdiagnose collector xcodebuild spawns on a failed run; orphaned, it wedges DeviceFS.
+kill_orphaned_diagnose() {
+  local pid
+  for pid in $(pgrep -f "devicectl diagnose --devices $UDID" 2>/dev/null); do
+    kill "$pid" 2>/dev/null && echo "killed orphaned 'devicectl diagnose' pid $pid (it wedges lsof/ps on the whole Mac)"
+  done
+}
+
+wda_answers() { curl -s -m 3 "http://localhost:$1/status" 2>/dev/null | grep '"ready" : true\|"ready":true' >/dev/null; }
 wda_built() { curl -s -m 3 "http://localhost:$1/status" 2>/dev/null | python3 -c 'import sys,json
 try: print(json.load(sys.stdin)["value"]["build"]["time"])
 except Exception: print("?")'; }
@@ -127,6 +147,7 @@ report_status() {
 case "$MODE" in
   status) report_status; exit $? ;;
   stop)
+    kill_orphaned_diagnose
     for s in "$SCREEN_WDA" "$SCREEN_PROXY"; do
       if screen_up "$s"; then screen -S "$s" -X quit && echo "stopped screen $s"; fi
     done
@@ -159,6 +180,7 @@ echo "WDA sources: $PKG ($(grep -m1 '"version"' "$PKG/package.json" | tr -d ' ,"
 
 # Stale pieces first: an iproxy on the port with no WDA behind it, an old test run.
 if screen_up "$SCREEN_WDA"; then screen -S "$SCREEN_WDA" -X quit; fi
+kill_orphaned_diagnose
 if screen_up "$SCREEN_PROXY"; then screen -S "$SCREEN_PROXY" -X quit; fi
 OLD_T="$(existing_tunnel_port)"
 [[ -n "$OLD_T" ]] && for pid in $(pgrep -f -- "iproxy .* -u $UDID"); do kill "$pid" 2>/dev/null; done
@@ -191,6 +213,11 @@ while (( WAITED < TIMEOUT )); do
     echo "ERROR: the xcodebuild test run ended after ${WAITED}s without WDA answering. Tail of $LOG:" >&2
     tail -n 25 "$LOG" | sed 's/^/  /' >&2
     if grep -qiE 'is locked|passcode' "$LOG"; then echo "  => unlock the phone and retry" >&2; fi
+    if grep -qiE 'enabling automation mode' "$LOG"; then
+      echo "  => iOS showed 'Enter iPhone Passcode for XCTest - Enable UI Automation' on the phone and nobody" >&2
+      echo "     typed the passcode in time. A human must enter it (the prompt returns after a screen lock" >&2
+      echo "     or a fresh runner install); keep the phone unlocked and retry." >&2
+    fi
     if grep -qiE 'not been trusted|Developer Mode' "$LOG"; then echo "  => trust the Mac on the phone / enable Developer Mode (Settings > Privacy & Security) and retry" >&2; fi
     if grep -qiE 'No profiles|provisioning|Signing for' "$LOG"; then echo "  => signing: the team's Xcode-managed profile must already list this phone (--team)" >&2; fi
     screen -S "$SCREEN_PROXY" -X quit 2>/dev/null
