@@ -64,6 +64,7 @@ Scripts worth knowing in `simulator-verify`:
 | Skill | What it does |
 |---|---|
 | `taking-over` | The contract for "I am leaving the computer, carry on": act without asking, decide by a fixed policy (reversible over irreversible, simpler over cleverer), keep everything local, end with a structured decision report. |
+| `briefing-session` | Hands a task to ANOTHER Claude Code session on the same machine in one message it can act on cold: every identifier re-verified by a tool call before sending, what was already tried named so it is not repeated, the exact rig commands with values filled in, a fixed return protocol, and a one-shot idle subscription instead of polling. `/briefing-session <session-name> <what to hand over>`. |
 | `parallel-guard` | Defensive rules for a session that shares a working tree with another live session: never bulk-stage, verify the branch before every commit, re-read before every edit. |
 | `commit-split` | Splits an accumulated working-tree diff into small logical commits with imperative messages, linked to the related pm task. |
 | `claim-check` | Verifies every factual claim in a text about to leave the session (a PR description, a ticket comment, a report) with a fresh-context agent that never saw how the text was written. |
