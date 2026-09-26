@@ -1,6 +1,6 @@
 ---
-name: briefing-session
-description: Hands a task and its whole context to ANOTHER Claude Code session on this machine, in one message the receiver can act on cold, then waits for it to report back. First argument is the target session's name (from /rename or ListAgents), the rest says what to hand over. Every identifier in the message is re-verified by a tool call right before sending, the message is saved to a file and noted in the pm task Log, and a one-shot idle notice is subscribed so nothing is polled. Use when the user says "/briefing-session", "wyślij sesji X wiadomość", "przekaż to sesji X", "daj sesji X cały kontekst", "niech sesja X to dowiezie", "zbriefuj sesję", or wants another session to take over a task and come back.
+name: pass-to
+description: Hands a task and its whole context to ANOTHER Claude Code session on this machine, in one message the receiver can act on cold, then waits for it to report back. First argument is the target session's name (from /rename or ListAgents), the rest says what to hand over. Every identifier in the message is re-verified by a tool call right before sending, the message is saved to a file and noted in the pm task Log, and a one-shot idle notice is subscribed so nothing is polled. Use when the user says "/pass-to", "wyślij sesji X wiadomość", "przekaż to sesji X", "daj sesji X cały kontekst", "niech sesja X to dowiezie", "zbriefuj sesję", or wants another session to take over a task and come back.
 argument-hint: <session-name> <what to hand over>
 ---
 
@@ -118,7 +118,7 @@ with evidence). Record the acceptance in the pm task Log and brief.
 ## Example
 
 ```
-/briefing-session APP-1845 dowieź APP-1845 na simie iPhone SE, którego właśnie odpaliłem w Device Hub; użyj /simulator-verify; potem wróć do mnie na odbiór
+/pass-to APP-1845 dowieź APP-1845 na simie iPhone SE, którego właśnie odpaliłem w Device Hub; użyj /simulator-verify; potem wróć do mnie na odbiór
 ```
 
 produces: `ListAgents` (APP-1845 listed, cwd = slot 1), five verification
