@@ -40,8 +40,8 @@ Read the D and E lines. The scanner is age-based there, so override with judgmen
 Paste the scanner output as-is (plain text, no AskUserQuestion - the user answers in prose). Then one line: how to answer.
 
 ```
-Odpowiedz literami (cała kategoria), numerami, zakresami (600-612) i wykluczeniami (bez 5).
-Np. "A B 552-560 bez 555" albo "C usuń, E przenieś".
+Answer with letters (whole category), numbers, ranges (600-612) and exclusions (bez 5 / except 5).
+E.g. "A B 552-560 bez 555" or "C delete, E move".
 ```
 
 Categories, fixed order, empty ones skipped:
