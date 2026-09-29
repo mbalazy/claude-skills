@@ -10,7 +10,7 @@ scan  reads every task under $PM_DATA_DIR (default ~/.claude/pm), computes the
       the numbered list (continuous numbering across categories) and writes the
       plan JSON the apply step maps numbers back through.
 apply resolves the pick string (letters = whole category, numbers = items,
-      "-N" / "bez N" = exclude, "N-M" = range) and runs `pm mv` for status
+      "-N" / "bez N" / "except N" = exclude, "N-M" = range) and runs `pm mv` for status
       moves. Deletes are NEVER executed here - they are printed as the exact ids
       for the MCP pm_delete_task tool, which is the only sanctioned delete path.
 
@@ -35,12 +35,12 @@ GH_URL = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
 
 CATEGORIES = [
     # letter, label, action, target
-    ("A", "ZROBIONE, DO SCHOWANIA", "mv", "archived"),
-    ("B", "ZAMKNIETE W RZECZYWISTOSCI (jest dowod)", "mv", "archived"),
-    ("C", "SMIECI (puste, duplikaty) - USUNIECIE, nieodwracalne", "delete", ""),
-    ("D", "PRAWDOPODOBNIE MARTWE (niepewne - powod przy kazdym)", "mv", "archived"),
-    ("E", "STARY STATUS (task zyje, status klamie) - przeniesienie", "mv", None),  # per-item target
-    ("F", "NIE RUSZAC", "none", ""),
+    ("A", "DONE, TO HIDE", "mv", "archived"),
+    ("B", "CLOSED IN REALITY (evidence exists)", "mv", "archived"),
+    ("C", "JUNK (empty, duplicates) - DELETE, irreversible", "delete", ""),
+    ("D", "PROBABLY DEAD (uncertain - reason on each)", "mv", "archived"),
+    ("E", "STALE STATUS (task alive, status lies) - move", "mv", None),  # per-item target
+    ("F", "LEAVE ALONE", "none", ""),
 ]
 
 
@@ -307,34 +307,34 @@ def categorize(tasks, ev, a):
 
         # --- C: junk
         if not t["id"]:
-            cat, reason = "C", "plik bez id"
+            cat, reason = "C", "file without id"
         elif t["file"] in dup_loser:
-            cat, reason = "C", f"duplikat tytulu, zostaje {dup_loser[t['file']]}"
+            cat, reason = "C", f"duplicate title, keeping {dup_loser[t['file']]}"
         elif t["body_len"] < 40 and not t["brief"] and not t["links"] and not is_tracker and not terminal:
-            cat, reason = "C", "pusty: brak body/brief/linkow"
+            cat, reason = "C", "empty: no body/brief/links"
 
         # --- A: finished, just hide
         if cat is None and terminal:
             if age >= a.done_days:
-                cat, reason = "A", f"{st} od {age}d"
+                cat, reason = "A", f"{st} for {age}d"
             else:
-                cat, reason = "F", f"{st} swiezo ({age}d)"
+                cat, reason = "F", f"{st} recently ({age}d)"
 
         # --- trackers with live children are never proposed
         if cat is None and open_children:
-            cat, reason = "F", f"tracker z {len(open_children)} otwartymi subami"
+            cat, reason = "F", f"tracker with {len(open_children)} open subs"
 
         # --- B: proof of closure on an open status
         if cat is None:
             epic = ev.epic_merged(path, t["parent"]) if t["parent"] and st in ("merged", "pushed", "doing") else None
             if st not in statuses:
-                cat, reason = "B", f"status '{st}' nie istnieje w projekcie"
+                cat, reason = "B", f"status '{st}' does not exist in the project"
             elif parent_st in TERMINAL and parent_st:
-                cat, reason = "B", f"rodzic {t['parent']} jest {parent_st}"
+                cat, reason = "B", f"parent {t['parent']} is {parent_st}"
             elif is_tracker and not open_children:
-                cat, reason = "B", f"tracker: wszystkie {len(children[t['id']])} suby zamkniete"
+                cat, reason = "B", f"tracker: all {len(children[t['id']])} subs closed"
             elif epic:
-                cat, reason = "B", f"epic rodzica wmergowany: {epic[:60]}"
+                cat, reason = "B", f"parent epic merged: {epic[:60]}"
             else:
                 pr_state = ev.pr(path, t["links"].get("pr", "")) if t["links"].get("pr") else None
                 if pr_state in ("MERGED", "CLOSED"):
@@ -342,9 +342,9 @@ def categorize(tasks, ev, a):
                 else:
                     br = ev.branch(path, t["branch"])
                     if br and br["merged"] and not is_tracker:
-                        cat, reason = "B", f"branch {t['branch']} wmergowany w {br['base']}"
+                        cat, reason = "B", f"branch {t['branch']} merged into {br['base']}"
                     elif br and br["merged"] and is_tracker:
-                        cat, reason = "B", f"epic branch {t['branch']} wmergowany w {br['base']}, suby zamkniete"
+                        cat, reason = "B", f"epic branch {t['branch']} merged into {br['base']}, subs closed"
                     t["_br"], t["_pr"] = br, pr_state
 
         # --- E: the status lies
@@ -353,31 +353,32 @@ def categorize(tasks, ev, a):
             commit_age = br["last_commit_age"] if br else None
             quiet = (sess_age is None or sess_age >= a.doing_days) and (commit_age is None or commit_age >= a.doing_days)
             if quiet:
+                # "czek" matches the Polish "czeka" (waits) in a brief
                 target = "waiting" if re.search(r"\b(czek|wait|blocked|review)", t["brief"], re.I) else "todo"
-                bits = [f"doing od {age}d"]
-                bits.append(f"sesja {sess_age}d temu" if sess_age is not None else "brak sesji")
-                bits.append(f"commit {commit_age}d temu" if commit_age is not None else "brak commitow")
+                bits = [f"doing for {age}d"]
+                bits.append(f"session {sess_age}d ago" if sess_age is not None else "no session")
+                bits.append(f"commit {commit_age}d ago" if commit_age is not None else "no commits")
                 cat, reason = "E", "-> " + target + ": " + ", ".join(bits)
         if cat is None and st == "merged" and not t["parent"] and age >= a.waiting_days:
-            cat, reason, target = "E", f"-> done: 'merged' bez rodzica od {age}d", "done"
+            cat, reason, target = "E", f"-> done: 'merged' without a parent for {age}d", "done"
 
         # --- D: probably dead
         if cat is None and not terminal:
             limit = {"todo": a.todo_days, "doing": None}.get(st, a.waiting_days)
             if limit is not None and age >= limit:
-                bits = [f"{st} od {age}d"]
+                bits = [f"{st} for {age}d"]
                 if not t["brief"]:
-                    bits.append("brak briefu")
+                    bits.append("no brief")
                 if not t["sessions"]:
-                    bits.append("nigdy nie otwarty w sesji")
+                    bits.append("never opened in a session")
                 elif sess_age is not None:
-                    bits.append(f"sesja {sess_age}d temu")
+                    bits.append(f"session {sess_age}d ago")
                 if t["parent"]:
                     bits.append(f"sub {t['parent']} ({parent_st})")
                 if t.get("_pr") == "OPEN":
-                    bits.append("PR otwarty")
+                    bits.append("PR open")
                 if is_tracker:
-                    bits.append("tracker, suby zamkniete")
+                    bits.append("tracker, subs closed")
                 cat, reason = "D", ", ".join(bits)
 
         if cat is None:
@@ -409,7 +410,7 @@ def render(plan, show_f, show_a):
         items = [p for p in plan if p["cat"] == letter]
         if not items:
             continue
-        act = {"mv": f"-> {ctarget or 'status podany przy pozycji'}", "delete": "-> pm_delete_task", "none": "tylko licznik"}[action]
+        act = {"mv": f"-> {ctarget or 'status given on the line'}", "delete": "-> pm_delete_task", "none": "count only"}[action]
         lines.append(f"\n{letter}. {label}  [{len(items)}]  {act}")
         if action == "none" and not show_f:
             by = defaultdict(int)
@@ -448,7 +449,7 @@ def resolve_picks(plan, pick):
         if not tok:
             continue
         low = tok.lower()
-        if low in ("bez", "oprocz", "oprócz", "minus", "except"):
+        if low in ("bez", "oprocz", "oprócz", "minus", "except"):  # Polish "without"/"except" accepted too
             exclude_next = True
             continue
         neg = tok.startswith("-") or exclude_next
@@ -463,7 +464,7 @@ def resolve_picks(plan, pick):
         elif tok.isdigit():
             target.add(int(tok))
         else:
-            sys.exit(f"nie rozumiem tokenu: {tok!r}")
+            sys.exit(f"cannot parse token: {tok!r}")
     return [numbered[n] for n in sorted(chosen - excluded) if n in numbered]
 
 
@@ -471,7 +472,7 @@ def apply(args):
     plan = json.load(open(args.plan))
     picked = resolve_picks(plan, args.pick)
     if not picked:
-        sys.exit("nic nie wybrano")
+        sys.exit("nothing picked")
     deletes, moved, failed = [], 0, []
     for p in picked:
         action, target = p["action"], p["target"]
@@ -489,11 +490,11 @@ def apply(args):
             moved += 1
         else:
             failed.append((p["id"], (r.stderr or r.stdout).strip()))
-    print(f"\nprzeniesione: {moved}, bledy: {len(failed)}")
+    print(f"\nmoved: {moved}, errors: {len(failed)}")
     for tid, err in failed:
         print(f"  {tid}: {err}")
     if deletes:
-        print("\nDO USUNIECIA przez MCP pm_delete_task (dokladne id, po jednym):")
+        print("\nTO DELETE via MCP pm_delete_task (exact id, one at a time):")
         for p in deletes:
             print(f"  {p['id']}   [{p['project']}] {p['title'][:60]}")
 
@@ -529,7 +530,7 @@ def main():
     json.dump(plan, open(args.plan, "w"), ensure_ascii=False, indent=1)
     total = len(tasks)
     counts = {c[0]: sum(1 for p in plan if p["cat"] == c[0]) for c in CATEGORIES}
-    print(f"tasks: {total} (bez archived: {len(plan)})   " + "  ".join(f"{k}={v}" for k, v in counts.items()))
+    print(f"tasks: {total} (excluding archived: {len(plan)})   " + "  ".join(f"{k}={v}" for k, v in counts.items()))
     print(render(plan, args.show_f, args.show_a))
     print(f"\nplan: {args.plan}")
 
