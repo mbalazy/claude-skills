@@ -211,33 +211,68 @@ assert_wda_owner() {
     fi
     exit 1
   fi
-  echo "  No WDA for $want found on :8100-8110. Start one on a free port:" >&2
+  echo "  No WDA for $want found on :8100-8110." >&2
+  wda_install_diagnostics "$want" || exit 1
+  echo "  Start one on a free port:" >&2
   echo "    SIMCTL_CHILD_USE_PORT=<free-port> xcrun simctl launch $want $WDA_RUNNER" >&2
   echo "    then re-run with WDA_PORT=<free-port>." >&2
   exit 1
 }
 
-# Why the XCTest runner may refuse to start on an otherwise healthy, booted simulator.
-# WDA is an XCTest bundle, and Xcode will not background a test runner on a device that
-# has no Simulator.app window - a sim booted by `simctl boot` while Simulator.app is
-# closed, or created fresh and never opened (`XCTest 10300, failed to background test
-# runner`, journal sim-rig 20260811-8beb). That never shows up in the 20 s of silence this
-# function otherwise ends in, so name it. The booted-sim COUNT is printed as context only:
-# three windowed sims hosted WDA fine on 2026-08-20, so the count alone is not a cause.
+# Is the runner on the target at all? Asked FIRST, because a simulator created for a run
+# has none, and the old answer to that - window advice - sent a night shift down a dead
+# end (journal sim-rig 20260928-4ccb). Prints what it found; returns 1 only for confirmed
+# absence. An inspection that failed is reported as that, never as "missing".
+wda_install_diagnostics() {
+  local want="$1" st src
+  st="$("$HERE/wda-sim.sh" status "$want" 2>/dev/null || true)"
+  case "$st" in
+    absent)
+      echo "  $WDA_RUNNER is NOT installed on $want - WebDriverAgent cannot start there." >&2
+      if src="$("$HERE/wda-sim.sh" source "$want" 2>/dev/null)"; then
+        echo "  A usable runner bundle was found and checked. Install it, then retry:" >&2
+        printf '    xcrun simctl install %q %q\n' "$want" "$src" >&2
+        echo "  or install + start + prove it in one step: $HERE/wda-sim.sh ensure $want --port $WDA_PORT" >&2
+      else
+        "$HERE/wda-sim.sh" source "$want" 2>&1 >/dev/null | grep -v '^skipped ' >&2 || true
+      fi
+      return 1
+      ;;
+    installed)
+      echo "  $WDA_RUNNER is installed on $want, so the runner exists but did not come up." >&2
+      ;;
+    *)
+      echo "  Could not inspect whether $WDA_RUNNER is installed on $want: ${st#unknown: }" >&2
+      echo "  (a failed inspection is not evidence that the runner is missing)" >&2
+      ;;
+  esac
+  return 0
+}
+
+# Why an INSTALLED runner may refuse to start. On Xcode 26 and earlier a sim with no
+# Simulator.app window failed with `XCTest 10300, failed to background test runner`
+# (journal sim-rig 20260811-8beb). Xcode 27 ships no Simulator.app at all, and WDA started
+# on a headless sim there (2026-09-28/29), so window advice is printed only when
+# Simulator.app exists on this Mac, and as a possible cause, never as the proven one.
+# The booted-sim COUNT is printed as context only: three windowed sims hosted WDA fine
+# on 2026-08-20, so the count alone is not a cause.
 wda_start_diagnostics() {
   local want="$1" name windows booted
   name="$(xcrun simctl list devices 2>/dev/null | grep -F "($want)" | head -1 | sed -E 's/^ *//; s/ \(.*//' || true)"
-  if ! pgrep -x Simulator >/dev/null 2>&1; then
-    echo "  Simulator.app is NOT running: the device is booted headless (simctl boot), and the" >&2
-    echo "  XCTest runner does not start on a sim without a window. Start Simulator.app on it, then retry:" >&2
-    echo "    open -a Simulator --args -CurrentDeviceUDID $want" >&2
-  else
-    windows="$(osascript -e 'tell application "System Events" to get name of every window of process "Simulator"' 2>/dev/null || true)"
-    if [ -n "$name" ] && [ -n "$windows" ] && ! printf '%s\n' "$windows" | grep -qF "$name"; then
-      echo "  Simulator.app shows no window for '$name' ($want) - a booted device without a" >&2
-      echo "  window cannot host the XCTest runner. A device booted WHILE Simulator.app runs gets" >&2
-      echo "  a window (open --args is ignored by a running Simulator.app), so re-boot it, then retry:" >&2
-      echo "    xcrun simctl shutdown $want && xcrun simctl boot $want" >&2
+  if open -Ra Simulator >/dev/null 2>&1; then
+    if ! pgrep -x Simulator >/dev/null 2>&1; then
+      echo "  Possible cause (not proven): Simulator.app is installed but not running, and a sim" >&2
+      echo "  without a window has refused the XCTest runner before (XCTest 10300 in simctl's words" >&2
+      echo "  above confirms it). To give it a window, then retry:" >&2
+      echo "    open -a Simulator --args -CurrentDeviceUDID $want" >&2
+    else
+      windows="$(osascript -e 'tell application "System Events" to get name of every window of process "Simulator"' 2>/dev/null || true)"
+      if [ -n "$name" ] && [ -n "$windows" ] && ! printf '%s\n' "$windows" | grep -qF "$name"; then
+        echo "  Possible cause (not proven): Simulator.app shows no window for '$name' ($want)." >&2
+        echo "  A device booted WHILE Simulator.app runs gets a window (open --args is ignored by a" >&2
+        echo "  running Simulator.app), so re-boot it, then retry:" >&2
+        echo "    xcrun simctl shutdown $want && xcrun simctl boot $want" >&2
+      fi
     fi
   fi
   booted="$(xcrun simctl list devices booted 2>/dev/null | grep -c '(Booted)' || true)"
@@ -248,7 +283,7 @@ wda_start_diagnostics() {
 }
 
 ensure_wda() {
-  local want launch_out tunnel
+  local want launch_out tunnel owner8100
   [ -n "$_MEMO_WDA" ] && return 0
   want="$(udid)"
   if [ "$(kind)" = device ]; then
@@ -293,16 +328,22 @@ ensure_wda() {
     "") ;;
     *) printf '%s\n' "$launch_out" | sed 's/^/  simctl: /' >&2 ;;
   esac
+  wda_install_diagnostics "$want" || exit 1
   wda_start_diagnostics "$want"
-  # Name the likely cause instead of sending the reader off to reinstall a runner
-  # that is installed and healthy one port over.
+  # A runner answering on the default :8100 only explains this failure when it is the
+  # TARGET's runner (launched without the port prefix). Any other simulator's WDA there
+  # says nothing about this one, and driving it would drive the wrong device.
   if [ "$WDA_PORT" != "8100" ] && curl -s -m 2 "http://localhost:8100/status" >/dev/null 2>&1; then
-    echo "  WDA IS answering on the default :8100, so the runner is installed and running." >&2
-    echo "  It was almost certainly launched without the SIMCTL_CHILD_USE_PORT=$WDA_PORT prefix" >&2
-    echo "  (a bare 'simctl launch <udid> $WDA_RUNNER USE_PORT=$WDA_PORT' is silently ignored)." >&2
-    echo "  Either relaunch WDA with that prefix, or re-run with WDA_PORT=8100." >&2
-  else
-    echo "  Nothing is answering on :8100 either - is $WDA_RUNNER installed on $want?" >&2
+    owner8100="$(port_owner_udid 8100)"
+    if [ "$owner8100" = "$want" ]; then
+      echo "  This simulator's WDA IS answering on the default :8100: it was launched without the" >&2
+      echo "  SIMCTL_CHILD_USE_PORT=$WDA_PORT prefix (a bare 'simctl launch <udid> $WDA_RUNNER" >&2
+      echo "  USE_PORT=$WDA_PORT' is silently ignored). Re-run with WDA_PORT=8100." >&2
+    elif [ -n "$owner8100" ]; then
+      echo "  The WDA answering on :8100 belongs to simulator $owner8100 - it says nothing about $want." >&2
+    else
+      echo "  Something answers on :8100 but could not be attributed to a simulator - no evidence about $want." >&2
+    fi
   fi
   exit 1
 }
