@@ -44,7 +44,7 @@ git log --oneline -10
 
 Present a table: commit message + files per group. Wait for the user's ack
 before committing anything. Exception: the user explicitly asked to just do
-it ("bez pytania", "yolo") - then proceed.
+it ("bez pytania" = "without asking", "yolo") - then proceed.
 
 ### Step 4: Execute
 

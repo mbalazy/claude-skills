@@ -290,7 +290,7 @@ Then measure the boxes instead of squinting at them (`scripts/measure-boxes.py`,
 ```
 [FLOAT-RENDER] renderedH=303 estH=360 top=486 anchorY=866 gapAbove=77
 ```
-A flip-above popover positioned from an over-estimated height gets a gap of `estH + offsetAbove - renderedH` - that arithmetic is where "pojawia się zbyt wysoko" complaints come from, and the number tells you the whole story.
+A flip-above popover positioned from an over-estimated height gets a gap of `estH + offsetAbove - renderedH` - that arithmetic is where "it appears too high" complaints come from, and the number tells you the whole story.
 
 **A/B a refactor in ONE build.** When the change is "same math, moved/parameterised", do not switch branches to compare: compute the OLD formula inline next to the new one and log `SAME_AS_LEGACY` / `DIFFERS_FROM_LEGACY`. Every real interaction then becomes a live equivalence test on real anchors, and a `DIFFERS` line on a caller you did not intend to change is the regression, caught immediately. Pair it with an exhaustive sweep unit test (sweep anchor y over the full screen × several anchor heights × each caller's config) - the sweep proves the whole domain, the logs prove the domain the device actually visits.
 

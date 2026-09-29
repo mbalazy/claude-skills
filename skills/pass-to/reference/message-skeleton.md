@@ -8,9 +8,9 @@ otherwise have to ask - and it cannot ask.
 ```
 <one line: task key + outcome + where it runs + who to report to>
 
-## 1. Zasady
-- contract in force (taking-over: lokalnie, zero push / PR / merge / Linear /
-  wiadomości do ludzi); what must not be touched (paths, sims, ports, other
+## 1. Rules
+- contract in force (taking-over: local only, zero push / PR / merge / Linear /
+  messages to people); what must not be touched (paths, sims, ports, other
   sessions' checkouts); nothing destructive (no deleting sims, branches, data)
 - repo rules that bite (AGENTS.md items relevant to THIS task)
 - identifiers that must not leak into code / commits
@@ -22,12 +22,12 @@ otherwise have to ask - and it cannot ask.
 - reporter's scenario in their words; what is NOT known (gesture, video)
 - pinned copies: absolute paths (ticket text, screenshots, contracts)
 
-## 3. Kod
+## 3. Code
 - absolute path + symbol + line range for every file the receiver must read
 - shared components: name their consumers and the blast-radius rule
 - related unmerged branches that touch the same area
 
-## 4. Co już zrobiono - nie powtarzać
+## 4. Already done - do not repeat
 - each hypothesis / attempt, its result, where its evidence is
 - side effects left behind (test records created, invites sent, events
   deleted) and which test data to use next
@@ -43,7 +43,7 @@ otherwise have to ask - and it cannot ask.
   returns a stale frame, taps in points not pixels, reading the a11y tree
   mounts lazy tabs
 
-## 6. Co dowieźć
+## 6. What to deliver
 - branch (exists? sha) and the naming rule the hook enforces
 - steps: reproduce (record the cause before fixing) -> fix within scope ->
   verify with a negative control on the base code -> gate command(s) ->
@@ -51,9 +51,9 @@ otherwise have to ask - and it cannot ask.
   final brief in the project's format; do not change status
 - evidence directory and file prefix
 
-## 7. Powrót
-- SendMessage to <your session name> with: state (naprawione / częściowo /
-  nie odtworzone), cause in one sentence, branch + commit shas, evidence
+## 7. Report back
+- SendMessage to <your session name> with: state (fixed / partial /
+  not reproduced), cause in one sentence, branch + commit shas, evidence
   paths, gate result, rig state (sim, WDA port, signed in?), cleanup list
 - what to leave running / checked out for the acceptance
 ```
@@ -83,52 +83,52 @@ had parked the ticket as "not reproduced on a 402pt sim, SE sim would not
 launch" and the user had booted a real iPhone SE simulator:
 
 ```
-Zadanie: dowieź APP-1845 (overscroll na kroku podsumowania zaproszenia w
-"Add a client") na symulatorze iPhone SE, lokalnie, i zgłoś się do sesji
-`solo-prep-1`, która zrobi odbiór. Pracujesz w
+Task: deliver APP-1845 (overscroll on the summary step of the invite in
+"Add a client") on the iPhone SE simulator, locally, and report to session
+`solo-prep-1`, which will do the acceptance. You work in
 /Users/mart/repos/littleEngine/app.littleengine-additional (pm worktree slot 1).
 
-## 1. Zasady (twarde, sesja bez nadzoru, tryb "taking-over, tylko lokalnie")
-- Wszystko zostaje lokalnie: ZERO git push, ZERO PR-ów, ... PR otworzy Marcin.
-- Nie dotykaj głównego checkoutu ... ani simów 2CE98C80 / E31D24EE / EBC3D758
-  (EBC3D758 jest wyłączony - możesz z niego tylko CZYTAĆ pliki z dysku).
-- Bash nie pamięta cd między wywołaniami - każdą komendę zaczynaj od cd ...
+## 1. Rules (hard, unattended session, "taking-over, local only" mode)
+- Everything stays local: ZERO git push, ZERO PRs, ... Marcin opens the PR.
+- Do not touch the main checkout ... or sims 2CE98C80 / E31D24EE / EBC3D758
+  (EBC3D758 is shut down - you may only READ files from its disk).
+- Bash does not keep cd between calls - start every command with cd ...
 
 ## 2. Ticket
 Linear APP-1845 ..., iPhone SE (750x1334 px = 375x667 pt), iOS 26.6, build
-0.1.1 (20260924133408) ... Zrzut zgłaszającego: /Users/mart/.claude/pm/
+0.1.1 (20260924133408) ... Reporter's screenshot: /Users/mart/.claude/pm/
 littleengine/evidence/solo-2026-09-25/app-1845-reporter-screenshot-2026-09-25.png
 
-## 3. Kod
+## 3. Code
 - src/screens/clients/addCustomerFlow/components/FlowTranscript.tsx ~730-775:
-  SummaryWidget ... SUMMARY_SHRINK_STYLE linia 47 ...
+  SummaryWidget ... SUMMARY_SHRINK_STYLE line 47 ...
 
-## 4. Co już zrobiła poprzednia sesja - NIE powtarzaj
-Nie odtworzono na 402x874 w pięciu hipotezach: (H1) ... (H5) ... Dowody:
+## 4. What the previous session already did - do NOT repeat
+Not reproduced on 402x874 across five hypotheses: (H1) ... (H5) ... Evidence:
 /Users/mart/.claude/pm/littleengine/.shift/evidence/littleengine-186-1/
-Uwaga Cleanup: wysłano zaproszenie do (512) 555-0189; używaj 512 555 02xx.
+Cleanup note: an invite was sent to (512) 555-0189; use 512 555 02xx.
 
 ## 5. Rig
 - Sim: udid B1831F4E-1BB9-4246-AA23-CCFD48F88CCE, iOS 27.0, Booted, 375x667
-  pt. Stan 02:55: BEZ apki i BEZ WDA. Metro :8090 działa (screen metro8090).
-  1. xcrun simctl install B1831F4E-... "<ścieżka Little Engine.app>"
+  pt. State at 02:55: NO app and NO WDA. Metro :8090 is up (screen metro8090).
+  1. xcrun simctl install B1831F4E-... "<path to Little Engine.app>"
   2. WDA: xcrun simctl install B1831F4E-... <WebDriverAgentRunner-Runner.app
-     ze slotu>, potem SIMCTL_CHILD_USE_PORT=8102 xcrun simctl launch ...
-  3. Sesja bez OTP: sim WYŁĄCZ, rsync kontenera danych + Keychains ze slotu
-  4. Jeśli apka wylogowana: NIE loguj się sam; napisz Marcinowi w terminalu
-     i wyślij to samo do solo-prep-1.
+     from the slot>, then SIMCTL_CHILD_USE_PORT=8102 xcrun simctl launch ...
+  3. Session without OTP: shut the sim DOWN, rsync the data container + Keychains from the slot
+  4. If the app is signed out: do NOT sign in yourself; write to Marcin in the
+     terminal and send the same to solo-prep-1.
   5. rig-check.sh --repo "$PWD" --udid B1831F4E-... --port 8090 --bundle-id
-     com.littleengine.development musi wypisać RIG OK.
+     com.littleengine.development must print RIG OK.
 
-## 6. Co dowieźć
-- Gałąź APP-1845-add-client-invite-summary-overscroll istnieje lokalnie na
-  7e0d5a8d8 bez commitów - checkout, nie twórz nowej.
-- Krok 1 reprodukcja ... Krok 2 fix ... Krok 3 weryfikacja z kontrolą
-  negatywną ... Krok 4 bramka: node .../validate.js, yarn perf:test SAMO,
-  yarn test:unit ... Krok 5 pm: littleengine-186-1 ...
+## 6. What to deliver
+- Branch APP-1845-add-client-invite-summary-overscroll exists locally at
+  7e0d5a8d8 with no commits - check it out, do not create a new one.
+- Step 1 reproduce ... Step 2 fix ... Step 3 verify with a negative
+  control ... Step 4 gate: node .../validate.js, yarn perf:test ALONE,
+  yarn test:unit ... Step 5 pm: littleengine-186-1 ...
 
-## 7. Powrót
-SendMessage do solo-prep-1 z: stanem, przyczyną jednym zdaniem, gałęzią +
-sha, ścieżkami dowodów, wynikiem bramki, stanem rigu, listą Cleanup. Zostaw
-sim SE zabootowany z apką na kroku podsumowania i gałąź wycheckoutowaną.
+## 7. Report back
+SendMessage to solo-prep-1 with: state, cause in one sentence, branch +
+sha, evidence paths, gate result, rig state, Cleanup list. Leave the SE
+sim booted with the app on the summary step and the branch checked out.
 ```
