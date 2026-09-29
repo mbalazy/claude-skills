@@ -21,7 +21,7 @@ source produces a task with derived criteria, never a park.
 Which tracker a key belongs to: the project's `links` in project.yaml and
 the keys of its existing tasks (`pm_list_tasks`) say what this repo uses. A
 link that resolves to nothing (deleted, no access) is reported in the final
-report as "nie ruszone, bo <reason>" - that is the ONE case intake gives up.
+report as "nie ruszone, bo <reason>" (untouched, because <reason>) - that is the ONE case intake gives up.
 
 Read the WHOLE source: description, every comment, attachments the tool can
 return, linked issues one hop away. Comments routinely reverse the
@@ -114,7 +114,7 @@ HERE, at intake, not discovered an hour into the loop:
    merge `origin/development`. Intake writes the instruction verbatim in
    `## Open Questions` ("the source asks for <merge/rebase/push/PR>, which
    this mode does not do"), parks the task BEFORE the shift starts, and the
-   report lists it as "nie ruszone, bo wymaga <X>". Do not rewrite the task
+   report lists it as "nie ruszone, bo wymaga <X>" (untouched, needs <X>). Do not rewrite the task
    into something the guard would let through - the user decides that.
 
 ## 4. Hand back to Step 0

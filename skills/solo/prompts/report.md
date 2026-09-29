@@ -60,6 +60,15 @@ able to act on those alone. A queue of six tasks produced a 2700-word report
 nobody could read; **the report file stays under 600 words**, the details
 file has no limit.
 
+**The Polish literals below are a parsing contract, not prose.** pm-cli's
+cockpit (`internal/storage/solo_report.go`) splits the report on them: the
+four section headings (it matches "Co z taskami", "Decyzje", "Sprzątanie",
+"Szczegóły"), the `Bug:` / `Stan:` / `Sprawdzone:` / `Przed PR-em:` labels,
+the verdict words after `Stan:` (naprawione / zrobione = fixed / done,
+częściowo = partial, nie naprawione / nie zrobione = not fixed / not done)
+and "nie ruszone" (untouched). Write them verbatim; a translated heading or
+label drops that part from the cockpit.
+
 ### 1. Co z taskami
 
 Per task, in queue order, FOUR things and nothing else:
@@ -74,12 +83,12 @@ Per task, in queue order, FOUR things and nothing else:
 - `Sprawdzone:` ONE sentence: where and how, and whether it was the
   REPORTER'S OWN scenario (their device, data, steps) or a stand-in - and
   when a stand-in, what the human can do to close the gap. Runtime off or rig
-  down: say so here in plain words ("na symulatorze nie sprawdzone, bo ...").
+  down: say so here in plain words ("not checked on the simulator, because ...").
   No numbers, no paths, no quoted gate block - those are section 4's.
 - `Przed PR-em:` what still stands between this branch and a PR, each with
-  its reason, or "nic". Decisions for the human go here as the choice - and
+  its reason, or "nic" (nothing). Decisions for the human go here as the choice - and
   for a task that came in as a link, the criteria the shift derived itself
-  ("kryteria wyprowadzone z ticketu, nie podane przez zgłaszającego: ...")
+  ("criteria derived from the ticket, not given by the reporter: ...")
   so the user can strike one before the PR.
 
 A task's paragraph stays under about 80 words. **Everything section 4 carries
@@ -93,23 +102,23 @@ A task the state file marks `REVIEW-MISSING` is never **naprawione** /
 **zrobione** - **częściowo** at best, with the missing review named in
 `Przed PR-em:`.
 
-Banned in this section: sub, claim, channel/kanał, CONFIRMED, REFUTED,
+Banned in this section: sub, claim, channel, CONFIRMED, REFUTED,
 UNVERIFIED, worker, agent, reviewer, gate, shift, session, compaction; enum
 values or literals from the code; file paths and line numbers; test counts;
 commit hashes. All of that lives in section 4. A line that needs the Spec to
 be understood is a defect - rewrite it.
 
 Untouched tasks (budget tripped, queue cut, a dependency that did not land)
-get one line each: "nie ruszone, bo ...". For a stacked task `Przed PR-em:`
+get one line each: "nie ruszone, bo ..." (untouched, because ...). For a stacked task `Przed PR-em:`
 names the branch (or PR) it sits on and that it merges AFTER it - in plain
-words ("scalić po X, PR jest na gałąź X, nie na development").
+words ("merge after X, the PR targets branch X, not development").
 
 ### 2. Decyzje podjęte za Ciebie
 
 A table, one row per fork, one short sentence per cell, readable without the
 session:
 
-| Wybrane | Odrzucone | Dlaczego |
+| Chosen | Rejected | Why |
 |---|---|---|
 
 Parks (why a task was left at "częściowo") are rows too. Product and UX calls
@@ -118,8 +127,8 @@ afterwards - they are not a reason to stop. "Brak" when none.
 
 ### 3. Sprzątanie i stan runtime
 
-Every side effect on shared data or devices ("skasowane" / "zostawione,
-skasuj jeśli zbędne"), then the runtime and checkout state left behind (which
+Every side effect on shared data or devices ("deleted" / "left in place,
+delete if not needed"), then the runtime and checkout state left behind (which
 sim/dev server, which port, which branch is checked out). Omit only when there
 was nothing.
 

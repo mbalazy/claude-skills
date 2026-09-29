@@ -8,7 +8,7 @@ complete sub; `scripts/check-queue.py` enforces everything marked "checked".
 pm finds a section by its exact `## ` heading (case-insensitive), and the
 runner's prompts look for these names. Use them verbatim, at level two, in this
 order. Extra `## ` sections may follow (`## Sources`, `## Gate`), but a contract
-heading is never renamed, merged or demoted: `## Context wspólny` is not
+heading is never renamed, merged or demoted: `## Shared context` is not
 `## Context`, and `#### Context` is not either.
 
 ### Sub
