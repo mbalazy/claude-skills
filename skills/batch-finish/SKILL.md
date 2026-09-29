@@ -300,11 +300,11 @@ the reading proves nothing about the rig, whatever the screen shows. Then:
   entry is the only thing that improves the next batch.
 - **UNVERIFIED** - the screen is unreachable for you (data the account cannot
   produce, a device-only path); the claim stays open in the report, marked
-  "worker-observed, unconfirmed", never folded into "Sprawdzone:".
+  "worker-observed, unconfirmed", never folded into "Verified:".
 
 An OBSERVED line missing either control is REFUTED by form: do not re-take it
 on the worker's terms, re-take it on the playbook's, and record the omission.
-`Sprawdzone:` in the ticket paragraph (Step 7) may cite only what YOU
+`Verified:` in the ticket paragraph (Step 7) may cite only what YOU
 confirmed; "the worker saw it on the simulator" never appears there.
 
 ### Step 3: Record the verdicts
@@ -398,46 +398,46 @@ the worker's handoff or the Log, and they will not. Every line of the report
 must make sense to that person. Write it in the user's conversation language
 (Polish for this user). Fixed order:
 
-**1. Co z ticketem** - the ticket paragraph. It is about the TICKET, never
+**1. The ticket** - the ticket paragraph. It is about the TICKET, never
 about the acceptance process. Four labelled lines, always all four:
 
 - `Bug:` the reported problem retold in one sentence as the user experiences
   it - which screen, what they do, what they see. Copy it from the spec's
   `## Bug as the user sees it` when batch-prep wrote one; otherwise write it
   now from the `## Ticket` section.
-- `Stan:` **naprawione** / **częściowo** / **nie naprawione**, then one
-  sentence of what now happens on that screen. "Częściowo" names what still
+- `State:` **fixed** / **partial** / **not fixed**, then one
+  sentence of what now happens on that screen. "Partial" names what still
   misbehaves, in the same user-facing words.
-- `Sprawdzone:` where and how - and, explicitly, whether it was checked in the
+- `Verified:` where and how - and, explicitly, whether it was checked in the
   REPORTER'S OWN scenario (their device, their kind of data, their steps, from
   the spec's `## Reporter's scenario`). When it was not, say in plain words
   what that scenario is, why it was not reproduced, what stood in for it, and
-  what the human can do to close the gap ("wgraj zdjęcie dowolnemu klientowi
-  na koncie dev i otwórz ten ekran"). A mechanism proven on stand-in data is
+  what the human can do to close the gap ("upload a photo to any client
+  on the dev account and open this screen"). A mechanism proven on stand-in data is
   NOT the reporter's scenario - say so.
-- `Przed PR-em:` the actions still standing between this branch and a PR, each
-  with its reason, or "nic". Decisions the human must make go here too, phrased
-  as the choice ("dopisać do tego PR-a czy zostawić").
+- `Before PR:` the actions still standing between this branch and a PR, each
+  with its reason, or "nothing". Decisions the human must make go here too, phrased
+  as the choice ("add it to this PR or leave it").
 
-Banned in this section: the words sub, claim, kanał/channel, REFUTED,
+Banned in this section: the words sub, claim, channel, REFUTED,
 CONFIRMED, UNVERIFIED, worker, agent, envelope, gate; enum values or literals
 from the code (`new_lead`, `in_progress`); file paths and line numbers; test
 counts; commit hashes. All of that has a home in section 4. A line the user
 would have to open the spec to understand is a defect in the report - rewrite
 it, do not footnote it.
 
-**2. Co zrobiła sesja odbioru poza sprawdzaniem** - which fixes the acceptance
+**2. What the acceptance session did besides checking** - which fixes the acceptance
 itself pushed to the branch (what each changes for the user, plus the commit
 hash - the one place a hash belongs above section 4), which tests it added, or
-"nic nie zmieniała". Then one line: nothing merged, no PR opened, status
+"changed nothing". Then one line: nothing merged, no PR opened, status
 untouched (or the exception, named).
 
-**3. Sprzątanie po testach** - every side effect on shared data or devices
+**3. Cleanup after testing** - every side effect on shared data or devices
 (records created on the dev account, fixtures left on a simulator, contacts
-added), each marked "zostawione, skasuj jeśli zbędne" or "skasowane". Omit the
+added), each marked "left in place, delete if not needed" or "deleted". Omit the
 section only when there was none.
 
-**4. Szczegóły techniczne** - the acceptance's own record: verdict per
+**4. Technical details** - the acceptance's own record: verdict per
 assumption (CONFIRMED / REFUTED / UNVERIFIED with evidence), visual claims and
 the channel that settled each, gates with their numbers, unreviewed commits,
 turns and cost. This is the section the old report consisted of; it is still

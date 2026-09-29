@@ -12,7 +12,7 @@ The consent covers **this machine AND the user's own VPS runner** - see "VPS run
 ## Hard limits (consent does NOT cover these)
 
 - **Everything stays local.** No `git push`, no PRs, no merges to any shared branch. Commit freely on the feature branch; the remote is untouchable.
-  - Exception: the user explicitly wrote something like "możesz wypchnąć ten branch na remote" in THIS session - then pushing that one named branch is allowed. Nothing else (still no PR, no merge).
+  - Exception: the user explicitly wrote something like "możesz wypchnąć ten branch na remote" ("you can push this branch to the remote") in THIS session - then pushing that one named branch is allowed. Nothing else (still no PR, no merge).
 - No messages to people (email, Slack, Teams, comments on external systems). The user's VPS runner is NOT an external system - it is their own machine (see below).
 - No destructive operations: no deleting branches, no hard resets discarding work, no removing files outside the task's scope, no editing pm task data beyond brief/body/links for the task being worked.
 - No scope creep: no new features, no drive-by refactors, no product decisions. If the task turns out to require a scope decision, park that thread, note it as an open question, and continue with what IS in scope.
@@ -48,29 +48,29 @@ When hitting a fork (design choice, ambiguous spec, failing approach):
 When the work is done - or when stopping for any reason - end with a report in exactly this structure:
 
 ```
-## Raport z przejęcia sterów
+## Takeover report
 
-**Stan:** [co jest zrobione / gdzie stanąłem i dlaczego]
+**State:** [what is done / where I stopped and why]
 
-**Podjęte decyzje:**
-- [decyzja] - wybrałem X, odrzuciłem Y, bo [powód]
+**Decisions made:**
+- [decision] - chose X, rejected Y, because [reason]
 - ...
 
-**Otwarte pytania:** [rzeczy które wymagają Twojej decyzji; "brak" jeśli nic]
+**Open questions:** [things that need your decision; "none" if nothing]
 
-**Do Twojego review:** [co warto obejrzeć okiem człowieka - konkretne pliki/commity/zachowania]
+**For your review:** [what deserves a human look - concrete files/commits/behaviors]
 
-**Commity:** [lista hashy + jednolinijkowe opisy, branch]
+**Commits:** [list of hashes + one-line descriptions, branch]
 
-**TL;DR:** [2-4 zdania: co zrobione, co nie i dlaczego, co TY masz teraz zrobić]
+**TL;DR:** [2-4 sentences: what got done, what did not and why, what YOU do next]
 ```
 
-Write the report in Polish. The user reviews it and asks for corrections - so make the decisions section honest and specific, including the rejected alternatives. A vague report defeats the whole point of the handover.
+Write the report in Polish, headings included. The user reviews it and asks for corrections - so make the decisions section honest and specific, including the rejected alternatives. A vague report defeats the whole point of the handover.
 
 **Style rules for the report** - the user may come back to it hours later, cold:
 
 - Concise, zero filler - but conciseness comes from CUTTING low-value items, never from compressing sentences into fragments, abbreviations, or arrow chains (`A → B → fail`).
-- No jargon and no shorthand invented during the session (internal codenames, "wariant B", "ten hack z rana") - the reader was not there. Spell things out: file paths, function names, error messages verbatim.
+- No jargon and no shorthand invented during the session (internal codenames, "variant B", "that hack from this morning") - the reader was not there. Spell things out: file paths, function names, error messages verbatim.
 - Each bullet must be understandable on its own, without scrolling up through the session. If a decision needs context to make sense, give one sentence of context in place.
 - A wall of text is as bad as telegraphic fragments: short complete sentences, one decision per bullet, and drop anything that doesn't change what the user would do next.
 - **TL;DR goes LAST, always.** It is the part the user reads first when skimming, so it must stand entirely on its own: what got done, what did not (and why), and the single next action expected from the user. 2-4 full sentences, no bullets, no references to the sections above ("see Decisions"). Never skip it, even when the report is short.
@@ -78,5 +78,5 @@ Write the report in Polish. The user reviews it and asks for corrections - so ma
 ## Arguments
 
 Text after the invocation refines the contract for this session, e.g.:
-- `/taking-over push ok` or "możesz wypchnąć ten branch" - lifts the push restriction for the current branch.
-- Any other instruction ("skup się tylko na testach", "max 1h roboty") - treat as a scope constraint layered on top of this contract.
+- `/taking-over push ok` or "możesz wypchnąć ten branch" ("you can push this branch") - lifts the push restriction for the current branch.
+- Any other instruction ("focus only on the tests", "max 1h of work") - treat as a scope constraint layered on top of this contract.

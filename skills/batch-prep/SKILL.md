@@ -23,7 +23,7 @@ If the tickets depend on each other or touch the same feature, stop and use
 
 ### Step 1: Create the parent tracker FIRST - before any gathering
 
-The parent's id is the **handoff token**: the user needs it to start the odbiór
+The parent's id is the **handoff token**: the user needs it to start the acceptance
 session (`/batch-finish-auto <parent-id>`) in a SECOND window, and they want
 that window open while the prep still runs. Nothing about the id depends on
 ticket contents - pm allocates the next free number, and the ticket ids come
@@ -38,8 +38,8 @@ The MCP write holds the project lock, so a parallel session can't drop the
 line.
 
 **`finish_mode` goes in the same call.** When the user asked for an automatic
-odbiór - "finish_mode - auto", "auto odbiór", "sam się odbierze", "idę spać,
-ma być odebrane" - pass `finish_mode: "auto"` too (pm >= 0.41). It is a TASK
+acceptance (odbiór) - "finish_mode - auto", "auto odbiór", "sam się odbierze", "idę spać,
+ma być odebrane" (auto acceptance, "I'm going to sleep, have it accepted") - pass `finish_mode: "auto"` too (pm >= 0.41). It is a TASK
 field, not a run flag: when the run ends, `pm run-epic` spawns a detached
 `pm finish <parent>` on the same machine, which runs this same acceptance
 procedure headless and `--no-sim` - the mechanical half happens overnight,
@@ -64,12 +64,12 @@ Then, **before starting Step 2**, print the handoff line - and WHICH line
 depends on `finish_mode`. Never print both: a second acceptance window next
 to an armed auto-chain is two acceptances racing on the same branches.
 
-- `finish_mode` unset/off - the odbiór needs a human-started session, so hand
+- `finish_mode` unset/off - the acceptance needs a human-started session, so hand
   it over now:
 
   ```
-  Rodzic: <parent-id>
-  Drugie okno, wklej teraz: /batch-finish-auto <parent-id> --sim
+  Parent: <parent-id>
+  Second window, paste now: /batch-finish-auto <parent-id> --sim
   ```
 
   That session is designed for this: a parent with no subs and no run yet
@@ -79,10 +79,10 @@ to an armed auto-chain is two acceptances racing on the same branches.
   the line says NO second window plus where to look afterwards:
 
   ```
-  Rodzic: <parent-id>
-  Auto-odbiór uzbrojony (finish_mode: auto) - drugie okno NIEPOTRZEBNE.
-  Po runie: raport ~/.claude/pm/<slug>/.executor/<parent-id>.finish.md, stan w `pm runs`.
-  Wizualia potem: /batch-finish-auto <parent-id> --sim (rozpozna zrobiony odbiór, dociągnie tylko drain).
+  Parent: <parent-id>
+  Auto-acceptance armed (finish_mode: auto) - second window NOT NEEDED.
+  After the run: report ~/.claude/pm/<slug>/.executor/<parent-id>.finish.md, state in `pm runs`.
+  Visuals afterwards: /batch-finish-auto <parent-id> --sim (recognizes the finished acceptance, only runs the drain).
   ```
 
 Repeat whichever line you printed in the final report as well.
@@ -100,10 +100,10 @@ get filled in after Step 2, and if Step 3 drops a ticket, rewrite the title
 with `pm_update_task`:
 
 ```
-## Po przejściu robota
-Każdy sub domykaj przez `/batch-finish <sub-id>` - NAJPIERW weryfikuje
-ASSUMPTIONs workera dowodowo (logi/network/dev API), dopiero potem TODO,
-symulator i PR.
+## After the executor run
+Finish every sub with `/batch-finish <sub-id>` - it FIRST verifies the
+worker's ASSUMPTIONs with evidence (logs/network/dev API), only then the TODO,
+simulator and PR.
 ```
 
 Status rollup is generated (`pm_context`) - never hand-maintain a status table.

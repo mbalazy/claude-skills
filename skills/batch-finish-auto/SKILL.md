@@ -220,8 +220,8 @@ The agent prompt MUST carry:
 7. **What to return**: verdict per assumption with a one-line evidence each,
    probe outcomes with actual numbers, gate result, commits pushed, what
    remains for the human - AND a draft of the ticket paragraph (batch-finish
-   Step 7, section 1): the four `Bug / Stan / Sprawdzone / Przed PR-em` lines
-   in plain words, with `Sprawdzone:` marked "wizualnie: czeka na orkiestratora"
+   Step 7, section 1): the four `Bug / State / Verified / Before PR` lines
+   in plain words, with `Verified:` marked "visual: waiting for the orchestrator"
    where a visual claim is still open. The orchestrator completes that line
    after the visual pass; the agent never invents the visual result.
 
@@ -411,28 +411,28 @@ tickets were about; they will read section 1 and maybe section 2, and they
 must be able to act on those two alone. In the user's conversation language
 (Polish for this user).
 
-**1. Co z ticketami** - one ticket paragraph per sub (`Bug / Stan /
-Sprawdzone / Przed PR-em`, batch-finish Step 7 section 1), headed by the
+**1. The tickets** - one ticket paragraph per sub (`Bug / State /
+Verified / Before PR`, batch-finish Step 7 section 1), headed by the
 external ticket id and a plain-words title of the bug, never by the pm sub
 id alone. Source: the agent's draft paragraph (Step 3, item 7) with the
-`Sprawdzone:` line completed from what the visual pass ACTUALLY settled
+`Verified:` line completed from what the visual pass ACTUALLY settled
 (Step 6) - which device, which account, whether it was the reporter's own
 scenario or a stand-in, and what the human can do to close the gap. After
 completing it, rewrite that sub's brief so it carries the same four lines -
 the board must not tell a different story than the report.
 
-**2. Co zrobiła sesja odbioru poza sprawdzaniem** - per ticket, one line:
+**2. What the acceptance session did besides checking** - per ticket, one line:
 fixes pushed to the branch by the acceptance (what each changes for the user
-+ commit hash), tests added, or "nic nie zmieniała". Then: nothing merged, no
++ commit hash), tests added, or "changed nothing". Then: nothing merged, no
 PR opened, statuses untouched (or the exception, named). This is what the user
 must know before assembling, so it stays its own section, never folded into 1.
 
-**3. Sprzątanie po testach** - every side effect on shared data or devices,
-across all subs and the visual pass, each "zostawione, skasuj jeśli zbędne"
-or "skasowane"; plus the runtime state left behind (which sim, which Metro,
+**3. Cleanup after testing** - every side effect on shared data or devices,
+across all subs and the visual pass, each "left in place, delete if not needed"
+or "deleted"; plus the runtime state left behind (which sim, which Metro,
 which checkout).
 
-**4. Szczegóły techniczne** - the table the report used to BE: sub, verdict
+**4. Technical details** - the table the report used to BE: sub, verdict
 on the worker's assumptions (clean / fixed-N-refuted / blocked), visually
 verified (yes / no + reason), **channel** (what actually settled the visual
 claim: measured delta / onLayout number / anchor probe / screenshot - the

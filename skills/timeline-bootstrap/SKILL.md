@@ -16,7 +16,7 @@ One run per project: check -> gather -> draft -> the user's go -> write.
    - exit 0: go on.
 2. `python3 <skill>/scripts/gather.py [slug] > <scratch>/timeline-facts-<slug>.txt`, then read the file whole.
 3. Draft the seed and print it - `prompts/draft.md`.
-4. Wait for the user's explicit go ("zapisz", "tak", "go"). Struck or edited lines: apply, print again, wait again. "dry run" / "tylko pokaż" / no answer = nothing is written.
+4. Wait for the user's explicit go ("zapisz" = "save", "tak" = "yes", "go"). Struck or edited lines: apply, print again, wait again. "dry run" / "tylko pokaż" ("just show") / no answer = nothing is written.
 5. On the go: run check.sh again (it must still exit 0), write as `prompts/draft.md` says, then show `pm timeline <slug>`.
 
 ## Rules

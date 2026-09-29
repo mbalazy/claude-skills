@@ -118,7 +118,7 @@ with evidence). Record the acceptance in the pm task Log and brief.
 ## Example
 
 ```
-/pass-to ACME-1845 dowieź ACME-1845 na simie iPhone SE, którego właśnie odpaliłem w Device Hub; użyj /simulator-verify; potem wróć do mnie na odbiór
+/pass-to ACME-1845 deliver ACME-1845 on the iPhone SE sim I just booted in Device Hub; use /simulator-verify; then come back to me for the acceptance
 ```
 
 produces: `ListAgents` (ACME-1845 listed, cwd = slot 1), five verification
