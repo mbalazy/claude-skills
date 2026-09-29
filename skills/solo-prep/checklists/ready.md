@@ -15,6 +15,9 @@ text in the tasks.
 ## Decided before the run
 
 - The user chose the runtime mode (SKILL.md Step 2).
+- `--sim`: the run's simulator printed `WDA READY` from `wda-sim.sh ensure`
+  and `check-queue.py` re-proved it with that `--sim-udid`/`--wda-port`
+  (Step 2.5) - `RIG OK` alone does not count.
 - Every approval the repo reserves for its owner is recorded or was asked for
   (Step 5).
 - Pinned version stamps were read again just before handoff (Step 4.4).
