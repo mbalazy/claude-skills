@@ -45,7 +45,18 @@ of the repo, and one shared paragraph patched by hand in seven subs.
    `/onboarding-projects` (audit mode) for this project. This skill does not
    edit `project.yaml` or runtime config. Continue at Step 3 once
    `pm executor show` declares the skill and its config file exists.
-5. Record it in the parent `## Context`:
+5. `--sim`: settle the ONE simulator the run drives (`SIM_UDID`) and a WDA port
+   no other simulator holds (`WDA_PORT`), then run
+   `<simulator-verify>/scripts/wda-sim.sh ensure <SIM_UDID> --port <WDA_PORT>`
+   and require `WDA READY` - for a simulator created for this run above all,
+   which has no WebDriverAgent runner at all. `RIG OK` from `rig-check.sh`
+   proves the app, not WDA; both are needed. `WDA NOT READY` stops here with
+   its printed recovery step (install source, `wda-sim.sh build`, a free
+   port). Never uninstall or restart WDA on another session's simulator to
+   make this pass. `scripts/check-queue.py` re-proves it with
+   `--sim-udid/--wda-port` (or `SIM_UDID`/`WDA_PORT` in the environment) and
+   reports NOT READY without it.
+6. Record it in the parent `## Context`:
    `DECIDED: runtime <--web|--sim|--no-runtime>, <who>, <date>`. Code-only:
    visual criteria stay in the AC, their recipes say UNVERIFIED, automated
    tests stay required.
@@ -142,6 +153,7 @@ never patched by hand.
 
 ```
 python3 ~/.claude/skills/solo-prep/scripts/check-queue.py <tracker-id>
+# --sim run: python3 ... check-queue.py <tracker-id> --sim-udid <SIM_UDID> --wda-port <WDA_PORT>
 ```
 
 The script checks what can be checked mechanically: the heading contract, the

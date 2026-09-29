@@ -71,6 +71,38 @@ def run(cmd, cwd=None, stdin=None, timeout=60):
         return 127, "", str(exc)
 
 
+def wda_sim_script():
+    here = os.path.dirname(os.path.realpath(__file__))
+    for cand in (os.path.join(here, "..", "..", "simulator-verify", "scripts", "wda-sim.sh"),
+                 os.path.expanduser("~/.claude/skills/simulator-verify/scripts/wda-sim.sh")):
+        if os.path.isfile(cand):
+            return os.path.realpath(cand)
+    return None
+
+
+# A --sim run drives one simulator through WebDriverAgent. RIG OK proves the app runs the
+# checkout's JS and nothing about WDA, and a simulator created for the run has no runner
+# (journal sim-rig 20260928-4ccb) - so the queue is not ready until the target passes
+# `wda-sim.sh check`: runner installed, listener on the port attributed to that simulator,
+# element tree returned. The check installs and starts nothing; `wda-sim.sh ensure` does.
+def wda_gate(rep, where, udid, port):
+    script = wda_sim_script()
+    if not script:
+        rep.err(where, "--sim run but simulator-verify/scripts/wda-sim.sh was not found - WDA readiness unproven")
+        return
+    if not udid or not port:
+        rep.err(where, "--sim run but no simulator target: pass --sim-udid/--wda-port (or export SIM_UDID/WDA_PORT) "
+                       f"after '{script} ensure <udid> --port <port>' printed WDA READY")
+        return
+    code, out, err = run([script, "check", udid, "--port", str(port)], timeout=120)
+    if code == 0:
+        rep.ok(where, f"WDA READY on {udid} :{port} (wda-sim.sh check)")
+    else:
+        lines = [ln for ln in (err + out).splitlines() if ln.strip()]
+        why = next((ln for ln in reversed(lines) if "NOT READY" in ln), lines[-1] if lines else f"exit {code}")
+        rep.err(where, f"{why.strip()} - run '{script} ensure {udid} --port {port}'")
+
+
 def yaml_load(raw):
     code, out, err = run(["ruby", "-rdate", "-ryaml", "-rjson", "-e",
                           "puts JSON.generate(YAML.load(STDIN.read) || {})"], stdin=raw)
@@ -230,6 +262,10 @@ def main():
     ap.add_argument("--pm-root", default=os.path.expanduser("~/.claude/pm"))
     ap.add_argument("--no-git", action="store_true", help="skip checks that read the code repo's git")
     ap.add_argument("-v", "--verbose", action="store_true", help="also print passing facts")
+    ap.add_argument("--sim-udid", default=os.environ.get("SIM_UDID", ""),
+                    help="simulator the --sim run will drive (default: $SIM_UDID)")
+    ap.add_argument("--wda-port", default=os.environ.get("WDA_PORT", ""),
+                    help="WebDriverAgent port on that simulator (default: $WDA_PORT)")
     args = ap.parse_args()
     rep = Report(args.verbose)
 
@@ -348,6 +384,8 @@ def main():
         elif runtime_flag is None and skill:
             if not os.path.isfile(os.path.join(repo, configs.get(skill, "__none__"))):
                 rep.err(P, f"no runtime flag: the run defaults to {skill}, whose repo config is missing")
+    if runtime_flag == "--sim" or (runtime_flag is None and skill == "simulator-verify"):
+        wda_gate(rep, P, args.sim_udid, args.wda_port)
     if (runtime_flag or skill) and not re.search(r"DECIDED:.*runtime", context, re.I):
         rep.warn(P, "parent '## Context' has no 'DECIDED: runtime ...' line")
 
