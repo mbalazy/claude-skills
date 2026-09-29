@@ -61,8 +61,10 @@ def find_transcript(shift_id):
         roots.append(os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "projects"))
     # every Claude config dir next to ~/.claude: a second account, a worker dir
     roots += sorted(glob.glob(os.path.join(HOME, ".claude*", "projects")))
+    # the state file is named <date>-<session-id>, the transcript <session-id>.jsonl
+    session_id = re.sub(r"^\d{4}-\d{2}-\d{2}-", "", shift_id)
     for root in roots:
-        hits = glob.glob(os.path.join(root, "*", f"{shift_id}*.jsonl"))
+        hits = glob.glob(os.path.join(root, "*", f"{session_id}*.jsonl"))
         if hits:
             return max(hits, key=os.path.getmtime)
     return None
