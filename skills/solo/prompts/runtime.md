@@ -116,6 +116,6 @@ next shift gets.
 
 Records created on the dev account, fixtures on the simulator, contacts or
 appointments added: list each in the state file under `## Cleanup` as
-"skasowane" or "zostawione, skasuj jeśli zbędne". At the end of the shift
+"deleted" or "left in place, delete if not needed". At the end of the shift
 leave the runtime as the report says: which sim booted, which Metro / dev
 server running on which port, which checkout it serves.

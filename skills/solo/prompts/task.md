@@ -94,7 +94,7 @@ by what you worked on last:
   that is neither in the queue nor in the base nor on any branch, local or
   origin): do not move the task to `doing`, do not branch. State file `## Progress`: `<id> ·
   untouched: waits for <dep-id> (<parked|red|untouched|unknown>)`, and the
-  report says "nie ruszone, bo czeka na X". Never work around it by forking
+  report says "nie ruszone, bo czeka na X" (untouched, waiting for X). Never work around it by forking
   from the base - the code would be built against a foundation that is not
   there.
 
@@ -200,7 +200,7 @@ round buys nothing.
   same prompt. Not two, not a reworded one.
 - **After the second failure the task is NOT done.** `scripts/note.sh
   <state> task-end <id> parked REVIEW-MISSING <reason>`, the brief's
-  `Przed PR-em:` carries `recenzja nie odbyła się (<reason>)`, and section 1
+  `Przed PR-em:` carries "the review did not take place (<reason>)", and section 1
   of the report says it in plain words. A task nobody reviewed ships no more
   than a task whose gate was red.
 

@@ -73,7 +73,7 @@ within the task's scope and AC, keep everything local. Explicitly:
   (ties by `order`), and it forks from the head of its dependency's branch
   instead of the base - the rule is in `prompts/task.md` step 2. A
   dependency that ends parked, red or untouched leaves its dependents
-  untouched ("nie ruszone, bo czeka na X"); one already in the base counts
+  untouched ("nie ruszone, bo czeka na X" - untouched, waiting for X); one already in the base counts
   as satisfied, and so does one from an earlier shift whose branch exists
   (local or origin - no push needed) with a green outcome in its brief; a
   `depends_on override: <id> counts as satisfied (user, <date>)` line in
@@ -248,7 +248,7 @@ the VPS runner.
 - 2026-09-21, a stack split across two shifts: a dependency from an earlier
   shift counted only as `pushed` + on origin - a state a shift without
   `--push` can never produce - so the second shift always reported "nie
-  ruszone, bo czeka na X". Now a green outcome on an existing branch (local
+  ruszone, bo czeka na X" (untouched, waiting for X). Now a green outcome on an existing branch (local
   or origin) satisfies it, a `depends_on override:` line in the sub's Spec
   is the user's veto over the rule, and a task that already has its own
   branch continues on it instead of forking again (`prompts/task.md` step

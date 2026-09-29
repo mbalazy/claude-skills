@@ -24,7 +24,7 @@ rig: <not checked | OK <ts> | DEAD <ts>: <verdict> | cold start attempted <ts>: 
 - <ts> <task-id>: chose X over Y because Z
 
 ## Cleanup
-- <what> · <skasowane | zostawione, skasuj jeśli zbędne>
+- <what> · <deleted | left in place, delete if not needed>
 
 ## Compactions noticed
 - <ts> resumed at <task-id> step <n>
