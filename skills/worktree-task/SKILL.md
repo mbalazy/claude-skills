@@ -118,12 +118,31 @@ A worktree session gets the taking-over contract plus the solo guard instead.
   to the main checkout's `.turbo/cache`).
 - 2026-10-06, Playwright 1.63: config lookup order `.ts, .js, .mts, .mjs,
   .cts, .cjs` (`lib/common/index.js`, resolveConfigFile).
+- 2026-10-06, pnpm on APFS: `node_modules` files are clones (copy-on-write),
+  not hard links - the same file in the main checkout and a worktree has a
+  different inode and `links=1` - so an edit under a worktree's
+  `node_modules` does not reach another checkout.
+- 2026-10-06, Playwright's list reporter does not print the web server's port:
+  a lane's port is confirmed with `lsof` while the run is up, not from the log.
 - The solo guard (`~/.claude/skills/solo/scripts/guard.py`) is a global
   PreToolUse hook applied per session id; wt.py arms it through solo's own
   `shift-open.sh` and closes it with `shift-close.sh`, never by editing
   solo's files.
 
+## After a lane's session finishes
+
+The background session goes `idle` and stays attachable; its guard marker
+stays armed until `close` (or until it goes stale at MAX_HOURS + 2h). So a
+push asked of THAT session is blocked by design: push from a terminal
+(`git -C <worktree> push -u origin <branch>`), then `close` once the MR is
+merged.
+
 ## Changelog
 
 - 2026-10-06: first version, built for the vega project while a /solo run
   owned the main checkout; first lanes vega-256 and vega-257.
+  Result: both sessions finished cold from the kickoff (vega-256: 8 commits,
+  validate 27/27 + e2e 153 on lane 1; vega-257: cause found, 2 commits, stress
+  loops 0/7 red after vs 3/4 before, gate green on lane 2), while the /solo
+  run in the main checkout closed two subs with its full gate (e2e on 3098)
+  green in the same hour - no port, cache or file collision.
