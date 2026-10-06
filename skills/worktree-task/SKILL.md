@@ -1,6 +1,6 @@
 ---
 name: worktree-task
-description: Runs one pm task in its own git worktree with its own Claude Code background session, in parallel with other sessions on the same repo (a /solo run in the main checkout, another task) - one task = one worktree = one session = one lane of ports. `wt.py open` creates the worktree from the task's branch, seeds the untracked files a session needs with the main checkout's path and ports rewritten, renders per-worktree overlays, installs and builds; `launch` starts `claude --bg` with a kickoff under the taking-over contract and arms the solo guard for that session; `status` shows every lane; `close` removes the worktree after the work is committed (branch kept, or deleted once it is in the base). Use when the user says "/worktree-task", "odpal ten task w worktree", "osobna sesja na ten task", "puść to równolegle", "jeden task jeden worktree", "nie ruszaj głównego checkoutu, zrób to obok", or when a task must run while another session owns the main checkout.
+description: Runs one pm task in its own git worktree with its own Claude Code background session, in parallel with other sessions on the same repo (a /solo run in the main checkout, another task) - one task = one worktree = one session = one lane of ports. `wt.py open` creates the worktree from the task's branch, seeds the untracked files a session needs with the main checkout's path and ports rewritten, renders per-worktree overlays, installs and builds; `launch` starts `claude --bg` with a kickoff under the taking-over contract and arms the solo guard for that session; `status` shows every lane; `close` removes the worktree after the work is committed (branch kept, or deleted once it is in the base). Takes a loose request too ("/worktree-task <what to do>"): finds the pm task it means or creates one, picks the branch, then opens and launches. Use when the user says "/worktree-task", "odpal ten task w worktree", "osobna sesja na ten task", "puść to równolegle", "jeden task jeden worktree", "nie ruszaj głównego checkoutu, zrób to obok", or when a task must run while another session owns the main checkout.
 ---
 
 # worktree-task
@@ -11,6 +11,41 @@ pm project a directory resolves to, the guard's markers. This skill does the
 isolation once, mechanically, per task. The procedure is in `scripts/wt.py`;
 this file says when to use it, what a project must declare, and what is and
 is not isolated.
+
+## From a loose request to a lane
+
+The user usually types what they want ("/worktree-task popraw ten flaky
+test", "odpal ACME-270 obok"), not a task id and a branch. Turn that into
+`open` + `launch` yourself; ask only where noted.
+
+1. **Project.** The pm project whose `.worktrees/config.env` belongs to the
+   repo you are in: `ls ~/.claude/pm/*/.worktrees/config.env`, then match its
+   project's `path` (project.yaml) against `git rev-parse --git-common-dir`.
+   Do not trust `pm_context` from cwd here - a worktree directory can resolve
+   to a parent project. No declaration for this repo: stop and say the project
+   needs one first (see "A project's declaration").
+2. **Task.** An id or a title fragment in the request: `pm_get_task` (fuzzy).
+   Otherwise search the project's open tasks (`pm_list_tasks`) for the thing
+   described. Exactly one plausible match: use it and name it in your reply.
+   Several: ask one question listing them. None: create it (step 3).
+3. **Creating the task.** Read `pm docs authoring` first. `pm_add_task` with
+   the project, a title in the user's terms, and a spec holding the request
+   quoted verbatim plus the facts you checked with a tool (file paths, the
+   failing test, the ticket) - no invented plan. The launched session starts
+   cold and the task is all it gets, so if the request does not say WHAT to
+   change or WHERE well enough to act on, ask one question instead of
+   guessing. `ac`: what the user stated, else the repo's standard gate (the
+   AC of the project's recent tasks).
+4. **Branch.** The task's `branch` if set. Otherwise name one in the repo's
+   convention (`git for-each-ref --sort=-committerdate --count=10
+   refs/remotes/origin` - e.g. `feat/ACME-265-...`, `fix/...`), with a ticket
+   key only when the request or the task names one, never a pm id; write it
+   to the task (`pm_update_task` `branch`) before `open`.
+5. **Open, then launch** - unless the user wants the worktree for themselves
+   ("bez launch", "sam w nim popracuję", "tylko worktree"): then `open` only
+   and give them `wt.py env` for their shell.
+6. **Reply in three lines:** task (id + title, "created" when new), worktree
+   path and ports, `claude attach <short>`.
 
 ## Commands
 
@@ -49,8 +84,9 @@ $S arm    <project> <name>                  # inside the session: guard for THIS
   deletes it only when it is an ancestor of `origin/<base>` - a squash merge is
   not, so then the branch is kept and the output says why.
 
-Who calls it: a human from a terminal, or a coordinating session (as in the
-first use, 2026-10-06). A worktree session never opens or closes lanes.
+Who calls it: a session asked through `/worktree-task` (see "From a loose
+request to a lane"), a human from a terminal, or a coordinating session (as
+in the first use, 2026-10-06). A worktree session never opens or closes lanes.
 
 ## A project's declaration
 
@@ -146,3 +182,6 @@ merged.
   loops 0/7 red after vs 3/4 before, gate green on lane 2), while the /solo
   run in the main checkout closed two subs with its full gate (e2e on 3098)
   green in the same hour - no port, cache or file collision.
+- 2026-10-06: a loose request resolves to a task (found or created) and a
+  branch before `open`; `launch` is skipped when the user wants the worktree
+  for themselves.
