@@ -85,6 +85,15 @@ model time before its command even starts. A perfectly ordinary reach - relaunch
 three tab taps, open a row, four tree reads to confirm each one - ran as eleven calls
 took **62s, of which 36s was gaps between calls and only 26s was work**.
 
+Those two numbers are the floor, not the rule (re-measured 2026-11-13/14 on a larger
+React Native app, iPhone 17 simulator, and on 573 real calls from ten days of
+transcripts): **the tree read scales with the screen** - 1.7s, 2.1s and 3.2-4.2s on three
+screens of 195-248 nodes, 3.6s median on a phone - because WebDriverAgent asks the app for
+the `visible` attribute of every node, one blocking accessibility query each (that
+attribute alone is ~3.5s of a 4s read). And the **gap between two calls was 7.4s median**
+(p90 14s), about double the 3.6s above. Both make the rules below matter more, and they
+are why one element is addressed by its testID instead of through a tree read.
+
 The same route as ONE `sim-ui.sh do ...` call took **25s**, three runs in a row, with the
 fixed sleeps replaced by `waitfor`. Nothing about the simulator got faster; ten round
 trips stopped existing.
@@ -93,11 +102,31 @@ So the rule for this loop:
 
 - **Batch every step whose coordinates you already know into one `do` call.** Only break
   out of the batch when the next coordinate genuinely depends on reading the last result.
-- **Never a bare `sleep` after a relaunch or a tap.** `waitfor 'REGEX'` polls the tree
-  and returns the moment the thing is there, and it FAILS LOUDLY when it is not - a fixed
-  `sleep 5` that happens to be long enough today silently becomes a flake tomorrow.
-- **A tap is not a checkpoint.** Follow it with `waitfor` on something only the new screen
-  has, inside the same batch - that is what makes a batch safe to run unattended.
+- **Never a bare `sleep` after a relaunch or a tap.** `waitid ID` (or `waitfor 'REGEX'`
+  when there is no testID to wait for) returns the moment the thing is there, and it FAILS
+  LOUDLY when it is not - a fixed `sleep 5` that happens to be long enough today silently
+  becomes a flake tomorrow. In ten days of transcripts fixed pauses outnumbered waits 663
+  to 101 and were at least 78 of 197 minutes of tool time. A pause that IS the test (stay
+  locked for 15 s) is a `wait N` and stays one.
+- **When the app has testIDs, wait and tap by testID.** `waitid ID` costs ~0.2s a poll
+  against 1.7-4.2s for a tree read, and `tapid ID` needs no coordinate at all - nothing to
+  re-derive per device, nothing in `config.md` to go stale, no layout shift under a
+  keyboard to miss. Measured on the same route (two taps, two waits, one batch): 7.7s with
+  `tap X Y` + `waitfor`, 3.7-4.1s with `tapid` + `waitid`. What the lookup matches, and
+  where it differs from a tree read, is in section 2 - read it once.
+- **A tap is not a checkpoint.** Follow it with `waitid` / `waitfor` on something only the
+  new screen has, inside the same batch - that is what makes a batch safe to run unattended.
+- **Never silence the driver.** No `2>/dev/null` and no `>/dev/null` on `sim-ui.sh`: its
+  stderr is where a refused tap, an off-screen coordinate and a timed-out wait are
+  reported, and 47% of calls in those transcripts had thrown it away. Filter the OUTPUT
+  with `elements --grep` / `--names` instead of a pipe, and check the exit code of every
+  step you did not put inside a `do` batch (a batch stops at the first failure by itself).
+  A wrapper that printed "tapped ..." after a tap that had errored, and a raw `curl` whose
+  "unknown command" went to `/dev/null`, each produced a run that tested nothing.
+- **No raw `curl` to WebDriverAgent when the driver has the command.** Landscape taps,
+  `lock` / `unlock` / `locked`, `activate`, `foreground`, `orientation`, `drag`,
+  `alert buttons` are all `sim-ui.sh` commands now; a hand-rolled request brings its own
+  stale session id and its own unchecked error.
 - **Prefer the element tree to a screenshot** when the tree can answer: ~750 bytes of text
   against an 870KB image, and a screenshot also costs you the tokens to look at it.
 - **After a code change, reach for `rig-check.sh --reload` first.** It keeps the app's
@@ -130,12 +159,20 @@ PASS requires every enumerated instance checked or marked N/A. For layout-sensit
 All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **Set `SIM_UDID`** - with more than one simulator booted the script refuses to run rather than pick one, and it checks that the WebDriverAgent answering on `WDA_PORT` really drives that device (a stranger's WDA on the port used to return the other simulator's screen without a word).
 - Resolve the device: `$S devices` -> pick the booted simulator.
 - Launch the app: `$S launch <bundle-id>` (the bundle id from `config.md`; foregrounds if already running). Use `$S relaunch <id>` when you changed code - it terminates first, so the sim fetches a fresh JS bundle from Metro. A cold start measured 8-9s on this app, so do not guess it: `$S waitfor '<something on the first screen>' --timeout 30` returns as soon as it is up and tells you if it never is.
-- Navigate to the target screen by tapping element rects from the tree: `$S tap X Y` (tap the rect center: `x + w/2`, `y + h/2`). Prefer deep links via `$S openurl` only if the config confirms a registered scheme - and only if a probe shows the URL actually reaches JS, which is a separate question from the scheme being registered (see Gotchas).
+- Navigate to the target screen with `$S tapid ID` where the control has a testID (`$S elements --all --names` lists the ids on screen), else by tapping element rects from the tree: `$S tap X Y` (tap the rect center: `x + w/2`, `y + h/2`). Prefer deep links via `$S openurl` only if the config confirms a registered scheme - and only if a probe shows the URL actually reaches JS, which is a separate question from the scheme being registered (see Gotchas).
 - **Run the whole known route in one call.** Steps are this script's own subcommands; a
   step whose own arguments contain spaces needs inner quotes, a `?` prefix lets a step
   fail without aborting the batch, and `#` starts a comment:
 
   ```sh
+  # by testID - the default when the app has them:
+  $S do "relaunch $BUNDLE -RCT_jsLocation localhost:$PORT" \
+        'waitid Home-menu-button --timeout 60' \
+        'tapid NavBar-tab-search' 'waitid Search-input' \
+        'tapid Search-input' 'type yoga' 'button ENTER' \
+        'waitid Search-result-card-42 --timeout 30'
+
+  # by coordinate and text - when there is no testID to address:
   $S do "relaunch $BUNDLE -RCT_jsLocation localhost:$PORT" \
         'waitfor "Search items" --timeout 30' \
         'tap 220 904' 'waitfor "StaticText Schedule"' \
@@ -146,15 +183,35 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
   `type label name value` joined with spaces - which is why `'StaticText Schedule'` finds
   a screen title without also matching the tab button of the same name. It prints the
   elements it matched, so a batch leaves a readable trail of what each step reached.
+  Two traps come with that, both silent:
+  - **Without `--all` it only sees the filtered tree** (TextField, Button, Switch, Icon,
+    SearchField, StaticText, Image, and only when labeled). A React Native pressable is
+    very often `type: "Other"`: `waitfor Settings-back-button` timed out with the screen
+    plainly up, and `--all` (or `waitid`) found it at once.
+  - **A short pattern matches things you did not mean**, because the fields are joined and
+    case is ignored: `Sign` matched the status bar's `"No signal"` and the batch walked on
+    from the launch screen. Anchor it, or wait by testID - an id is matched exactly.
+  In a shell variable, keep X and Y separate: Claude's Bash is zsh, which does not split
+  `R="195 625"; $S tap $R` into two words, so the tap errors out and a chain that ignores
+  the exit code carries on to the screenshot.
 - Once a route is known, write it into `config.md` next to the screen map. Re-deriving tab
   coordinates from `elements --all` is a round trip you only need to pay once per device.
 
 ### 2. Observe
 - `$S elements` -> the accessibility tree as compact JSON (`rect` is `[x,y,w,h]` in pt). This is the primary signal: assert on real elements, not pixels.
 - **`$S elements --all`** -> the FULL visible tree including unlabeled `Other`/container nodes. Use it whenever an element you can see isn't in the filtered tree - RN rows, glass buttons, and icon-only controls usually live there as `type:"Other"` with an exact rect (e.g. client list rows, the search-field clear button). Reach for `--all` BEFORE falling back to screenshot-and-guess coordinates.
+- **`$S elements [--all] --grep REGEX`** keeps the elements where ONE field (type, label, name or value) matches, and **`--names`** prints one line per element (`testID  type  [rect]  'text'`) instead of JSON. Use them instead of piping the tree into a throwaway parser - sessions re-typed that parser on most reads, each time a slightly different one. With `--settled` the two reads are still compared whole; the filter only changes what is printed.
+- **One element by testID** - `$S el ID` (type, label, value, rect, `displayed` of every element carrying that id), `$S waitid ID [--timeout S] [--exists]`, `$S tapid ID`. `displayed` is the same visibility function the tree's filter uses, asked for one element: it agreed with the tree on every identifier of three screens (81, 85 and 117 ids), list rows and covered elements included. Know what the lookup is before leaning on it:
+  - WebDriverAgent's "accessibility id" means `identifier == X`, **or** `label == X` for an element that has NO identifier. So `waitid "Popular now"` finds a bare text, and `waitid Menu` finds nothing when "Menu" is the label of a button that has a testID. Each match says `by: "id"` or `by: "id-or-label"` (the label equals the query: most likely a text match).
+  - It returns every match, displayed or not. `waitid` succeeds when ANY is displayed; `tapid` taps only when the displayed matches are ONE target (React Native often exposes a view twice with the identical frame - that counts as one) and otherwise refuses and lists them.
+  - `tapid` presses through `element/click`, where WebDriverAgent picks a hittable point - not the centre of the rect. For a partly covered element the centre is the wrong place: a title whose centre sat under the tab bar switched tabs when tapped by coordinate. Do not "fix" a `tapid` by tapping the rect's centre yourself.
+  - **`<Screen>-screen-root` is a poor thing to wait for.** A root container often reports `displayed: false` while its screen is plainly up (Home and Settings do, Explore does not - the tree says the same). Wait for a real control of the screen, or pass `--exists` when presence is all you need; a timed-out `waitid` tells you when the id existed but was not displayed.
+  - Find, `displayed` and `rect` are separate requests, not one snapshot. On a screen that is still loading a rect can move between them, and an element whose visibility flickers (one calendar cell did, in the tree as well) can read `false` once. A wait absorbs that; a single `el` read does not - for an assertion about several elements at once use `elements --settled`.
+  - A fast wait no longer hides the 2-4 s a tree read used to add. With WebDriverAgent's default settings the screen was already still when the wait passed (same screenshot 1.5 s later); with `waitForIdleTimeout` set to 0 it was mid-transition. Leave that setting alone.
 - `$S screenshot [out.png] [--width N]` then Read the file -> visual confirmation of layout, spacing, glass surfaces, anything the tree can't express. By default the image is resampled to the device's point width (px ÷ SIMULATOR_MAINSCREEN_SCALE), so **1px == 1pt on any simulator** and coordinates read straight off the image. `--width 0` = full res (for 3b measurement).
 - After any tap that should change the screen, re-run `$S elements` and confirm the content actually changed (e.g. header label flipped) - a registered click is not proof of navigation.
-- Interactions: `$S tap|doubletap|longpress|swipe|type|button` (see script header for signatures). Coordinates are POINTS; a coordinate measured on a full-res screenshot must be divided by the scale first. Out-of-range coordinates are rejected rather than silently doing nothing.
+- Interactions: `$S tap|doubletap|longpress|swipe|drag|type|button` (see script header for signatures). Coordinates are POINTS; a coordinate measured on a full-res screenshot must be divided by the scale first. Out-of-range coordinates are rejected rather than silently doing nothing - and **against the rotated frame when the app in front is in landscape** (a video player is 874x402 on an iPhone 17, and `tap 600 200` is legal there; `$S orientation` says what WebDriverAgent sees). A gesture or keystroke WebDriverAgent refuses ends the command with exit 1 and its error - it is never reported as done.
+- App and device state without `curl`: `$S activate BUNDLE` (foreground without a restart and without launch arguments), `$S foreground` (bundle id + pid of the app in front - the cheap way to learn that a tap threw you out to Safari or the home screen), `$S lock` / `$S unlock` / `$S locked`, `$S alert buttons`. `unlock` cannot get past a passcode or Face ID on a physical iPhone - that one needs the human.
 - **Alerts queue and arrive late.** One read a few seconds after a tap that says "no alert" is not evidence the tap did nothing. Use `$S alert wait [seconds]` to wait for one, and `$S alert accept --all` afterwards - if it drains more alerts than you ever saw, every tap landed.
 - **One read right after a tap is a frame of an animation, not the state.** A dismissing keyboard, a sheet mid-transition or a launch screen reads as "gone" and is back in the next frame (a tap-to-dismiss was CONFIRMED off one read; 4 s later the keyboard was there). Assert transitions with **`$S elements --settled`**: two reads 2 s apart (`SIMUI_SETTLE_SECONDS`), exit 3 with the diff when they differ. Only two reads that agree are evidence.
 - `$S elements` is not a passive read: answering it makes `UITabBarController` instantiate every child controller, so it can mount the very screen you are testing for. Never use it to prove a screen was NOT mounted.
