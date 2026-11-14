@@ -77,18 +77,51 @@ def elements(src, show_all):
     return out
 
 
+FIELDS = ("type", "label", "name", "value")
+
+
+def narrow(els, pattern):
+    """Keep elements where ONE field matches. Deliberately per field, unlike --match:
+    matching the joined "type label name value" string lets a pattern span two fields,
+    and a short one hit something unrelated (`Sign` matched the status bar's
+    `"No signal"` and a batch walked on from the launch screen)."""
+    pat = re.compile(pattern, re.I)
+    return [e for e in els if any(pat.search(str(e.get(k, ""))) for k in FIELDS)]
+
+
+def emit(els, names):
+    if not names:
+        print(json.dumps(els, separators=(",", ":")))
+        return
+    # One line per element: what you address it by, what it says, where it is.
+    for e in els:
+        ident = e.get("name") or "-"
+        text = e.get("label") or e.get("value") or ""
+        extra = f"  value={e['value']!r}" if e.get("value") and e.get("value") != e.get("label") else ""
+        print(f"{ident}\t{e.get('type')}\t{json.dumps(e['rect'], separators=(',', ':'))}\t{text!r}{extra}")
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--port", default="8100")
     ap.add_argument("--all", action="store_true")
+    ap.add_argument("--grep")
+    ap.add_argument("--names", action="store_true")
+    ap.add_argument("--refilter", action="store_true")
     ap.add_argument("--match")
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument("--interval", type=float, default=0.35)
     a = ap.parse_args()
 
+    if a.refilter:      # stdin is an element list this script already printed
+        els = json.load(sys.stdin)
+        emit(narrow(els, a.grep) if a.grep else els, a.names)
+        return 0
+
     if not a.match:
         src = json.load(sys.stdin)["value"] if not sys.stdin.isatty() else fetch(a.port)
-        print(json.dumps(elements(src, a.all), separators=(",", ":")))
+        els = elements(src, a.all)
+        emit(narrow(els, a.grep) if a.grep else els, a.names)
         return 0
 
     pat = re.compile(a.match, re.I)
