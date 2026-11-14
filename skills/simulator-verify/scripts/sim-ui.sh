@@ -4,15 +4,27 @@
 # (same backend mobile-mcp uses; the WDA runner app must be installed on the sim).
 #
 # Usage:
-#   sim-ui.sh elements [--all] [--settled]  # a11y element tree as compact JSON (--all: every visible element incl. unlabeled;
-#                                           #  --settled: two reads $SIMUI_SETTLE_SECONDS (2) apart, exit 3 if they differ = still animating)
+#   sim-ui.sh elements [--all] [--settled] [--grep REGEX] [--names]
+#                                           # a11y element tree as compact JSON (--all: every visible element incl. unlabeled;
+#                                           #  --settled: two reads $SIMUI_SETTLE_SECONDS (2) apart, exit 3 if they differ = still animating;
+#                                           #  --grep: keep elements where ONE field (type, label, name or value) matches;
+#                                           #  --names: one line per element instead of JSON)
+#   sim-ui.sh waitid ID [--timeout S] [--exists]   # poll for ONE element by testID until it is displayed (~0.2s a poll, not a tree read)
+#   sim-ui.sh tapid ID                      # tap the one displayed element with that testID (WDA picks a hittable point)
+#   sim-ui.sh el ID                         # type/label/value/rect/displayed of every element with that testID
 #   sim-ui.sh tap X Y                       # coordinates in pt
 #   sim-ui.sh doubletap X Y
 #   sim-ui.sh longpress X Y [DURATION_MS]
 #   sim-ui.sh swipe X1 Y1 X2 Y2 [DURATION_MS]
 #   sim-ui.sh type "text"                   # types into the focused element
 #   sim-ui.sh button HOME|ENTER|VOLUME_UP|VOLUME_DOWN
+#   sim-ui.sh drag X1 Y1 X2 Y2 [SECONDS]    # press, hold SECONDS (default 0.5), drag (Control Center, sliders, reordering)
+#   sim-ui.sh lock | unlock | locked        # lock screen through WDA; `locked` prints true/false
+#   sim-ui.sh activate BUNDLE_ID            # bring an app to the foreground WITHOUT restarting it
+#   sim-ui.sh foreground                    # bundle id + pid of the app in front right now
+#   sim-ui.sh orientation                   # PORTRAIT / LANDSCAPE as WDA sees the app in front
 #   sim-ui.sh alert                         # text of the alert on screen now (exit 1 if none)
+#   sim-ui.sh alert buttons                 # labels of the front alert's buttons
 #   sim-ui.sh alert wait [SECONDS]          # poll until an alert shows up (default 15s)
 #   sim-ui.sh alert accept [--all]          # accept the front alert; --all drains the queue
 #   sim-ui.sh alert dismiss
@@ -401,13 +413,26 @@ assert_in_bounds() {
     return 0
   fi
   read -r w h s <<<"$dims"
+  # The cached geometry is the PORTRAIT one. With the app in front rotated (a video
+  # player), WDA's coordinate space is the rotated frame, and checking against the
+  # portrait size refused every tap right of the portrait width - which pushed whole
+  # sessions onto raw curl. Ask WDA (10 ms) and swap; anything unreadable = portrait.
+  local orient="" land=""
+  if [ -n "$_MEMO_WDA" ]; then
+    session
+    orient="$(curl -s -m 5 "$WDA/session/$_MEMO_SID/orientation" 2>/dev/null \
+      | python3 -c 'import sys,json
+try: print(json.load(sys.stdin)["value"])
+except Exception: pass' 2>/dev/null || true)"
+    case "$orient" in LANDSCAPE|UIA_DEVICE_ORIENTATION_LANDSCAPERIGHT) land=1; local t="$w"; w="$h"; h="$t" ;; esac
+  fi
   while [ "$#" -ge 2 ]; do
     x="$1"; y="$2"; shift 2
     case "$x,$y" in
       ,*|*,|*[!0-9,]*) echo "ERROR: coordinates must be non-negative integers, got '$x','$y'" >&2; exit 2 ;;
     esac
     if [ "$x" -ge "$w" ] || [ "$y" -ge "$h" ]; then
-      echo "ERROR: $x,$y is off-screen - this device is ${w}x${h} POINTS." >&2
+      echo "ERROR: $x,$y is off-screen - this device is ${w}x${h} POINTS${land:+ in LANDSCAPE, as the app in front is now}." >&2
       echo "  Screenshots of it are $((w * s))x$((h * s)) PIXELS: divide by $s to get points." >&2
       exit 2
     fi
@@ -446,14 +471,34 @@ print(v)
 '
 }
 
-pointer_actions() {
-  local sid resp
-  session; sid="$_MEMO_SID"
-  resp="$(curl -s -X POST "$WDA/session/$sid/actions" -H 'Content-Type: application/json' \
-    -d "{\"actions\":[{\"type\":\"pointer\",\"id\":\"f1\",\"parameters\":{\"pointerType\":\"touch\"},\"actions\":$1}]}")"
+# Every write to WebDriverAgent goes through here, and a refusal ENDS the command with a
+# non-zero exit. It used to be a WARN followed by "tapped X,Y": a batch then walked on over
+# a gesture that never happened, and a hand-rolled curl with its output thrown away turned
+# an "unknown command" into a whole scenario run that tested nothing (2026-11-13).
+#   wda_post PATH JSON-BODY     PATH is relative to the WDA root, e.g. /session/$sid/actions
+wda_post() {
+  local resp
+  resp="$(curl -s -m 60 -X POST "$WDA$1" -H 'Content-Type: application/json' -d "$2")" || {
+    echo "ERROR: no answer from WebDriverAgent on :$WDA_PORT for POST $1" >&2; exit 1; }
   case "$resp" in
-    *'"error"'*) echo "WARN: WebDriverAgent refused the gesture: $resp" >&2 ;;
+    *'"error"'*)
+      echo "ERROR: WebDriverAgent refused POST $1 - nothing happened on the device:" >&2
+      printf '%s\n' "$resp" | python3 -c '
+import sys, json
+raw = sys.stdin.read()
+try:
+    v = json.loads(raw)["value"]; print("  %s: %s" % (v.get("error"), str(v.get("message", ""))[:400]))
+except Exception:
+    print("  " + raw[:400])' >&2
+      exit 1 ;;
   esac
+  _WDA_RESP="$resp"
+}
+
+pointer_actions() {
+  session
+  wda_post "/session/$_MEMO_SID/actions" \
+    "{\"actions\":[{\"type\":\"pointer\",\"id\":\"f1\",\"parameters\":{\"pointerType\":\"touch\"},\"actions\":$1}]}"
 }
 
 # Every command lives in this function so `do` can run a whole route inside ONE
@@ -473,19 +518,25 @@ case "$cmd" in
     ensure_wda
     ALL=""
     SETTLED=0
-    for _a in "$@"; do
-      case "$_a" in
+    _fmt=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
         --all) ALL="--all" ;;
         --settled) SETTLED=1 ;;
-        *) echo "unknown flag for elements: $_a" >&2; exit 2 ;;
+        --names) _fmt+=(--names) ;;
+        --grep)
+          if [ -z "${2:-}" ]; then echo "usage: elements [--all] [--settled] [--grep REGEX] [--names]" >&2; exit 2; fi
+          _fmt+=(--grep "$2"); shift ;;
+        *) echo "unknown flag for elements: $1" >&2; exit 2 ;;
       esac
+      shift
     done
     # Answering this query makes UITabBarController instantiate EVERY child controller,
     # so a screen you never navigated to can mount just because you measured
     # (journal sim-rig 20260730-74da). Never use it to prove a screen was not mounted.
     echo "NOTE: reading the a11y tree mounts every tab's controller - it is not a passive read." >&2
     if [ "$SETTLED" -eq 0 ]; then
-      curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" $ALL
+      curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" $ALL "${_fmt[@]+"${_fmt[@]}"}"
     else
       # One read right after a tap is a FRAME of an animation, not the state: a
       # dismissing keyboard or a sheet mid-transition reads as "gone" and is back
@@ -504,8 +555,37 @@ case "$cmd" in
         diff <(printf '%s\n' "$_first") <(printf '%s\n' "$_second") | head -20 >&2 || true
         exit 3
       fi
-      printf '%s\n' "$_second"
+      # --grep / --names only change what is PRINTED: the comparison above ran on the
+      # whole tree, so a filter can never hide the motion that makes a read unusable.
+      if [ "${#_fmt[@]}" -gt 0 ]; then
+        printf '%s\n' "$_second" | python3 "$HERE/wda_tree.py" --refilter "${_fmt[@]}"
+      else
+        printf '%s\n' "$_second"
+      fi
     fi
+    ;;
+
+  # --- one element by testID --------------------------------------------------
+  # A tree read asks the app for the visibility of EVERY node (1.7-4.2s on a large app); a
+  # lookup by accessibility id plus `displayed` on the hit is ~0.2s and evaluates the
+  # same visibility function. See wda_el.py for exactly what the lookup matches.
+  waitid|tapid|el)
+    ensure_wda
+    if [ -z "${1:-}" ]; then echo "usage: $cmd ID$([ "$cmd" = waitid ] && echo ' [--timeout S] [--exists]')" >&2; exit 2; fi
+    _id="$1"; shift
+    _el_args=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --timeout) [ "$cmd" = waitid ] || { echo "unknown flag for $cmd: $1" >&2; exit 2; }
+                   _el_args+=(--timeout "${2:?--timeout needs seconds}"); shift 2 ;;
+        --exists)  [ "$cmd" = waitid ] || { echo "unknown flag for $cmd: $1" >&2; exit 2; }
+                   _el_args+=(--exists); shift ;;
+        *) echo "unknown flag for $cmd: $1" >&2; exit 2 ;;
+      esac
+    done
+    session
+    case "$cmd" in waitid) _sub=wait ;; tapid) _sub=tap ;; *) _sub=info ;; esac
+    python3 "$HERE/wda_el.py" --port "$WDA_PORT" --sid "$_MEMO_SID" "$_sub" "$_id" "${_el_args[@]+"${_el_args[@]}"}"
     ;;
 
   tap)
@@ -550,13 +630,13 @@ case "$cmd" in
     if [ -n "$_delay" ]; then
       printf '%s' "$1" | python3 -c 'import sys,json; [print(json.dumps({"value":[c]})) for c in sys.stdin.read()]' \
         | while IFS= read -r _body; do
-            curl -s -X POST "$WDA/session/$sid/wda/keys" -H 'Content-Type: application/json' -d "$_body" -o /dev/null
+            wda_post "/session/$sid/wda/keys" "$_body"
             sleep "$_delay"
           done
       echo "typed (one character per request, ${_delay}s apart): $1"
     else
-      printf '%s' "$1" | python3 -c 'import sys,json; print(json.dumps({"value":[sys.stdin.read()]}))' \
-        | curl -s -X POST "$WDA/session/$sid/wda/keys" -H 'Content-Type: application/json' -d @- -o /dev/null
+      wda_post "/session/$sid/wda/keys" \
+        "$(printf '%s' "$1" | python3 -c 'import sys,json; print(json.dumps({"value":[sys.stdin.read()]}))')"
       echo "typed: $1"
     fi
     ;;
@@ -564,16 +644,77 @@ case "$cmd" in
   button)
     ensure_wda
     case "$1" in
-      ENTER) "$0" type $'\n'; exit ;;
+      # In-process, and `return` not `exit`: this used to re-run the script and then
+      # `exit`, which ended a whole `do` batch right after the keystroke - every step
+      # behind it silently never ran (seen in three batches before it was noticed).
+      ENTER) dispatch type $'\n'; return ;;
       HOME) name="home" ;;
       VOLUME_UP) name="volumeup" ;;
       VOLUME_DOWN) name="volumedown" ;;
       *) echo "unsupported button: $1" >&2; exit 1 ;;
     esac
     session; sid="$_MEMO_SID"
-    curl -s -X POST "$WDA/session/$sid/wda/pressButton" -H 'Content-Type: application/json' \
-      -d "{\"name\":\"$name\"}" -o /dev/null
+    wda_post "/session/$sid/wda/pressButton" "{\"name\":\"$name\"}"
     echo "pressed $1"
+    ;;
+
+  # --- commands sessions kept writing by hand with raw curl -------------------
+  # 106 raw curl calls to WDA in ten days of transcripts, each one a chance to use a
+  # stale session id, a sessionless path that does not exist, or to throw the error away.
+  drag)
+    ensure_wda
+    assert_in_bounds "${1:-}" "${2:-}" "${3:-}" "${4:-}"
+    session
+    wda_post "/session/$_MEMO_SID/wda/dragfromtoforduration" \
+      "{\"fromX\":$1,\"fromY\":$2,\"toX\":$3,\"toY\":$4,\"duration\":${5:-0.5}}"
+    echo "dragged $1,$2 -> $3,$4 (${5:-0.5}s hold)"
+    ;;
+
+  lock|unlock)
+    ensure_wda
+    wda_post "/wda/$cmd" '{}'
+    echo "${cmd}ed"
+    ;;
+
+  locked)
+    ensure_wda
+    curl -s -m 10 "$WDA/wda/locked" | python3 -c '
+import sys, json
+v = json.load(sys.stdin).get("value")
+if not isinstance(v, bool):
+    sys.stderr.write("ERROR: WebDriverAgent did not report the lock state: %r\n" % (v,)); sys.exit(1)
+print("true" if v else "false")'
+    ;;
+
+  # `launch` foregrounds too, but through simctl/devicectl and with launch arguments in
+  # play; this is WDA's own activate - no arguments, no restart, same call on a phone.
+  activate)
+    ensure_wda
+    if [ -z "${1:-}" ]; then echo "usage: activate BUNDLE_ID" >&2; exit 2; fi
+    session
+    wda_post "/session/$_MEMO_SID/wda/apps/activate" "{\"bundleId\":\"$1\"}"
+    echo "activated $1"
+    ;;
+
+  foreground)
+    ensure_wda
+    curl -s -m 10 "$WDA/wda/activeAppInfo" | python3 -c '
+import sys, json
+v = json.load(sys.stdin).get("value") or {}
+if not v.get("bundleId"):
+    sys.stderr.write("ERROR: WebDriverAgent did not name a foreground app: %r\n" % (v,)); sys.exit(1)
+print("%s pid %s" % (v["bundleId"], v.get("pid")))'
+    ;;
+
+  orientation)
+    ensure_wda
+    session
+    curl -s -m 10 "$WDA/session/$_MEMO_SID/orientation" | python3 -c '
+import sys, json
+v = json.load(sys.stdin).get("value")
+if not isinstance(v, str):
+    sys.stderr.write("ERROR: WebDriverAgent did not report an orientation: %r\n" % (v,)); sys.exit(1)
+print(v)'
     ;;
 
   # Alerts arrive on their own schedule and QUEUE UP. A single read a few seconds
@@ -596,11 +737,20 @@ case "$cmd" in
         echo "no alert appeared within ${1:-15}s" >&2
         exit 1
         ;;
+      buttons)
+        if ! alert_text "$sid" >/dev/null; then echo "no alert on screen" >&2; exit 1; fi
+        curl -s -m 10 "$WDA/session/$sid/wda/alert/buttons" | python3 -c '
+import sys, json
+v = json.load(sys.stdin).get("value")
+if not isinstance(v, list):
+    sys.stderr.write("ERROR: WebDriverAgent did not list the alert buttons: %r\n" % (v,)); sys.exit(1)
+print(json.dumps(v, ensure_ascii=False))'
+        ;;
       accept|dismiss)
         all=""; [ "${1:-}" = "--all" ] && all=1
         n=0
         while txt=$(alert_text "$sid"); do
-          curl -s -X POST "$WDA/session/$sid/alert/$sub" -H 'Content-Type: application/json' -d '{}' -o /dev/null
+          wda_post "/session/$sid/alert/$sub" '{}'
           n=$((n + 1))
           echo "${sub}ed: $txt"
           [ -n "$all" ] || break
@@ -610,7 +760,7 @@ case "$cmd" in
         # More alerts than you ever saw on screen is the signal that the taps DID land.
         if [ -n "$all" ]; then echo "$n alert(s) drained"; fi
         ;;
-      *) echo "unknown: alert $sub (text|wait|accept|dismiss)" >&2; exit 1 ;;
+      *) echo "unknown: alert $sub (text|wait|buttons|accept|dismiss)" >&2; exit 1 ;;
     esac
     ;;
 

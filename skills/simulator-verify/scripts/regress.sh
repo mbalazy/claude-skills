@@ -8,9 +8,12 @@
 #   SIM_UDID=<udid> WDA_PORT=<port> regress.sh /tmp/after
 #   diff -r /tmp/before /tmp/after
 #
-# Cases whose output depends on what is on screen (elements, elements_all, alert_none)
-# only compare cleanly when the app is left on the same screen for both runs - park it
-# somewhere idle first. Everything else is deterministic.
+# Cases whose output depends on what is on screen (elements, elements_all, alert_none,
+# the element counts in the waitfor misses) only compare cleanly when the app is left on
+# the same screen for both runs - park it somewhere idle first, in PORTRAIT, unlocked.
+# `activate_refused` and `do_refused` print a WDA session id and a request id that differ
+# on every run: compare those two by eye. Everything else is deterministic.
+# NOTE: `tap_ok` really taps 220,700 - park on a screen where that is harmless.
 OUT="${1:?usage: regress.sh <outdir>}"
 S="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sim-ui.sh"
 mkdir -p "$OUT"
@@ -39,6 +42,25 @@ run do_tolerated     "$S" do '?alert' 'wait 0'
 # fail-fast: an untolerated failing step must stop the batch, so the marker never prints
 run do_failfast      "$S" do 'alert' 'wait 0' '# UNREACHED-MARKER'
 run do_stdin         bash -c "printf '%s\n' '# from stdin' 'wait 0' | '$S' do"
+# lookups by accessibility id: the misses and the argument errors are deterministic
+run waitid_miss      "$S" waitid 'zzz-no-such-id' --timeout 1
+run waitid_noid      "$S" waitid
+run waitid_badflag   "$S" waitid 'x' --nope
+run tapid_miss       "$S" tapid 'zzz-no-such-id'
+run tapid_badflag    "$S" tapid 'x' --timeout 3
+run el_miss          "$S" el 'zzz-no-such-id'
+run elements_grep_no "$S" elements --grep
+run elements_grep_0  "$S" elements --all --grep 'zzz-nothing-matches-this'
+run elements_names_0 "$S" elements --all --grep 'zzz-nothing-matches-this' --names
+# a write WebDriverAgent refuses must END the command (and the batch) with rc 1, not warn
+run activate_refused "$S" activate com.example.zzz-not-installed
+run activate_noarg   "$S" activate
+run do_refused       "$S" do 'activate com.example.zzz-not-installed' 'wait 0' '# UNREACHED-MARKER'
+run alert_buttons_0  "$S" alert buttons
+run alert_badsub     "$S" alert frobnicate
+run locked           "$S" locked
+run orientation      "$S" orientation
+run drag_oob         "$S" drag 100 100 100 9999
 # the gesture commands share one bounds check - prove each is actually wired to it
 run doubletap_oob    "$S" doubletap 100 9999
 run longpress_oob    "$S" longpress 100 9999
