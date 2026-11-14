@@ -168,8 +168,10 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
   fail without aborting the batch, and `#` starts a comment:
 
   ```sh
-  # by testID - the default when the app has them:
-  $S do "relaunch $BUNDLE -RCT_jsLocation localhost:$PORT" \
+  # by testID - the default when the app has them. SIMUI_TYPE_DELAY because a search
+  # field lost characters to a burst (see Observe); `el` only PRINTS the field's value -
+  # it does not stop the batch, so read it in the output before trusting the results.
+  SIMUI_TYPE_DELAY=0.2 $S do "relaunch $BUNDLE -RCT_jsLocation localhost:$PORT" \
         'waitid Home-menu-button --timeout 60' \
         'tapid NavBar-tab-search' 'waitid Search-input' \
         'tapid Search-input' 'type yoga' 'el Search-input' 'button ENTER' \
