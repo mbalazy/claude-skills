@@ -120,7 +120,9 @@ So the rule for this loop:
   stderr is where a refused tap, an off-screen coordinate and a timed-out wait are
   reported, and 47% of calls in those transcripts had thrown it away. Filter the OUTPUT
   with `elements --grep` / `--names` instead of a pipe, and check the exit code of every
-  step you did not put inside a `do` batch (a batch stops at the first failure by itself).
+  step you did not put inside a `do` batch (a batch stops at the first failure by itself,
+  and exits non-zero - including on a step with a missing argument, which until 2026-11-14
+  ended the batch with exit 0).
   A wrapper that printed "tapped ..." after a tap that had errored, and a raw `curl` whose
   "unknown command" went to `/dev/null`, each produced a run that tested nothing.
 - **No raw `curl` to WebDriverAgent when the driver has the command.** Landscape taps,
@@ -136,7 +138,7 @@ So the rule for this loop:
 
 The benchmark that produced those numbers is `scripts/simbench.sh` (see its header). Re-run
 it before and after touching this loop instead of guessing; `scripts/regress.sh` captures
-the 16 stdout/stderr/rc cases that prove the driver still behaves identically.
+the 53 stdout/stderr/rc cases that prove the driver still behaves identically.
 
 ## The loop
 
@@ -169,7 +171,7 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
   $S do "relaunch $BUNDLE -RCT_jsLocation localhost:$PORT" \
         'waitid Home-menu-button --timeout 60' \
         'tapid NavBar-tab-search' 'waitid Search-input' \
-        'tapid Search-input' 'type yoga' 'button ENTER' \
+        'tapid Search-input' 'type yoga' 'el Search-input' 'button ENTER' \
         'waitid Search-result-card-42 --timeout 30'
 
   # by coordinate and text - when there is no testID to address:
@@ -207,10 +209,13 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
   - `tapid` presses through `element/click`, where WebDriverAgent picks a hittable point - not the centre of the rect. For a partly covered element the centre is the wrong place: a title whose centre sat under the tab bar switched tabs when tapped by coordinate. Do not "fix" a `tapid` by tapping the rect's centre yourself.
   - **`<Screen>-screen-root` is a poor thing to wait for.** A root container often reports `displayed: false` while its screen is plainly up (Home and Settings do, Explore does not - the tree says the same). Wait for a real control of the screen, or pass `--exists` when presence is all you need; a timed-out `waitid` tells you when the id existed but was not displayed.
   - Find, `displayed` and `rect` are separate requests, not one snapshot. On a screen that is still loading a rect can move between them, and an element whose visibility flickers (one calendar cell did, in the tree as well) can read `false` once. A wait absorbs that; a single `el` read does not - for an assertion about several elements at once use `elements --settled`.
+  - **`tapid` can take ~21 s instead of ~1 s** when the app never goes idle: `element/click` waits for idleness before and after the tap, up to `waitForIdleTimeout` (10 s) each. Measured 2026-11-14: Safari with a focused address field 20.5 s (6.5 s with the timeout at 3 s), and one React Native app in one state for 12 taps in a row until a relaunch. The tap still lands, and the driver prints a NOTE with the time. A coordinate `tap` in the same state took 2.5 s - it is faster but presses the rect's centre, so use it only where the centre is plainly the element.
+  - **One driver command per WebDriverAgent at a time.** WDA holds ONE session; every command opens its own, which voids the session of a command still running. `waitid` / `tapid` / `el` re-attach and carry on (a background `waitid` used to fail with "invalid session id" while the element was on screen); the other commands fail loudly with WDA's error. Two sessions of Claude on one simulator therefore take turns, they do not overlap.
   - A fast wait no longer hides the 2-4 s a tree read used to add. With WebDriverAgent's default settings the screen was already still when the wait passed (same screenshot 1.5 s later); with `waitForIdleTimeout` set to 0 it was mid-transition. Leave that setting alone.
 - `$S screenshot [out.png] [--width N]` then Read the file -> visual confirmation of layout, spacing, glass surfaces, anything the tree can't express. By default the image is resampled to the device's point width (px ÷ SIMULATOR_MAINSCREEN_SCALE), so **1px == 1pt on any simulator** and coordinates read straight off the image. `--width 0` = full res (for 3b measurement).
 - After any tap that should change the screen, re-run `$S elements` and confirm the content actually changed (e.g. header label flipped) - a registered click is not proof of navigation.
-- Interactions: `$S tap|doubletap|longpress|swipe|drag|type|button` (see script header for signatures). Coordinates are POINTS; a coordinate measured on a full-res screenshot must be divided by the scale first. Out-of-range coordinates are rejected rather than silently doing nothing - and **against the rotated frame when the app in front is in landscape** (a video player is 874x402 on an iPhone 17, and `tap 600 200` is legal there; `$S orientation` says what WebDriverAgent sees). A gesture or keystroke WebDriverAgent refuses ends the command with exit 1 and its error - it is never reported as done.
+- Interactions: `$S tap|doubletap|longpress|swipe|drag|type|button` (see script header for signatures). Coordinates are POINTS; a coordinate measured on a full-res screenshot must be divided by the scale first. Out-of-range coordinates are rejected rather than silently doing nothing - and **against the rotated frame when the app in front is in landscape** (a video player is 874x402 on an iPhone 17, and `tap 600 200` is legal there; `$S orientation` says what WebDriverAgent sees). A gesture or keystroke WebDriverAgent refuses ends the command with exit 1 and its error - it is never reported as done. What WDA ACCEPTS without effect is still reported: `type` with no focused field prints "typed" and changes nothing, so read the field back. `drag` from a list scrolls further than the finger moved (546 pt for a 400 pt drag on Explore: iOS adds momentum) - assert on where things ended up, not on the distance. `button VOLUME_UP` / `VOLUME_DOWN` work only on a physical iPhone.
+- **`type` does not confirm what reached the field.** In one app's search screen `type yoga` followed by `button ENTER` left "yo" or "yog" in the field in 3 of 5 runs (2026-11-14), while the driver printed "typed: yoga" - and the search ran for the cut word. Before `button ENTER`, read the field with `$S el <field-id>` and check its `value`; for a field that reacts to every keystroke (search, OTP boxes) run the batch with `SIMUI_TYPE_DELAY=0.2`, which sends one character per request (4 of 4 correct in the same field).
 - App and device state without `curl`: `$S activate BUNDLE` (foreground without a restart and without launch arguments), `$S foreground` (bundle id + pid of the app in front - the cheap way to learn that a tap threw you out to Safari or the home screen), `$S lock` / `$S unlock` / `$S locked`, `$S alert buttons`. `unlock` cannot get past a passcode or Face ID on a physical iPhone - that one needs the human.
 - **Alerts queue and arrive late.** One read a few seconds after a tap that says "no alert" is not evidence the tap did nothing. Use `$S alert wait [seconds]` to wait for one, and `$S alert accept --all` afterwards - if it drains more alerts than you ever saw, every tap landed.
 - **One read right after a tap is a frame of an animation, not the state.** A dismissing keyboard, a sheet mid-transition or a launch screen reads as "gone" and is back in the next frame (a tap-to-dismiss was CONFIRMED off one read; 4 s later the keyboard was there). Assert transitions with **`$S elements --settled`**: two reads 2 s apart (`SIMUI_SETTLE_SECONDS`), exit 3 with the diff when they differ. Only two reads that agree are evidence.
