@@ -41,13 +41,23 @@ import urllib.error
 import urllib.request
 
 
+class SessionLost(Exception):
+    """The session this process used was replaced; element ids from it are void."""
+
+
 class Wda:
     def __init__(self, port, sid):
-        self.base = f"http://localhost:{port}/session/{sid}"
+        self.root = f"http://localhost:{port}"
+        self.sid = sid
+        self.own = None         # a session this process created and must delete
 
-    def call(self, method, path, body=None, timeout=30):
+    @property
+    def base(self):
+        return f"{self.root}/session/{self.sid}"
+
+    def raw(self, method, url, body=None, timeout=30):
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(self.base + path, data=data, method=method,
+        req = urllib.request.Request(url, data=data, method=method,
                                      headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -55,9 +65,39 @@ class Wda:
         except urllib.error.HTTPError as e:
             raw = e.read()
         try:
-            return json.loads(raw).get("value")
+            return json.loads(raw)
         except Exception:
-            return {"error": "unreadable response", "message": raw[:200].decode("utf-8", "replace")}
+            return {"value": {"error": "unreadable response",
+                              "message": raw[:200].decode("utf-8", "replace")}}
+
+    def reattach(self):
+        """WebDriverAgent holds ONE session: any other driver command creates its own and
+        voids this one, and a waiting `waitid` then failed with "invalid session id" while
+        the element was on screen (2026-11-14, 3 of 3). Join the session WDA has now
+        (`/status` names it) rather than creating one, which would void the other
+        command's session in turn; create one only when there is none."""
+        cur = self.raw("GET", self.root + "/status", timeout=10).get("sessionId")
+        if not cur:
+            v = self.raw("POST", self.root + "/session",
+                         {"capabilities": {"alwaysMatch": {"platformName": "iOS"}}}).get("value") or {}
+            cur = v.get("sessionId")
+            if not cur:
+                raise RuntimeError(f"could not open a WebDriverAgent session: {v}")
+            self.own = cur
+        print(f"NOTE: another command replaced the WebDriverAgent session - re-attached to {cur}",
+              file=sys.stderr)
+        self.sid = cur
+
+    def call(self, method, path, body=None, timeout=30):
+        v = self.raw(method, self.base + path, body, timeout).get("value")
+        if isinstance(v, dict) and v.get("error") == "invalid session id":
+            self.reattach()
+            raise SessionLost()
+        return v
+
+    def close(self):
+        if self.own:
+            self.raw("DELETE", f"{self.root}/session/{self.own}", timeout=10)
 
     def find(self, ident):
         v = self.call("POST", "/elements", {"using": "accessibility id", "value": ident})
@@ -110,13 +150,19 @@ def cmd_wait(w, a):
         polls += 1
         try:
             eids = w.find(a.id)
+            shown = [e for e in eids if w.displayed(e)] if eids and not a.exists else []
+            hits = eids if a.exists else shown
+            if hits:
+                desc = [w.describe(e, a.id, None if a.exists else True) for e in hits]
             err = None
+        except SessionLost:         # re-attached; the element ids of this poll are void
+            # No `continue`: the deadline below still applies, or a session that keeps
+            # being replaced would keep this wait alive forever.
+            eids, shown, hits, err = [], [], [], "the session kept being replaced by other commands"
         except Exception as e:      # WDA busy / app restarting: keep polling, report at the end
-            eids, err = [], str(e)
-        shown = [e for e in eids if w.displayed(e)] if eids and not a.exists else []
-        hits = eids if a.exists else shown
+            eids, shown, hits, err = [], [], [], str(e)
         if hits:
-            out([w.describe(e, a.id, None if a.exists else True) for e in hits])
+            out(desc)
             mode = "exists" if a.exists else "displayed"
             print(f"matched id '{a.id}' ({mode}) after {polls} poll(s), {time.time() - started:.1f}s",
                   file=sys.stderr)
@@ -173,7 +219,9 @@ def cmd_tap(w, a):
         return 1
     eid = shown[0]
     d = w.describe(eid, a.id, True)
+    t0 = time.time()
     v = w.call("POST", f"/element/{eid}/click", {})
+    took = time.time() - t0
     if isinstance(v, dict) and v.get("error"):
         print(f"tapid: WebDriverAgent refused the click on '{a.id}': {v.get('error')}: "
               f"{str(v.get('message', ''))[:300]}", file=sys.stderr)
@@ -181,6 +229,12 @@ def cmd_tap(w, a):
     if d["by"] != "id":
         print(f"NOTE: '{a.id}' equals the element's LABEL - it was most likely matched by its text, "
               f"not by a testID.", file=sys.stderr)
+    if took > 5:
+        # Measured 2026-11-14: element/click waits for the app to go idle before AND after
+        # the tap, up to waitForIdleTimeout (10s) each. An app that never idles (a focused
+        # text field with its caret, a looping animation) turns a 1s tap into ~20.5s.
+        print(f"NOTE: the click took {took:.1f}s - WebDriverAgent waited for the app to go idle "
+              f"(up to 2 x waitForIdleTimeout). The tap itself landed.", file=sys.stderr)
     print(f"tapped id {a.id} ({d['type']} {d['rect']})")
     return 0
 
@@ -196,11 +250,23 @@ def main():
     ap.add_argument("--exists", action="store_true")
     a = ap.parse_args()
     w = Wda(a.port, a.sid)
+    fn = {"wait": cmd_wait, "tap": cmd_tap, "info": cmd_info}[a.cmd]
     try:
-        return {"wait": cmd_wait, "tap": cmd_tap, "info": cmd_info}[a.cmd](w, a)
+        # A one-shot command whose session was replaced half way runs once more from the
+        # lookup: its element ids belonged to the old session. A second loss is reported.
+        try:
+            return fn(w, a)
+        except SessionLost:
+            return fn(w, a)
+    except SessionLost:
+        print(f"{a.cmd}id: the WebDriverAgent session was replaced twice by other commands - "
+              f"nothing was done; run it again when the other driver command has finished", file=sys.stderr)
+        return 1
     except Exception as e:
         print(f"{a.cmd}id: {e}", file=sys.stderr)
         return 1
+    finally:
+        w.close()
 
 
 if __name__ == "__main__":

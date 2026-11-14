@@ -61,6 +61,17 @@ run alert_badsub     "$S" alert frobnicate
 run locked           "$S" locked
 run orientation      "$S" orientation
 run drag_oob         "$S" drag 100 100 100 9999
+# 2026-11-14 test report: a missing value, a shell error or a bad pattern used to end with
+# exit 0 or a Python traceback. Each of these must exit non-zero with one readable line.
+run waitid_noval     "$S" do 'waitid x --timeout' '# UNREACHED-MARKER'
+run waitid_badval    "$S" waitid x --timeout abc
+run waitfor_noval    "$S" waitfor x --timeout
+run drag_badhold     "$S" drag 100 100 120 100 abc
+run longpress_baddur "$S" longpress 100 100 abc
+run wait_badval      "$S" wait abc
+run launch_noarg     "$S" launch
+run grep_badre       "$S" elements --grep '('
+run waitfor_badre    "$S" waitfor '[a-' --timeout 1
 # the gesture commands share one bounds check - prove each is actually wired to it
 run doubletap_oob    "$S" doubletap 100 9999
 run longpress_oob    "$S" longpress 100 9999

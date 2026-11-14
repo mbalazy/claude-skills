@@ -17,7 +17,7 @@
 #   sim-ui.sh longpress X Y [DURATION_MS]
 #   sim-ui.sh swipe X1 Y1 X2 Y2 [DURATION_MS]
 #   sim-ui.sh type "text"                   # types into the focused element
-#   sim-ui.sh button HOME|ENTER|VOLUME_UP|VOLUME_DOWN
+#   sim-ui.sh button HOME|ENTER|VOLUME_UP|VOLUME_DOWN   # VOLUME_* only on a physical iPhone (WDA refuses them on a simulator)
 #   sim-ui.sh drag X1 Y1 X2 Y2 [SECONDS]    # press, hold SECONDS (default 0.5), drag (Control Center, sliders, reordering)
 #   sim-ui.sh lock | unlock | locked        # lock screen through WDA; `locked` prints true/false
 #   sim-ui.sh activate BUNDLE_ID            # bring an app to the foreground WITHOUT restarting it
@@ -455,7 +455,44 @@ session() {
 }
 
 end_session() { [ -n "${1:-}" ] && curl -s -X DELETE "$WDA/session/$1" -o /dev/null; }
-trap 'end_session "$_MEMO_SID" 2>/dev/null || true' EXIT
+# The trap keeps the script's own exit status, and refuses to call an unfinished run a
+# success. macOS's /bin/bash (3.2) hands an EXIT trap $?=0 after a shell error such as a
+# missing argument under `set -u` ("$1: unbound variable"), so such a run ended a whole
+# `do` batch with exit 0 (2026-11-14: `do 'waitid x --timeout' 'foreground'` stopped after
+# the first step and reported success). _DONE is set only where the script finishes on
+# purpose; a 0 without it is that shell error and becomes 1.
+_DONE=""
+trap '_rc=$?; [ "$_rc" = 0 ] && [ -z "$_DONE" ] && _rc=1; end_session "$_MEMO_SID" 2>/dev/null || true; exit $_rc' EXIT
+
+# A polling helper (wda_el.py, wda_tree.py --match) runs as a CHILD that this shell waits
+# for, so a TERM or INT sent to the script alone (`timeout`, a killed batch) takes the
+# child down too. Bash defers a trap until the foreground command finishes, so a poll run
+# in the foreground kept hitting WebDriverAgent until its own timeout after the script died.
+# The traps are installed per call because a tolerated `do` step ('?step') runs in a
+# ( subshell ), and a subshell resets the traps it inherited.
+_CHILD=""
+run_child() {
+  local rc=0
+  trap '[ -n "$_CHILD" ] && kill "$_CHILD" 2>/dev/null; exit 143' TERM
+  trap '[ -n "$_CHILD" ] && kill "$_CHILD" 2>/dev/null; exit 130' INT
+  "$@" & _CHILD=$!
+  wait "$_CHILD" || rc=$?
+  _CHILD=""
+  return "$rc"
+}
+
+# Validates a number of seconds (or ms) given on the command line before it goes into a
+# JSON body or a poll loop: "abc" used to reach WebDriverAgent, which accepted some of it
+# (`drag ... abc` reported "dragged"), and a missing value ended a batch silently.
+#   need_num NAME VALUE [int]
+need_num() {
+  local re='^[0-9]+([.][0-9]+)?$'
+  [ "${3:-}" = int ] && re='^[0-9]+$'
+  if [[ ! "${2:-}" =~ $re ]]; then
+    echo "ERROR: $1 must be a non-negative ${3:+whole }number, got '${2:-}'" >&2
+    exit 2
+  fi
+}
 
 # Prints the front alert's text, or nothing and returns 1 when there is no alert.
 alert_text() {
@@ -577,7 +614,8 @@ case "$cmd" in
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --timeout) [ "$cmd" = waitid ] || { echo "unknown flag for $cmd: $1" >&2; exit 2; }
-                   _el_args+=(--timeout "${2:?--timeout needs seconds}"); shift 2 ;;
+                   need_num "--timeout" "${2:-}"
+                   _el_args+=(--timeout "$2"); shift 2 ;;
         --exists)  [ "$cmd" = waitid ] || { echo "unknown flag for $cmd: $1" >&2; exit 2; }
                    _el_args+=(--exists); shift ;;
         *) echo "unknown flag for $cmd: $1" >&2; exit 2 ;;
@@ -585,7 +623,7 @@ case "$cmd" in
     done
     session
     case "$cmd" in waitid) _sub=wait ;; tapid) _sub=tap ;; *) _sub=info ;; esac
-    python3 "$HERE/wda_el.py" --port "$WDA_PORT" --sid "$_MEMO_SID" "$_sub" "$_id" "${_el_args[@]+"${_el_args[@]}"}"
+    run_child python3 "$HERE/wda_el.py" --port "$WDA_PORT" --sid "$_MEMO_SID" "$_sub" "$_id" "${_el_args[@]+"${_el_args[@]}"}"
     ;;
 
   tap)
@@ -605,7 +643,7 @@ case "$cmd" in
   longpress)
     ensure_wda
     assert_in_bounds "${1:-}" "${2:-}"
-    dur="${3:-800}"
+    dur="${3:-800}"; need_num "DURATION_MS" "$dur" int
     pointer_actions "[{\"type\":\"pointerMove\",\"duration\":0,\"x\":$1,\"y\":$2},{\"type\":\"pointerDown\",\"button\":0},{\"type\":\"pause\",\"duration\":$dur},{\"type\":\"pointerUp\",\"button\":0}]"
     echo "long-pressed $1,$2 (${dur}ms)"
     ;;
@@ -613,7 +651,7 @@ case "$cmd" in
   swipe)
     ensure_wda
     assert_in_bounds "${1:-}" "${2:-}" "${3:-}" "${4:-}"
-    dur="${5:-300}"
+    dur="${5:-300}"; need_num "DURATION_MS" "$dur" int
     pointer_actions "[{\"type\":\"pointerMove\",\"duration\":0,\"x\":$1,\"y\":$2},{\"type\":\"pointerDown\",\"button\":0},{\"type\":\"pointerMove\",\"duration\":$dur,\"x\":$3,\"y\":$4},{\"type\":\"pointerUp\",\"button\":0}]"
     echo "swiped $1,$2 -> $3,$4"
     ;;
@@ -628,11 +666,17 @@ case "$cmd" in
     _delay="${SIMUI_TYPE_DELAY:-}"
     if [ -z "$_delay" ] && [ "$(kind)" = device ]; then _delay=0.35; fi
     if [ -n "$_delay" ]; then
-      printf '%s' "$1" | python3 -c 'import sys,json; [print(json.dumps({"value":[c]})) for c in sys.stdin.read()]' \
-        | while IFS= read -r _body; do
-            wda_post "/session/$sid/wda/keys" "$_body"
-            sleep "$_delay"
-          done
+      need_num "SIMUI_TYPE_DELAY" "$_delay"
+      # The bodies are built first and sent from THIS shell: inside `| while` every
+      # wda_post ran in a pipeline subshell, so its `exit 1` on a refusal ended only that
+      # subshell and the command still printed "typed".
+      _bodies=()
+      while IFS= read -r _body; do _bodies+=("$_body"); done < <(printf '%s' "$1" \
+        | python3 -c 'import sys,json; [print(json.dumps({"value":[c]})) for c in sys.stdin.read()]')
+      for _body in "${_bodies[@]+"${_bodies[@]}"}"; do
+        wda_post "/session/$sid/wda/keys" "$_body"
+        sleep "$_delay"
+      done
       echo "typed (one character per request, ${_delay}s apart): $1"
     else
       wda_post "/session/$sid/wda/keys" \
@@ -664,10 +708,11 @@ case "$cmd" in
   drag)
     ensure_wda
     assert_in_bounds "${1:-}" "${2:-}" "${3:-}" "${4:-}"
+    _hold="${5:-0.5}"; need_num "SECONDS" "$_hold"
     session
     wda_post "/session/$_MEMO_SID/wda/dragfromtoforduration" \
-      "{\"fromX\":$1,\"fromY\":$2,\"toX\":$3,\"toY\":$4,\"duration\":${5:-0.5}}"
-    echo "dragged $1,$2 -> $3,$4 (${5:-0.5}s hold)"
+      "{\"fromX\":$1,\"fromY\":$2,\"toX\":$3,\"toY\":$4,\"duration\":$_hold}"
+    echo "dragged $1,$2 -> $3,$4 (${_hold}s hold)"
     ;;
 
   lock|unlock)
@@ -692,7 +737,9 @@ print("true" if v else "false")'
     ensure_wda
     if [ -z "${1:-}" ]; then echo "usage: activate BUNDLE_ID" >&2; exit 2; fi
     session
-    wda_post "/session/$_MEMO_SID/wda/apps/activate" "{\"bundleId\":\"$1\"}"
+    # json.dumps, not string pasting: a quote in the argument used to add fields to the body.
+    wda_post "/session/$_MEMO_SID/wda/apps/activate" \
+      "$(python3 -c 'import sys,json; print(json.dumps({"bundleId": sys.argv[1]}))' "$1")"
     echo "activated $1"
     ;;
 
@@ -729,9 +776,10 @@ print(v)'
         if txt=$(alert_text "$sid"); then echo "$txt"; else echo "no alert on screen" >&2; exit 1; fi
         ;;
       wait)
+        need_num "SECONDS" "${1:-15}" int
         deadline=$(( SECONDS + ${1:-15} ))
         while [ "$SECONDS" -lt "$deadline" ]; do
-          if txt=$(alert_text "$sid"); then echo "$txt"; exit 0; fi
+          if txt=$(alert_text "$sid"); then echo "$txt"; _DONE=1; exit 0; fi
           sleep 1
         done
         echo "no alert appeared within ${1:-15}s" >&2
@@ -868,6 +916,7 @@ print(json.dumps(v, ensure_ascii=False))'
   # A named pause, so a route reads as a route. Prefer `waitfor` - it costs what the
   # app needs rather than a constant somebody guessed.
   wait)
+    need_num "SECONDS" "${1:-1}"
     sleep "${1:-1}"
     ;;
 
@@ -882,12 +931,12 @@ print(json.dumps(v, ensure_ascii=False))'
     _wf_args=()
     while [ "$#" -gt 0 ]; do
       case "$1" in
-        --timeout) _wf_args+=(--timeout "$2"); shift 2 ;;
+        --timeout) need_num "--timeout" "${2:-}"; _wf_args+=(--timeout "$2"); shift 2 ;;
         --all)     _wf_args+=(--all); shift ;;
         *) echo "unknown flag for waitfor: $1" >&2; exit 2 ;;
       esac
     done
-    python3 "$HERE/wda_tree.py" --port "$WDA_PORT" --match "$_pat" "${_wf_args[@]+"${_wf_args[@]}"}"
+    run_child python3 "$HERE/wda_tree.py" --port "$WDA_PORT" --match "$_pat" "${_wf_args[@]+"${_wf_args[@]}"}"
     ;;
 
   *)
@@ -898,3 +947,4 @@ esac
 }
 
 dispatch "$@"
+_DONE=1
