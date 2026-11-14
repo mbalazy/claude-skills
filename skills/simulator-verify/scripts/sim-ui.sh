@@ -657,6 +657,7 @@ case "$cmd" in
     ;;
 
   type)
+    if [ "$#" -eq 0 ]; then echo 'usage: type "text"' >&2; exit 2; fi
     ensure_wda
     session; sid="$_MEMO_SID"
     # A device drops characters from a burst ("5125550199" landed as "(519) 9" on an
@@ -686,6 +687,7 @@ case "$cmd" in
     ;;
 
   button)
+    if [ -z "${1:-}" ]; then echo "usage: button HOME|ENTER|VOLUME_UP|VOLUME_DOWN" >&2; exit 2; fi
     ensure_wda
     case "$1" in
       # In-process, and `return` not `exit`: this used to re-run the script and then
@@ -849,6 +851,7 @@ print(json.dumps(v, ensure_ascii=False))'
   # On a phone the same four go through devicectl. The `--` before the app's arguments is
   # load-bearing there: without it devicectl parses `-RCT_jsLocation` as its own option.
   launch)
+    if [ -z "${1:-}" ]; then echo "usage: launch BUNDLE_ID [ARG...]" >&2; exit 2; fi
     bundle="$1"; shift
     if [ "$(kind)" = device ]; then
       xcrun devicectl device process launch --device "$(udid)" "$bundle" -- "$@"
@@ -857,6 +860,7 @@ print(json.dumps(v, ensure_ascii=False))'
     fi
     ;;
   relaunch)
+    if [ -z "${1:-}" ]; then echo "usage: relaunch BUNDLE_ID [ARG...]" >&2; exit 2; fi
     bundle="$1"; shift
     if [ "$(kind)" = device ]; then
       xcrun devicectl device process launch --terminate-existing --device "$(udid)" "$bundle" -- "$@"
@@ -865,6 +869,7 @@ print(json.dumps(v, ensure_ascii=False))'
     fi
     ;;
   terminate)
+    if [ -z "${1:-}" ]; then echo "usage: terminate BUNDLE_ID" >&2; exit 2; fi
     if [ "$(kind)" = device ]; then
       _pid="$(device_app_pid "$(udid)" "$1")"
       if [ -z "$_pid" ]; then echo "$1 is not running on $(udid)" >&2; exit 1; fi
@@ -874,6 +879,7 @@ print(json.dumps(v, ensure_ascii=False))'
     fi
     ;;
   openurl)
+    if [ -z "${1:-}" ]; then echo "usage: openurl URL" >&2; exit 2; fi
     if [ "$(kind)" = device ]; then
       xcrun devicectl device process openURL --device "$(udid)" "$1"
     else

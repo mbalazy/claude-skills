@@ -252,14 +252,20 @@ def main():
     w = Wda(a.port, a.sid)
     fn = {"wait": cmd_wait, "tap": cmd_tap, "info": cmd_info}[a.cmd]
     try:
-        # A one-shot command whose session was replaced half way runs once more from the
-        # lookup: its element ids belonged to the old session. A second loss is reported.
-        try:
-            return fn(w, a)
-        except SessionLost:
-            return fn(w, a)
+        # A one-shot command whose session was replaced half way runs again from the lookup:
+        # its element ids belonged to the old session. One other driver command replaces it
+        # TWICE (it opens its own session, then deletes it on exit), so a single retry was
+        # not enough (2026-11-14: `el` beside one concurrent `el` failed 3 of 3). Retrying is
+        # safe for `tap` too: a request answered "invalid session id" was not executed, so a
+        # retry cannot click twice. Bounded, so a driver that never stops cannot pin it.
+        for attempt in range(6):
+            try:
+                return fn(w, a)
+            except SessionLost:
+                time.sleep(0.2)
+        raise SessionLost()
     except SessionLost:
-        print(f"{a.cmd}id: the WebDriverAgent session was replaced twice by other commands - "
+        print(f"{a.cmd}id: the WebDriverAgent session was replaced 6 times by other commands - "
               f"nothing was done; run it again when the other driver command has finished", file=sys.stderr)
         return 1
     except Exception as e:
