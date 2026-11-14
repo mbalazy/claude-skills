@@ -11,6 +11,9 @@
 # ensure) cannot be faked meaningfully and are run by hand on a disposable simulator.
 
 set -uo pipefail
+# The cases set the port and device themselves; inherited values from the caller's shell
+# changed what "the default port" meant and failed default_port_* (2026-11-14, 8 of 8).
+unset WDA_PORT SIM_UDID SIMUI_TYPE_DELAY
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERBOSE=""; [ "${1:-}" = "-v" ] && VERBOSE=1

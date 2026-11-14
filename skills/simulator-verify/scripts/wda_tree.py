@@ -85,7 +85,7 @@ def narrow(els, pattern):
     matching the joined "type label name value" string lets a pattern span two fields,
     and a short one hit something unrelated (`Sign` matched the status bar's
     `"No signal"` and a batch walked on from the launch screen)."""
-    pat = re.compile(pattern, re.I)
+    pat = regex("--grep", pattern)
     return [e for e in els if any(pat.search(str(e.get(k, ""))) for k in FIELDS)]
 
 
@@ -95,10 +95,20 @@ def emit(els, names):
         return
     # One line per element: what you address it by, what it says, where it is.
     for e in els:
-        ident = e.get("name") or "-"
+        # repr() escapes a tab or newline inside the identifier, so a line stays 4 fields.
+        ident = repr(e["name"])[1:-1] if e.get("name") else "-"
         text = e.get("label") or e.get("value") or ""
         extra = f"  value={e['value']!r}" if e.get("value") and e.get("value") != e.get("label") else ""
         print(f"{ident}\t{e.get('type')}\t{json.dumps(e['rect'], separators=(',', ':'))}\t{text!r}{extra}")
+
+
+def regex(flag, pattern):
+    """A bad pattern ends the command with one readable line, not a Python traceback."""
+    try:
+        return re.compile(pattern, re.I)
+    except re.error as e:
+        print(f"ERROR: {flag} '{pattern}' is not a valid regular expression: {e}", file=sys.stderr)
+        sys.exit(2)
 
 
 def main():
@@ -112,6 +122,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument("--interval", type=float, default=0.35)
     a = ap.parse_args()
+    if a.grep is not None:
+        regex("--grep", a.grep)     # refuse a bad pattern BEFORE the 2-4s tree read
 
     if a.refilter:      # stdin is an element list this script already printed
         els = json.load(sys.stdin)
@@ -124,7 +136,7 @@ def main():
         emit(narrow(els, a.grep) if a.grep else els, a.names)
         return 0
 
-    pat = re.compile(a.match, re.I)
+    pat = regex("waitfor", a.match)
     started = time.time()
     deadline = started + a.timeout
     polls = 0
