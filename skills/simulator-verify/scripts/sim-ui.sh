@@ -482,7 +482,8 @@ try:
     print("front app: %s pid %s" % (v.get("bundleId"), v.get("pid")))
 except Exception:
     print("front app: (WebDriverAgent did not say)")' || true
-    curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" --names 2>/dev/null | head -40 || true
+    curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" --names 2>/dev/null \
+      | awk 'NR <= 40 { print } END { if (NR > 40) print "... and " NR - 40 " more line(s), the bottom of the screen - `elements --names` lists them all" }' || true
     echo "---"
   } >&2
 }
@@ -652,10 +653,14 @@ case "$cmd" in
 
   # Types into ONE field addressed by testID and reads the field back. `type` sends keys
   # to whatever has focus and never looks at the result: in one app's search it left a cut
-  # word ("yo" / "yog") in 10 of 10 runs (2026-11-15). This goes through the element itself (XCTest focuses it and
-  # types with its own synchronisation): 10 of 10 exact, 0.4-0.6s, also after the field had
-  # lost focus. Replaces the field's text unless --append; exit 1 when the field does not
-  # hold what was typed (--expect VALUE for a field that formats its input, e.g. a phone mask).
+  # word ("yo" / "yog") in 3 of 5 runs on 2026-11-14 and 10 of 10 one morning later, and
+  # full words in other runs - it depends on state, so it cannot be trusted. This goes
+  # through the element itself (XCTest focuses it and types with its own synchronisation):
+  # 25 of 25 exact, 1.2-2.5s for the whole command, also after the field had lost focus.
+  # Replaces the field's text unless --append; exit 1 when the field does not hold what was
+  # typed (--expect VALUE for a field that formats its input, e.g. a phone mask). A trailing
+  # "\n" is sent as Return only AFTER the read-back matched. An element that is not a text
+  # field is refused untouched. The text goes as --text=VALUE so one starting with "-" is text.
   typeid)
     ensure_wda
     if [ "$#" -lt 2 ]; then echo "usage: typeid ID TEXT [--append] [--expect VALUE]" >&2; exit 2; fi
@@ -665,12 +670,12 @@ case "$cmd" in
       case "$1" in
         --append) _ty_args+=(--append); shift ;;
         --expect) if [ "$#" -lt 2 ]; then echo "usage: typeid ID TEXT [--append] [--expect VALUE]" >&2; exit 2; fi
-                  _ty_args+=(--expect "$2"); shift 2 ;;
+                  _ty_args+=("--expect=$2"); shift 2 ;;
         *) echo "unknown flag for typeid: $1" >&2; exit 2 ;;
       esac
     done
     session
-    run_child python3 "$HERE/wda_el.py" --port "$WDA_PORT" --sid "$_MEMO_SID" type "$_id" --text "$_text" "${_ty_args[@]+"${_ty_args[@]}"}"
+    run_child python3 "$HERE/wda_el.py" --port "$WDA_PORT" --sid "$_MEMO_SID" type "$_id" "--text=$_text" "${_ty_args[@]+"${_ty_args[@]}"}"
     ;;
 
   tap)

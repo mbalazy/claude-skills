@@ -105,6 +105,9 @@ run typeid_onearg       "$S" typeid ExploreSearch-input
 run typeid_badflag      "$S" typeid x y --nope
 run typeid_expect_noval "$S" typeid x y --expect
 run typeid_missing      "$S" typeid zzz-no-such-id yoga
+# text that starts with "-" is text, not a flag: must reach the lookup (rc 1), not argparse (rc 2)
+run typeid_dash_text    "$S" typeid zzz-no-such-id -yoga
+run typeid_flag_as_text "$S" typeid zzz-no-such-id --append
 run wait_long_note      "$S" wait 2.5
 run wait_short_quiet    "$S" do 'wait 2'
 run do_fail_summary     "$S" do 'waitid zzz-no-such-id --timeout 1'
