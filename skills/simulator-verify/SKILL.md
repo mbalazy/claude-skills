@@ -108,7 +108,8 @@ So the rule for this loop:
   LOUDLY when it is not - a fixed `sleep 5` that happens to be long enough today silently
   becomes a flake tomorrow. In ten days of transcripts fixed pauses outnumbered waits 663
   to 101 and were at least 78 of 197 minutes of tool time. A pause that IS the test (stay
-  locked for 15 s) is a `wait N` and stays one.
+  locked for 15 s) is a `wait N` and stays one. `wait` longer than 2 s prints a one-line
+  NOTE saying so - if you were waiting for the app, that line is your cue to use `waitid`.
 - **When the app has testIDs, wait and tap by testID.** `waitid ID` costs ~0.2s a poll
   against 1.7-4.2s for a tree read, and `tapid ID` needs no coordinate at all - nothing to
   re-derive per device, nothing in `config.md` to go stale, no layout shift under a
@@ -130,8 +131,22 @@ So the rule for this loop:
   `lock` / `unlock` / `locked`, `activate`, `foreground`, `orientation`, `drag`,
   `alert buttons` are all `sim-ui.sh` commands now; a hand-rolled request brings its own
   stale session id and its own unchecked error.
-- **Prefer the element tree to a screenshot** when the tree can answer: ~750 bytes of text
-  against an 870KB image, and a screenshot also costs you the tokens to look at it.
+- **Do not follow a failed batch with "what is on screen?".** When a step of a `do` batch
+  fails, the batch prints the front app and the visible labelled elements right after the
+  error (`SIMUI_FAIL_SUMMARY=0` turns it off) - read that instead of spending a call on
+  `elements` or a screenshot. A tolerated `?step` and a usage error print nothing extra.
+- **Prefer text to a screenshot** whenever text can answer: ~750 bytes against an 870KB
+  image, and every screenshot was followed by ~8 s of looking at it (148 of them in 11
+  sessions, 2026-11-05..13). Pick the cheapest command that answers the question:
+
+  | question | command |
+  |---|---|
+  | is X on screen now / did the tap get there | `waitid X` (in the same batch as the tap) |
+  | what does X say, what is in the field | `el X` |
+  | what is on this screen, which ids | `elements --names` (`--all` for unlabelled containers) |
+  | did the screen stop moving | `elements --settled` |
+  | which app is in front | `foreground` |
+  | how does it LOOK - layout, spacing, colour, clipping, glass | `screenshot`, and only then |
 - **After a code change, reach for `rig-check.sh --reload` first.** It keeps the app's
   navigation state, so the whole re-navigation - the expensive part - does not happen at
   all. The default terminate+launch trigger throws the screen away and makes you drive
@@ -139,7 +154,7 @@ So the rule for this loop:
 
 The benchmark that produced those numbers is `scripts/simbench.sh` (see its header). Re-run
 it before and after touching this loop instead of guessing; `scripts/regress.sh` captures
-the 56 stdout/stderr/rc cases that prove the driver still behaves identically.
+the 67 stdout/stderr/rc cases that prove the driver still behaves identically.
 
 ## The loop
 
@@ -168,13 +183,13 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
   fail without aborting the batch, and `#` starts a comment:
 
   ```sh
-  # by testID - the default when the app has them. SIMUI_TYPE_DELAY because a search
-  # field lost characters to a burst (see Observe); `el` only PRINTS the field's value -
-  # it does not stop the batch, so read it in the output before trusting the results.
-  SIMUI_TYPE_DELAY=0.2 $S do "relaunch $BUNDLE -RCT_jsLocation localhost:$PORT" \
+  # by testID - the default when the app has them. `typeid` types into the field and
+  # reads it back, and STOPS the batch when the field holds anything else - so the search
+  # never runs for a cut word (see Observe).
+  $S do "relaunch $BUNDLE -RCT_jsLocation localhost:$PORT" \
         'waitid Home-menu-button --timeout 60' \
         'tapid NavBar-tab-search' 'waitid Search-input' \
-        'tapid Search-input' 'type yoga' 'el Search-input' 'button ENTER' \
+        'typeid Search-input yoga' 'button ENTER' \
         'waitid Search-result-card-42 --timeout 30'
 
   # by coordinate and text - when there is no testID to address:
@@ -206,7 +221,7 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
 - `$S elements` -> the accessibility tree as compact JSON (`rect` is `[x,y,w,h]` in pt). This is the primary signal: assert on real elements, not pixels.
 - **`$S elements --all`** -> the FULL visible tree including unlabeled `Other`/container nodes. Use it whenever an element you can see isn't in the filtered tree - RN rows, glass buttons, and icon-only controls usually live there as `type:"Other"` with an exact rect (e.g. client list rows, the search-field clear button). Reach for `--all` BEFORE falling back to screenshot-and-guess coordinates.
 - **`$S elements [--all] --grep REGEX`** keeps the elements where ONE field (type, label, name or value) matches, and **`--names`** prints one line per element (`testID  type  [rect]  'text'`) instead of JSON. Use them instead of piping the tree into a throwaway parser - sessions re-typed that parser on most reads, each time a slightly different one. With `--settled` the two reads are still compared whole; the filter only changes what is printed.
-- **One element by testID** - `$S el ID` (type, label, value, rect, `displayed` of every element carrying that id), `$S waitid ID [--timeout S] [--exists]`, `$S tapid ID`. `displayed` is the same visibility function the tree's filter uses, asked for one element: it agreed with the tree on every identifier of three screens (81, 85 and 117 ids), list rows and covered elements included. Know what the lookup is before leaning on it:
+- **One element by testID** - `$S el ID` (type, label, value, rect, `displayed` of every element carrying that id), `$S waitid ID [--timeout S] [--exists]`, `$S tapid ID`, `$S typeid ID "text"` (below, under typing). `displayed` is the same visibility function the tree's filter uses, asked for one element: it agreed with the tree on every identifier of three screens (81, 85 and 117 ids), list rows and covered elements included. Know what the lookup is before leaning on it:
   - WebDriverAgent's "accessibility id" means `identifier == X`, **or** `label == X` for an element that has NO identifier. So `waitid "Popular now"` finds a bare text, and `waitid Menu` finds nothing when "Menu" is the label of a button that has a testID. Each match says `by: "id"` or `by: "id-or-label"` (the label equals the query: most likely a text match).
   - It returns every match, displayed or not. `waitid` succeeds when ANY is displayed; `tapid` taps only when the displayed matches are ONE target (React Native often exposes a view twice with the identical frame - that counts as one) and otherwise refuses and lists them.
   - `tapid` presses through `element/click`, where WebDriverAgent picks a hittable point - not the centre of the rect. For a partly covered element the centre is the wrong place: a title whose centre sat under the tab bar switched tabs when tapped by coordinate. Do not "fix" a `tapid` by tapping the rect's centre yourself.
@@ -218,7 +233,7 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
 - `$S screenshot [out.png] [--width N]` then Read the file -> visual confirmation of layout, spacing, glass surfaces, anything the tree can't express. By default the image is resampled to the device's point width (px ÷ SIMULATOR_MAINSCREEN_SCALE), so **1px == 1pt on any simulator** and coordinates read straight off the image. `--width 0` = full res (for 3b measurement).
 - After any tap that should change the screen, re-run `$S elements` and confirm the content actually changed (e.g. header label flipped) - a registered click is not proof of navigation.
 - Interactions: `$S tap|doubletap|longpress|swipe|drag|type|button` (see script header for signatures). Coordinates are POINTS; a coordinate measured on a full-res screenshot must be divided by the scale first. Out-of-range coordinates are rejected rather than silently doing nothing - and **against the rotated frame when the app in front is in landscape** (a video player is 874x402 on an iPhone 17, and `tap 600 200` is legal there; `$S orientation` says what WebDriverAgent sees). A gesture or keystroke WebDriverAgent refuses ends the command with exit 1 and its error - it is never reported as done. What WDA ACCEPTS without effect is still reported: `type` with no focused field prints "typed" and changes nothing, so read the field back. `drag` from a list scrolls further than the finger moved (546 pt for a 400 pt drag on Explore: iOS adds momentum) - assert on where things ended up, not on the distance. `button VOLUME_UP` / `VOLUME_DOWN` work only on a physical iPhone.
-- **`type` does not confirm what reached the field.** In one app's search screen `type yoga` followed by `button ENTER` left "yo" or "yog" in the field in 3 of 5 runs (2026-11-14), while the driver printed "typed: yoga" - and the search ran for the cut word. Before `button ENTER`, read the field with `$S el <field-id>` and check its `value`; for a field that reacts to every keystroke (search, OTP boxes) run the batch with `SIMUI_TYPE_DELAY=0.2`, which sends one character per request (4 of 4 correct in the same field).
+- **Type into a field with `$S typeid <field-id> "text"`, not `type`.** `type` sends keys to whatever has focus and never looks at the result: in one app's search screen `type yoga` + `button ENTER` left "yo" or "yog" in 3 of 5 runs (2026-11-14) and in 10 of 10 (2026-11-15) while printing "typed: yoga", and the search ran for the cut word. `typeid` goes through the field itself (XCTest focuses it and types with its own synchronisation), then reads the field back: 10 of 10 exact in the same field, 0.4-0.6 s, also after the field had lost focus (2026-11-15). It REPLACES the field's text (`--append` keeps it), treats a value equal to the placeholder as empty, and exits 1 when the field holds anything else - pass `--expect VALUE` for a field that formats what you type (a phone mask). A secure field reads as bullets, so there it says it could not check. Keep `type` for a field without a testID (then `SIMUI_TYPE_DELAY=0.2` and an `el` read before ENTER) and for a segmented OTP input (see Gotchas).
 - App and device state without `curl`: `$S activate BUNDLE` (foreground without a restart and without launch arguments), `$S foreground` (bundle id + pid of the app in front - the cheap way to learn that a tap threw you out to Safari or the home screen), `$S lock` / `$S unlock` / `$S locked`, `$S alert buttons`. `unlock` cannot get past a passcode or Face ID on a physical iPhone - that one needs the human.
 - **Alerts queue and arrive late.** One read a few seconds after a tap that says "no alert" is not evidence the tap did nothing. Use `$S alert wait [seconds]` to wait for one, and `$S alert accept --all` afterwards - if it drains more alerts than you ever saw, every tap landed.
 - **One read right after a tap is a frame of an animation, not the state.** A dismissing keyboard, a sheet mid-transition or a launch screen reads as "gone" and is back in the next frame (a tap-to-dismiss was CONFIRMED off one read; 4 s later the keyboard was there). Assert transitions with **`$S elements --settled`**: two reads 2 s apart (`SIMUI_SETTLE_SECONDS`), exit 3 with the diff when they differ. Only two reads that agree are evidence.

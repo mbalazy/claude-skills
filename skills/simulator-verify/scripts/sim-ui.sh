@@ -12,11 +12,12 @@
 #   sim-ui.sh waitid ID [--timeout S] [--exists]   # poll for ONE element by testID until it is displayed (~0.2s a poll, not a tree read)
 #   sim-ui.sh tapid ID                      # tap the one displayed element with that testID (WDA picks a hittable point)
 #   sim-ui.sh el ID                         # type/label/value/rect/displayed of every element with that testID
+#   sim-ui.sh typeid ID TEXT [--append] [--expect VALUE]   # replace a field's text by testID, then read it back (exit 1 if it differs)
 #   sim-ui.sh tap X Y                       # coordinates in pt
 #   sim-ui.sh doubletap X Y
 #   sim-ui.sh longpress X Y [DURATION_MS]
 #   sim-ui.sh swipe X1 Y1 X2 Y2 [DURATION_MS]
-#   sim-ui.sh type "text"                   # types into the focused element
+#   sim-ui.sh type "text"                   # types into the focused element, unchecked - prefer typeid when the field has a testID
 #   sim-ui.sh button HOME|ENTER|VOLUME_UP|VOLUME_DOWN   # VOLUME_* only on a physical iPhone (WDA refuses them on a simulator)
 #   sim-ui.sh drag X1 Y1 X2 Y2 [SECONDS]    # press, hold SECONDS (default 0.5), drag (Control Center, sliders, reordering)
 #   sim-ui.sh lock | unlock | locked        # lock screen through WDA; `locked` prints true/false
@@ -462,7 +463,30 @@ end_session() { [ -n "${1:-}" ] && curl -s -X DELETE "$WDA/session/$1" -o /dev/n
 # the first step and reported success). _DONE is set only where the script finishes on
 # purpose; a 0 without it is that shell error and becomes 1.
 _DONE=""
-trap '_rc=$?; [ "$_rc" = 0 ] && [ -z "$_DONE" ] && _rc=1; end_session "$_MEMO_SID" 2>/dev/null || true; exit $_rc' EXIT
+# A `do` batch that stops on a failed step used to leave the reader blind: the next call was
+# almost always "what is on the screen now?", one more round trip at ~8s of model time each
+# (11 sessions, 2026-11-05..13: 76 of ~200 minutes were gaps between calls). So the screen
+# as it was at the failure is printed right here. Not for usage errors (2), signals (130,
+# 143), a tolerated step (it runs in a subshell, which does not inherit this trap) or a
+# WDA that never answered. SIMUI_FAIL_SUMMARY=0 turns it off.
+_IN_DO=""; _DO_STEP=""
+fail_summary() {
+  [ -n "$_IN_DO" ] && [ -n "$_MEMO_WDA" ] && [ "${SIMUI_FAIL_SUMMARY:-1}" != 0 ] || return 0
+  case "$1" in 0|2|130|143) return 0 ;; esac
+  {
+    echo "--- the batch stopped at: $_DO_STEP - the screen now (front app, then visible labelled elements):"
+    curl -s -m 10 "$WDA/wda/activeAppInfo" | python3 -c '
+import sys, json
+try:
+    v = json.load(sys.stdin).get("value") or {}
+    print("front app: %s pid %s" % (v.get("bundleId"), v.get("pid")))
+except Exception:
+    print("front app: (WebDriverAgent did not say)")' || true
+    curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" --names 2>/dev/null | head -40 || true
+    echo "---"
+  } >&2
+}
+trap '_rc=$?; [ "$_rc" = 0 ] && [ -z "$_DONE" ] && _rc=1; fail_summary "$_rc"; end_session "$_MEMO_SID" 2>/dev/null || true; exit $_rc' EXIT
 
 # A polling helper (wda_el.py, wda_tree.py --match) runs as a CHILD that this shell waits
 # for, so a TERM or INT sent to the script alone (`timeout`, a killed batch) takes the
@@ -624,6 +648,29 @@ case "$cmd" in
     session
     case "$cmd" in waitid) _sub=wait ;; tapid) _sub=tap ;; *) _sub=info ;; esac
     run_child python3 "$HERE/wda_el.py" --port "$WDA_PORT" --sid "$_MEMO_SID" "$_sub" "$_id" "${_el_args[@]+"${_el_args[@]}"}"
+    ;;
+
+  # Types into ONE field addressed by testID and reads the field back. `type` sends keys
+  # to whatever has focus and never looks at the result: in one app's search it left a cut
+  # word ("yo" / "yog") in 10 of 10 runs (2026-11-15). This goes through the element itself (XCTest focuses it and
+  # types with its own synchronisation): 10 of 10 exact, 0.4-0.6s, also after the field had
+  # lost focus. Replaces the field's text unless --append; exit 1 when the field does not
+  # hold what was typed (--expect VALUE for a field that formats its input, e.g. a phone mask).
+  typeid)
+    ensure_wda
+    if [ "$#" -lt 2 ]; then echo "usage: typeid ID TEXT [--append] [--expect VALUE]" >&2; exit 2; fi
+    _id="$1"; _text="$2"; shift 2
+    _ty_args=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --append) _ty_args+=(--append); shift ;;
+        --expect) if [ "$#" -lt 2 ]; then echo "usage: typeid ID TEXT [--append] [--expect VALUE]" >&2; exit 2; fi
+                  _ty_args+=(--expect "$2"); shift 2 ;;
+        *) echo "unknown flag for typeid: $1" >&2; exit 2 ;;
+      esac
+    done
+    session
+    run_child python3 "$HERE/wda_el.py" --port "$WDA_PORT" --sid "$_MEMO_SID" type "$_id" --text "$_text" "${_ty_args[@]+"${_ty_args[@]}"}"
     ;;
 
   tap)
@@ -902,12 +949,14 @@ print(json.dumps(v, ensure_ascii=False))'
     else
       _steps=("$@")
     fi
+    _IN_DO=1
     for _step in "${_steps[@]}"; do
       _tol=""
       case "$_step" in
         ""|\#*) continue ;;
         \?*) _tol=1; _step="${_step#\?}" ;;
       esac
+      _DO_STEP="$_step"
       printf '\xc2\xbb %s\n' "$_step"
       if [ -n "$_tol" ]; then
         # A subshell, not just `|| true`: several branches report failure with `exit`,
@@ -919,10 +968,16 @@ print(json.dumps(v, ensure_ascii=False))'
     done
     ;;
 
-  # A named pause, so a route reads as a route. Prefer `waitfor` - it costs what the
-  # app needs rather than a constant somebody guessed.
+  # A named pause, so a route reads as a route. Prefer `waitid` / `waitfor` - they cost
+  # what the app needs rather than a constant somebody guessed. Fixed pauses were at least
+  # 41 of ~200 minutes of simulator time in 11 sessions (2026-11-05..13) although the rule
+  # against them was written down, so a long one now says so where it is read: in the output.
+  # A pause that IS the test (stay locked for 15 s) is still a `wait N`; the note is one line.
   wait)
     need_num "SECONDS" "${1:-1}"
+    if awk -v s="${1:-1}" 'BEGIN { exit !(s > 2) }'; then
+      echo "NOTE: fixed pause ${1}s - if you are waiting for the app, \`waitid ID\` returns the moment it is there and fails loudly when it is not." >&2
+    fi
     sleep "${1:-1}"
     ;;
 

@@ -5,6 +5,7 @@ reading the whole tree.
   wda_el.py --port P --sid SID wait  ID [--timeout S] [--exists]
   wda_el.py --port P --sid SID tap   ID
   wda_el.py --port P --sid SID info  ID
+  wda_el.py --port P --sid SID type  ID --text TEXT [--append] [--expect VALUE]
 
 Why this exists (measured 2026-11-13/14, a large React Native app, iPhone 17 simulator): a full
 `/source` read costs 1.7-4.2s per poll because WebDriverAgent asks the app for the
@@ -194,31 +195,89 @@ def cmd_info(w, a):
     return 0
 
 
-def cmd_tap(w, a):
-    eids = w.find(a.id)
+def pick_displayed(w, ident, verb, done):
+    """The ONE displayed element carrying `ident`, as (element id, description), or None
+    after explaining on stderr why nothing was done. `verb`/`done` name the command and
+    what it did not do ("tapid", "tapped")."""
+    eids = w.find(ident)
     if not eids:
-        print(f"tapid: no element with id '{a.id}' on this screen - nothing was tapped", file=sys.stderr)
-        return 1
-    # Only `displayed` and the frame decide what gets tapped; the full description (four
+        print(f"{verb}: no element with id '{ident}' on this screen - nothing was {done}", file=sys.stderr)
+        return None
+    # Only `displayed` and the frame decide the target; the full description (four
     # more requests per element) is fetched for the one target, or for an error report.
     shown = [e for e in eids if w.displayed(e)]
     if not shown:
-        print(f"tapid: {len(eids)} element(s) with id '{a.id}' exist but none is displayed - "
-              f"nothing was tapped", file=sys.stderr)
-        out([w.describe(e, a.id, False) for e in eids[:5]])
-        return 1
+        print(f"{verb}: {len(eids)} element(s) with id '{ident}' exist but none is displayed - "
+              f"nothing was {done}", file=sys.stderr)
+        out([w.describe(e, ident, False) for e in eids[:5]])
+        return None
     # React Native often exposes one view twice (the view and its accessibility
     # element) with the identical frame: those are one target. Anything else is a
-    # real ambiguity and guessing would tap the wrong thing confidently.
+    # real ambiguity and guessing would act on the wrong thing confidently.
     frames = {json.dumps(w.call("GET", f"/element/{e}/rect"), sort_keys=True) for e in shown} \
         if len(shown) > 1 else {"one"}
     if len(frames) > 1:
-        print(f"tapid: {len(shown)} DISPLAYED elements with id '{a.id}' at different places - refusing "
-              f"to pick one, nothing was tapped. Tap the one you mean by its rect:", file=sys.stderr)
-        out([w.describe(e, a.id, True) for e in shown[:8]])
+        print(f"{verb}: {len(shown)} DISPLAYED elements with id '{ident}' at different places - refusing "
+              f"to pick one, nothing was {done}. Address the one you mean by its rect:", file=sys.stderr)
+        out([w.describe(e, ident, True) for e in shown[:8]])
+        return None
+    return shown[0], w.describe(shown[0], ident, True)
+
+
+def cmd_type(w, a):
+    got = pick_displayed(w, a.id, "typeid", "typed")
+    if not got:
         return 1
-    eid = shown[0]
-    d = w.describe(eid, a.id, True)
+    eid, d = got
+    placeholder = w.attr(eid, "placeholderValue")
+
+    def field_value():
+        # An empty React Native TextInput reports its PLACEHOLDER as its value; that is "".
+        # The element can be re-rendered by the typing itself, so a lost handle is looked
+        # up again by its testID rather than read as an empty field.
+        v = w.attr(eid, "value")
+        if v is None:
+            again = w.find(a.id)
+            v = w.attr(again[0], "value") if again else None
+        return v, ("" if v is None or (placeholder and v == placeholder) else v)
+
+    before = field_value()[1] if a.append else ""
+    if not a.append:
+        v = w.call("POST", f"/element/{eid}/clear", {})
+        if isinstance(v, dict) and v.get("error"):
+            print(f"typeid: WebDriverAgent refused to clear '{a.id}': {v.get('error')}: "
+                  f"{str(v.get('message', ''))[:300]} - nothing was typed", file=sys.stderr)
+            return 1
+    t0 = time.time()
+    v = w.call("POST", f"/element/{eid}/value", {"text": a.text, "value": list(a.text)})
+    took = time.time() - t0
+    if isinstance(v, dict) and v.get("error"):
+        print(f"typeid: WebDriverAgent refused to type into '{a.id}': {v.get('error')}: "
+              f"{str(v.get('message', ''))[:300]}", file=sys.stderr)
+        return 1
+    if d["type"] == "SecureTextField":
+        print(f"NOTE: '{a.id}' is a secure field - its value reads as bullets, so what arrived "
+              f"cannot be checked here.", file=sys.stderr)
+        print(f"typed into id {a.id} (secure field, not read back)")
+        return 0
+    expected = a.expect if a.expect is not None else before + a.text
+    raw, value = field_value()
+    if expected not in (raw, value):
+        print(f"typeid: the field '{a.id}' holds {value!r}, expected {expected!r}. If the field "
+              f"formats its input (a mask), pass the formatted value with --expect.", file=sys.stderr)
+        return 1
+    if took > 5:
+        print(f"NOTE: typing took {took:.1f}s - WebDriverAgent waited for the app to go idle.",
+              file=sys.stderr)
+    print(f"typed into id {a.id}: {value!r} (read back)")
+    return 0
+
+
+def cmd_tap(w, a):
+    got = pick_displayed(w, a.id, "tapid", "tapped")
+    if not got:
+        return 1
+    eid, d = got
     t0 = time.time()
     v = w.call("POST", f"/element/{eid}/click", {})
     took = time.time() - t0
@@ -243,14 +302,20 @@ def main():
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--port", required=True)
     ap.add_argument("--sid", required=True)
-    ap.add_argument("cmd", choices=["wait", "tap", "info"])
+    ap.add_argument("cmd", choices=["wait", "tap", "info", "type"])
     ap.add_argument("id")
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument("--interval", type=float, default=0.15)
     ap.add_argument("--exists", action="store_true")
+    ap.add_argument("--text")
+    ap.add_argument("--append", action="store_true")
+    ap.add_argument("--expect")
     a = ap.parse_args()
+    if a.cmd == "type" and a.text is None:
+        print("typeid: --text is required", file=sys.stderr)
+        return 2
     w = Wda(a.port, a.sid)
-    fn = {"wait": cmd_wait, "tap": cmd_tap, "info": cmd_info}[a.cmd]
+    fn = {"wait": cmd_wait, "tap": cmd_tap, "info": cmd_info, "type": cmd_type}[a.cmd]
     try:
         # A one-shot command whose session was replaced half way runs again from the lookup:
         # its element ids belonged to the old session. One other driver command replaces it

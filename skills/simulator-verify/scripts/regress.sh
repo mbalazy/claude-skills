@@ -97,6 +97,21 @@ shot() {
     rm -f "$f"
   } > "$OUT/$name.txt"
 }
+# 2026-11-15: typeid (type into a field by testID, read it back), the screen summary a
+# failed `do` step prints, and the note on a long fixed pause. typeid_missing and the
+# do_fail_* cases depend on what is on screen (the summary lists it) - same rule as above.
+run typeid_noarg        "$S" typeid
+run typeid_onearg       "$S" typeid ExploreSearch-input
+run typeid_badflag      "$S" typeid x y --nope
+run typeid_expect_noval "$S" typeid x y --expect
+run typeid_missing      "$S" typeid zzz-no-such-id yoga
+run wait_long_note      "$S" wait 2.5
+run wait_short_quiet    "$S" do 'wait 2'
+run do_fail_summary     "$S" do 'waitid zzz-no-such-id --timeout 1'
+run do_fail_summary_off env SIMUI_FAIL_SUMMARY=0 "$S" do 'waitid zzz-no-such-id --timeout 1'
+run do_fail_tolerated   "$S" do '?waitid zzz-no-such-id --timeout 1'
+run do_fail_usage       "$S" do 'waitid'
+
 shot screenshot_default
 shot screenshot_w300  --width 300
 shot screenshot_full  --width 0
