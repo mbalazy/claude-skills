@@ -195,10 +195,10 @@ def cmd_info(w, a):
     return 0
 
 
-def pick_displayed(w, ident, verb, done):
+def pick_displayed(w, ident, verb, done, hint):
     """The ONE displayed element carrying `ident`, as (element id, description), or None
     after explaining on stderr why nothing was done. `verb`/`done` name the command and
-    what it did not do ("tapid", "tapped")."""
+    what it did not do ("tapid", "tapped"); `hint` ends the ambiguity message."""
     eids = w.find(ident)
     if not eids:
         print(f"{verb}: no element with id '{ident}' on this screen - nothing was {done}", file=sys.stderr)
@@ -218,63 +218,107 @@ def pick_displayed(w, ident, verb, done):
         if len(shown) > 1 else {"one"}
     if len(frames) > 1:
         print(f"{verb}: {len(shown)} DISPLAYED elements with id '{ident}' at different places - refusing "
-              f"to pick one, nothing was {done}. Address the one you mean by its rect:", file=sys.stderr)
+              f"to pick one, nothing was {done}. {hint}", file=sys.stderr)
         out([w.describe(e, ident, True) for e in shown[:8]])
         return None
     return shown[0], w.describe(shown[0], ident, True)
 
 
+# Element types that take text. Anything else is refused BEFORE any request that could
+# touch it: XCTest focuses an element by tapping it, so `typeid` on a button pressed the
+# button (2026-11-15: the Filters button opened its screen) and then reported only a
+# value mismatch.
+TEXT_TYPES = ("TextField", "SecureTextField", "SearchField", "TextView")
+
+
+def wda_error(v):
+    return isinstance(v, dict) and v.get("error")
+
+
 def cmd_type(w, a):
-    got = pick_displayed(w, a.id, "typeid", "typed")
-    if not got:
-        return 1
-    eid, d = got
-    placeholder = w.attr(eid, "placeholderValue")
-
-    def field_value():
-        # An empty React Native TextInput reports its PLACEHOLDER as its value; that is "".
-        # The element can be re-rendered by the typing itself, so a lost handle is looked
-        # up again by its testID rather than read as an empty field.
-        v = w.attr(eid, "value")
-        if v is None:
-            again = w.find(a.id)
-            v = w.attr(again[0], "value") if again else None
-        return v, ("" if v is None or (placeholder and v == placeholder) else v)
-
-    before = field_value()[1] if a.append else ""
-    if not a.append:
-        v = w.call("POST", f"/element/{eid}/clear", {})
-        if isinstance(v, dict) and v.get("error"):
-            print(f"typeid: WebDriverAgent refused to clear '{a.id}': {v.get('error')}: "
-                  f"{str(v.get('message', ''))[:300]} - nothing was typed", file=sys.stderr)
+    # The text is split into what goes INTO the field and a trailing Return. The Return is
+    # sent only after the field was read back and holds the right text, so a search never
+    # runs for a cut word, and the read-back never expects a "\n" the field cannot hold.
+    body = a.text.rstrip("\n")
+    submit = a.text[len(body):]
+    st = a.state                    # survives a re-run after the session was replaced
+    if "expected" not in st:
+        got = pick_displayed(w, a.id, "typeid", "typed",
+                             "Tap the one you mean by its rect, then `type` into it:")
+        if not got:
             return 1
-    t0 = time.time()
-    v = w.call("POST", f"/element/{eid}/value", {"text": a.text, "value": list(a.text)})
-    took = time.time() - t0
-    if isinstance(v, dict) and v.get("error"):
-        print(f"typeid: WebDriverAgent refused to type into '{a.id}': {v.get('error')}: "
-              f"{str(v.get('message', ''))[:300]}", file=sys.stderr)
-        return 1
-    if d["type"] == "SecureTextField":
+        eid, d = got
+        if d["type"] not in TEXT_TYPES:
+            print(f"typeid: '{a.id}' is a {d['type'] or 'element of unknown type'}, not a text field - "
+                  f"nothing was done (typing would tap it to focus it). Tap it with `tapid`, then "
+                  f"address the field that appears.", file=sys.stderr)
+            return 1
+        st["type"] = d["type"]
+        st["placeholder"] = w.attr(eid, "placeholderValue")
+        before = ""
+        if a.append:
+            v = w.attr(eid, "value")
+            before = "" if v is None or v == st["placeholder"] else v
+        if not a.append:
+            v = w.call("POST", f"/element/{eid}/clear", {})
+            if wda_error(v):
+                print(f"typeid: WebDriverAgent refused to clear '{a.id}': {v.get('error')}: "
+                      f"{str(v.get('message', ''))[:300]} - nothing was typed, but the element may have "
+                      f"been tapped to focus it: check the screen.", file=sys.stderr)
+                return 1
+        t0 = time.time()
+        v = w.call("POST", f"/element/{eid}/value", {"text": body, "value": list(body)})
+        took = time.time() - t0
+        if wda_error(v):
+            print(f"typeid: WebDriverAgent refused to type into '{a.id}': {v.get('error')}: "
+                  f"{str(v.get('message', ''))[:300]} - the element may have been tapped to focus it: "
+                  f"check the screen.", file=sys.stderr)
+            return 1
+        # From here on the text IS in the field. If the session is replaced during the
+        # read-back, the re-run must only read again: running the typing again doubled an
+        # --append text ('yoga flow flow' with exit 0, 12 of 16 runs, 2026-11-15).
+        st["expected"] = a.expect if a.expect is not None else before + body
+        st["took"] = took
+    if st["type"] == "SecureTextField":
         print(f"NOTE: '{a.id}' is a secure field - its value reads as bullets, so what arrived "
               f"cannot be checked here.", file=sys.stderr)
-        print(f"typed into id {a.id} (secure field, not read back)")
-        return 0
-    expected = a.expect if a.expect is not None else before + a.text
-    raw, value = field_value()
-    if expected not in (raw, value):
-        print(f"typeid: the field '{a.id}' holds {value!r}, expected {expected!r}. If the field "
-              f"formats its input (a mask), pass the formatted value with --expect.", file=sys.stderr)
-        return 1
-    if took > 5:
-        print(f"NOTE: typing took {took:.1f}s - WebDriverAgent waited for the app to go idle.",
+        value = None
+    else:
+        # Looked up again by testID: typing can re-render the field, and after a re-run the
+        # old element id belongs to a void session. An empty React Native TextInput reports
+        # its PLACEHOLDER as its value; that is "".
+        found = w.find(a.id)
+        raw = w.attr(found[0], "value") if found else None
+        value = "" if raw is None or raw == st["placeholder"] else raw
+        if st["expected"] not in (raw, value):
+            print(f"typeid: the field '{a.id}' holds {value!r}, expected {st['expected']!r}"
+                  f"{' - Return was NOT sent' if submit else ''}. If the field formats its input "
+                  f"(a mask), pass the formatted value with --expect.", file=sys.stderr)
+            return 1
+    if submit and not st.get("submitted"):
+        found = w.find(a.id)
+        if not found:
+            print(f"typeid: the field '{a.id}' is gone before Return could be sent - the text was "
+                  f"typed, Return was not.", file=sys.stderr)
+            return 1
+        v = w.call("POST", f"/element/{found[0]}/value", {"text": submit, "value": list(submit)})
+        # Only after the call: a request answered "invalid session id" raised SessionLost
+        # above and was not executed, so the re-run must still send it - once.
+        st["submitted"] = True
+        if wda_error(v):
+            print(f"typeid: the text was typed and read back, but WebDriverAgent refused the Return: "
+                  f"{v.get('error')}: {str(v.get('message', ''))[:300]}", file=sys.stderr)
+            return 1
+    if st["took"] > 5:
+        print(f"NOTE: typing took {st['took']:.1f}s - WebDriverAgent waited for the app to go idle.",
               file=sys.stderr)
-    print(f"typed into id {a.id}: {value!r} (read back)")
+    shown = "secure field, not read back" if value is None else f"{value!r} (read back)"
+    print(f"typed into id {a.id}: {shown}{', then Return' if submit else ''}")
     return 0
 
 
 def cmd_tap(w, a):
-    got = pick_displayed(w, a.id, "tapid", "tapped")
+    got = pick_displayed(w, a.id, "tapid", "tapped", "Tap the one you mean by its rect:")
     if not got:
         return 1
     eid, d = got
@@ -314,6 +358,7 @@ def main():
     if a.cmd == "type" and a.text is None:
         print("typeid: --text is required", file=sys.stderr)
         return 2
+    a.state = {}                    # what a command already did, kept across re-runs
     w = Wda(a.port, a.sid)
     fn = {"wait": cmd_wait, "tap": cmd_tap, "info": cmd_info, "type": cmd_type}[a.cmd]
     try:
@@ -322,7 +367,9 @@ def main():
         # TWICE (it opens its own session, then deletes it on exit), so a single retry was
         # not enough (2026-11-14: `el` beside one concurrent `el` failed 3 of 3). Retrying is
         # safe for `tap` too: a request answered "invalid session id" was not executed, so a
-        # retry cannot click twice. Bounded, so a driver that never stops cannot pin it.
+        # retry cannot click twice. NOT safe for a request that already succeeded before a
+        # LATER one lost the session: `type` records in `a.state` what it did, and a re-run
+        # only reads back. Bounded, so a driver that never stops cannot pin it.
         for attempt in range(6):
             try:
                 return fn(w, a)
