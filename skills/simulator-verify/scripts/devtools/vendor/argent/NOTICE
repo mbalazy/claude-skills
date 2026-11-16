@@ -29,5 +29,11 @@ read, not vendored). Each of our files names its source in its header.
   packages/tool-server/src/utils/react-profiler/pipeline/00-cpu-correlate.ts (dropStaleLeadingGap) -> skills/rn-profile/scripts/react-profile.mjs
 
 Copied files (path | change):
+- packages/tool-server/src/utils/react-profiler/component-names.ts | unmodified
 - packages/tool-server/src/utils/react-profiler/devtools-bootstrap.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-cpu-correlate.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-hot-commits.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-preprocess.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/utils.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/render-summary.ts | unmodified
 - packages/tool-server/src/utils/react-profiler/scripts.ts | unmodified
