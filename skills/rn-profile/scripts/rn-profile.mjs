@@ -31,8 +31,9 @@
 // with the components that rendered in each, why, the parent that set off a
 // cascade and the busiest JS functions in that window; every render of one
 // component (exact name) with the changed props / hooks or the parent that
-// caused it. A missing, cut or foreign file exits 1; so does a component that
-// never rendered (the message names similar ones).
+// caused it. A missing, cut or foreign file exits 1; so does an empty answer:
+// no component matching --grep, no commit at or over --min-ms, a component
+// that never rendered (the message names similar ones).
 //
 // Exit codes: 0 done; 1 nothing to talk to, no React DevTools hook (release
 // build), nothing recording, or another tool holds the profiler; 2 ambiguous
@@ -156,8 +157,9 @@ async function reactRenders(args) {
   if (values.grep !== undefined) { try { new RegExp(values.grep); } catch (err) { throw new UsageError(`--grep: ${err.message}`); } }
   const top = values.top === undefined ? 20 : positiveNumber('top', values.top, { integer: true });
   const A = await import('./react-analysis.mjs');
-  print(values.json, await A.componentRenders(A.loadProfile(positionals[0]), { sort, grep: values.grep, top }), A.formatRenders);
-  return 0;
+  const r = await A.componentRenders(A.loadProfile(positionals[0]), { sort, grep: values.grep, top });
+  print(values.json, r, A.formatRenders);
+  return r.rows.length ? 0 : 1;
 }
 
 async function reactCommits(args) {
@@ -169,8 +171,9 @@ async function reactCommits(args) {
     if (!(minMs >= 0)) throw new UsageError(`--min-ms wants a number >= 0, got ${values['min-ms']}`);
   }
   const A = await import('./react-analysis.mjs');
-  print(values.json, await A.slowestCommits(A.loadProfile(positionals[0]), { top, minMs }), A.formatCommits);
-  return 0;
+  const r = await A.slowestCommits(A.loadProfile(positionals[0]), { top, minMs });
+  print(values.json, r, A.formatCommits);
+  return r.rows.length ? 0 : 1;
 }
 
 async function reactWhy(args) {

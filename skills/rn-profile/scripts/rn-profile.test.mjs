@@ -137,6 +137,10 @@ test('renders, commits and why read a profile file without an app', async () => 
     const none = await run(['react', 'why', file, 'ro']);
     assert.deepEqual([none.code, none.stdout], [1, '']);
     assert.match(none.stderr, /did not render in this profile\. Names containing it: Row/);
+    const nothing = await run(['react', 'renders', file, '--grep', 'zzz']);
+    assert.equal(nothing.code, 1);
+    assert.match(nothing.stdout, /0 match/);
+    assert.equal((await run(['react', 'commits', file, '--min-ms', '1000'])).code, 1);
     const cut = join(dir, 'cut.json');
     writeFileSync(cut, JSON.stringify(PROFILE).slice(0, 100));
     const bad = await run(['react', 'commits', cut]);
