@@ -316,3 +316,15 @@ test('cli ios record: Ctrl-C or --timeout during the export kills the export, le
     } finally { r.done(); }
   }
 });
+
+test('record: when every export fails, the reason is printed and the trace is kept', async () => {
+  const r = rig({ exports: {} });
+  try {
+    await withEnv(r, () => assert.rejects(record({ udid: UDID, seconds: 1, outDir: r.out }), (e) => e.exitCode === 1
+      && /export produced neither CPU samples nor hangs/.test(e.message)
+      && /hangs: Export failed: no data for \/trace-toc/.test(e.message)
+      && !/Command failed/.test(e.message)
+      && e.message.includes(`the trace is kept at ${join(r.out, 'native.trace')}`)));
+    assert.equal(existsSync(join(r.out, 'native.trace')), true);
+  } finally { r.done(); }
+});

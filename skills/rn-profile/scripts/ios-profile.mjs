@@ -50,6 +50,11 @@ function run(cmd, args, timeoutMs = SIMCTL_TIMEOUT_MS) {
 }
 
 const lastLines = (text, n = 4) => text.trim().split('\n').filter(Boolean).slice(-n).join(' | ');
+/** An export error from Argent's helper starts with `Command failed: <the command>`; xctrace's reason is after it. */
+export const exportReason = (msg) => {
+  const lines = String(msg).split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('Command failed:'));
+  return lines.length ? lines.slice(-2).join(' ') : String(msg).split('\n')[0];
+};
 
 /** The simulator with this udid; exit 1 when it does not exist or is not booted. */
 export async function checkDevice(udid) {
@@ -271,7 +276,7 @@ export function formatSummary(sum) {
   }
   for (const [k, msg] of Object.entries(sum.exportErrors ?? {})) {
     if (k === 'leaks' && !sum.leaks.recorded) continue;
-    lines.push(`export of ${k} failed: ${msg.split('\n')[0]}`);
+    lines.push(`export of ${k} failed: ${exportReason(msg)}`);
   }
   return lines.join('\n');
 }
@@ -362,10 +367,11 @@ async function recordSteps({ udid, app: want, seconds = DEFAULT_SECONDS, leaks =
     dropTrace();
     throw stoppedError(state, 'the export was stopped');
   }
-  dropTrace();
   if (!files.cpu && !files.hangs) {
-    throw new IosProfileError(`xctrace export produced neither CPU samples nor hangs: ${Object.entries(exported.diagnostics.errors).map(([k, v]) => `${k}: ${v.split('\n')[0]}`).join('; ')}`);
+    // The trace stays: it is the only copy of the recording, and xctrace can export it again.
+    throw new IosProfileError(`xctrace export produced neither CPU samples nor hangs (${Object.entries(exported.diagnostics.errors).map(([k, v]) => `${k}: ${exportReason(v)}`).join('; ')}); the trace is kept at ${tracePath}`);
   }
+  dropTrace();
   const meta = { app, device, seconds, template: leaks ? 'leaks' : TIME_PROFILER, dir: outDir, trace: keepTrace ? tracePath : null };
   const sum = summarize(await analyze(files), { meta, leaksRecorded: leaks, exportErrors: exported.diagnostics.errors, top });
   writeFileSync(join(outDir, SUMMARY_FILE), JSON.stringify(sum, null, 1));
