@@ -29,5 +29,16 @@ read, not vendored). Each of our files names its source in its header.
   packages/tool-server/src/utils/react-profiler/pipeline/00-cpu-correlate.ts (dropStaleLeadingGap) -> skills/rn-profile/scripts/react-profile.mjs
 
 Copied files (path | change):
+- packages/tool-server/src/utils/ios-profiler/Argent.tracetemplate | unmodified
+- packages/tool-server/src/utils/ios-profiler/config.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/export.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/pipeline/01-correlate.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/pipeline/02-aggregate.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/pipeline/index.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/pipeline/xml-parser.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/run-with-timeout.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/types.ts | unmodified
+- packages/tool-server/src/utils/profiler-shared/aggregate.ts | unmodified
+- packages/tool-server/src/utils/profiler-shared/thread.ts | unmodified
 - packages/tool-server/src/utils/react-profiler/devtools-bootstrap.ts | unmodified
 - packages/tool-server/src/utils/react-profiler/scripts.ts | unmodified
