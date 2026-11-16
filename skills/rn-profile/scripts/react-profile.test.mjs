@@ -159,9 +159,10 @@ test('a start that fails after the sampler started rolls back: React stopped, sa
   assert.equal((await startRecording(app.client)).started, true, 'a new start works without --takeover');
 });
 
-test('an app without the DevTools hook: start exits 1 naming a development build', async () => {
+test('an app without the DevTools hook: start and status exit 1 naming a development build', async () => {
   const app = fakeReactApp({ hook: false });
   await assert.rejects(startRecording(app.client), (err) => err.exitCode === 1 && /development build/.test(err.message));
+  await assert.rejects(recordingStatus(app.client), (err) => err.exitCode === 1 && /development build/.test(err.message));
 });
 
 test('trimCpuProfile keeps the samples inside the first keepMs', () => {

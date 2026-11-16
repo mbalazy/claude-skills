@@ -42,6 +42,7 @@ const evJson = async (client, expr, timeoutMs) => {
   return typeof raw === 'string' ? JSON.parse(raw) : raw;
 };
 
+const NO_HOOK = 'The app has no React DevTools hook: it is not a development build, or React has not started yet.';
 const READ_SESSION = `JSON.stringify(globalThis.__rn_profile_session || null)`;
 
 /**
@@ -88,7 +89,7 @@ export async function startRecording(client, { maxSeconds = DEFAULT_MAX_SECONDS,
   await ev(client, S.REACT_NATIVE_PROFILER_SETUP_SCRIPT, timeoutMs);
   let state = await evJson(client, S.READ_STATE_SCRIPT, timeoutMs);
   if (!state.hookExists) {
-    throw new ProfileError('The app has no React DevTools hook: it is not a development build, or React has not started yet.');
+    throw new ProfileError(NO_HOOK);
   }
   if (!state.rendererInterfaceFound) {
     const boot = await evJson(client, S.BOOTSTRAP_DEVTOOLS_BACKEND_SCRIPT, timeoutMs);
@@ -152,6 +153,7 @@ async function rollBack(client, S, sessionId, timeoutMs) {
 export async function recordingStatus(client, { timeoutMs } = {}) {
   const S = await scripts();
   const state = await evJson(client, S.READ_STATE_SCRIPT, timeoutMs);
+  if (!state.hookExists) throw new ProfileError(NO_HOOK);
   const session = await evJson(client, READ_SESSION, timeoutMs);
   const ours = session && state.owner?.sessionId === session.sessionId;
   return {
