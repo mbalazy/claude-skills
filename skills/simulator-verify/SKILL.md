@@ -149,6 +149,9 @@ So the rule for this loop:
   | what is on this screen, which ids | `elements --names` (`--all` for unlabelled containers) |
   | did the screen stop moving | `elements --settled` |
   | which app is in front | `foreground` |
+  | which React component renders testID X, what it shows | `rn-devtools.mjs tree --id X` (2b) |
+  | which testIDs React rendered here, also ones iOS does not expose | `rn-devtools.mjs tree --ids` (2b) |
+  | what a store, global or flag holds in the running app | `rn-devtools.mjs eval EXPR` (2b) |
   | how does it LOOK - layout, spacing, colour, clipping, glass | `screenshot`, and only then |
 - **After a code change, reach for `rig-check.sh --reload` first.** It keeps the app's
   navigation state, so the whole re-navigation - the expensive part - does not happen at
@@ -249,10 +252,15 @@ RD=<skill-dir>/scripts/rn-devtools.mjs
 node $RD targets --port 8090                     # the runtime pages; * marks the one commands use
 node $RD eval '1+1' --port 8090                  # -> 2 (JSON on stdout)
 node $RD eval 'typeof globalThis.nativeFabricUIManager' --device "iPhone 17"
+node $RD tree --port 8090                        # React component tree of the screen in front
+node $RD tree --id Some-testID                   # that component and its ancestors
+node $RD tree --grep 'checkout|total' --json     # matches on name/text/label/testID, as JSON
+node $RD tree --ids                              # testIDs React rendered on screen, one per line
 ```
 - **Target selection is `read-rn-logs-cdp.py`'s**: `--port` (default `$METRO_PORT`, else 8081), `--device` (substring; an exact name wins), `--app <bundle id>`, `--page <n>` (an explicit page, the only way to a worklet runtime such as Reanimated's `UI`). The main runtime is the page that prefers the Fusebox frontend. Several devices, or several app runtimes on one device: exit 2 with the list, never a guess.
 - **Exit codes**: 0 done; 1 nothing to talk to (Metro not on the port, no matching target), the expression threw (its text on stderr) or its result is something JSON cannot carry (NaN, a BigInt, a cycle - wrap it in `String(...)`); 2 ambiguous target; 3 no answer within `--timeout` (seconds, default 10) or the page went away mid-command; 64 usage.
 - `eval` runs in the app's global scope and awaits a Promise (`--no-await` to skip). React Native's `Promise` is a polyfill that CDP's own `awaitPromise` does not recognise (it returns `{"_h":0,...}`), so the wait happens inside the app; a rejection exits 1 with its text, a Promise that never settles exits 3. Hermes has `globalThis`, not Node's `global`.
+- **`tree`** prints one component per line, two spaces per level: `Name "text" [testID=X] (tap X,Y)`, where the text is the visible text or else the accessibility label and `(tap X,Y)` is the centre of its rect in points - what `$S tap X Y` takes on a portrait simulator (no orientation correction: a landscape UI is reported in the window's axes). Layout-only wrappers, components fully off screen (`--all` keeps them) and text an ancestor already shows are pruned with the rules of Argent's component tree, so a wrapper missing from the output proves nothing. Every testID React renders on screen stays, partly visible components included; React usually has more of them than `$S elements --all --names`, because iOS merges many views into one accessible element. `--grep REGEX` (case-insensitive) and `--id X` keep the matches plus their ancestors; a filter that matches nothing prints `(nothing matches the filter)` and exits 0. `--max-nodes N` collapses wrapper chains. Its `--timeout` default is 15 s.
 - **Metro lets ONE debugger hold an app.** Connecting here closes React Native DevTools or a running `read-rn-logs-cdp.py` on that app. A log tap in follow mode (the default) reconnects at once and closes this command in turn: it exits 3 with "another debugger took the page". Run the log tap with `--no-follow`, or stop it, while you use `rn-devtools.mjs`.
 
 ### 3. Assert

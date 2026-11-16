@@ -50,6 +50,7 @@ Scripts worth knowing in `simulator-verify`:
 |---|---|
 | `sim-ui.sh` | Simulator driver - launch, tap, type, swipe, dump the element tree, screenshot. WebDriverAgent over HTTP plus `xcrun simctl`. No MCP server needed. |
 | `read-rn-logs.sh` | Reads the app's JavaScript console output straight from the simulator's system log. |
+| `rn-devtools.mjs` | Asks the running app's JavaScript runtime over Metro's debugger connection: evaluate an expression, print the React component tree of the screen (component names, testIDs, text, tap points). Node built-ins only. |
 | `measure-element.py` | Given a screenshot and a region, reports how far off-center the content is, in pixels and points. A number instead of an opinion. |
 | `measure-boxes.py` | For anchored overlays (popover, menu, picker): measures the anchor rectangle against the frame that actually rendered. |
 
