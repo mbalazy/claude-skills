@@ -173,7 +173,9 @@ class CdpClient {
 
     await this.#ensureRuntime(timeoutMs);
     if (awaitPromise) {
-      const requestId = `await-${this.#nextId}`;
+      // Unique across processes: a Promise left pending by an earlier command
+      // that timed out still reports over the same binding when it settles.
+      const requestId = `await-${crypto.randomUUID()}`;
       const settled = this.#waitForBinding(AWAIT_BINDING, requestId, timeoutMs, 'The Promise did not settle');
       const isThenable = await this.send('Runtime.callFunctionOn', {
         objectId: remote.objectId, functionDeclaration: AWAIT_FUNCTION, returnByValue: true,

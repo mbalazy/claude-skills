@@ -61,6 +61,21 @@ test('a Promise that never settles times out with exit 3', () => withSession(asy
   await assert.rejects(c.evaluate('forever()', { timeoutMs: 200 }), (err) => err.kind === 'timeout' && err.exitCode === 3 && /did not settle within 200 ms/.test(err.message));
 }));
 
+test('each await uses a requestId no other command reuses', async () => {
+  const fake = await startFakeInspector({ handler: hermesLike });
+  const ids = [];
+  for (let i = 0; i < 2; i++) {
+    const c = await connect(`ws://localhost:${fake.port}/inspector/debug?device=fake&page=1`);
+    await c.evaluate('later(7)');
+    for (const s of fake.sessions) for (const m of s.received) if (m.method === 'Runtime.callFunctionOn' && m.params.arguments) ids.push(m.params.arguments[1].value);
+    await c.close();
+    while (fake.sessions.size) await new Promise((r) => setTimeout(r, 10));
+  }
+  await fake.close();
+  assert.equal(ids.length, 2);
+  assert.notEqual(ids[0], ids[1]);
+});
+
 test('awaitPromise false returns the Promise object as it is', () => withSession(async (c) => {
   assert.deepEqual(await c.evaluate('later(7)', { awaitPromise: false }), { _h: 0, _i: 0 });
 }));
