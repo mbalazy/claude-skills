@@ -119,13 +119,13 @@ test('read before any start, and stop with nothing installed', async () => {
   assert.deepEqual(await stopNetworkLog(app.client), { installed: false });
 });
 
-test('stop of an interceptor another tool installed clears the records and exits 1 saying the patches stay', async () => {
+test('stop of an interceptor another tool installed changes nothing and exits 1 saying the patches stay', async () => {
   const app = fakeApp();
   await startNetworkLog(app.client);
   app.run('delete globalThis.__rn_devtools_net_saved');
   await app.run('request("GET", "https://api.example.test/a")');
-  await assert.rejects(stopNetworkLog(app.client), (err) => err.exitCode === 1 && /another tool[\s\S]*1 records were cleared[\s\S]*until the JS reloads/.test(err.message));
-  assert.equal(app.run('globalThis.__argent_network_log.length'), 0);
+  await assert.rejects(stopNetworkLog(app.client), (err) => err.exitCode === 1 && /another tool[\s\S]*Nothing was changed[\s\S]*until the JS reloads/.test(err.message));
+  assert.equal(app.run('globalThis.__argent_network_log.length'), 1);
 });
 
 test('redaction replaces credentials in headers unless asked, case-insensitively', () => {

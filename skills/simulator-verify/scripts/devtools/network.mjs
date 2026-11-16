@@ -85,11 +85,8 @@ export const STOP_SCRIPT = `(function() {
   var cleared = Array.isArray(log) ? log.length : 0;
   var saved = g.__rn_devtools_net_saved;
   if (!Array.isArray(saved)) {
-    // Installed by another tool: nothing to put back. Empty the records only.
-    if (Array.isArray(log)) log.length = 0;
-    var byId = g.__argent_network_by_id;
-    if (byId && typeof byId === 'object') for (var k in byId) if (hasOwn.call(byId, k)) delete byId[k];
-    return JSON.stringify({ installed: true, restorable: false, cleared: cleared });
+    // Installed by another tool: nothing to put back, and its records are its own.
+    return JSON.stringify({ installed: true, restorable: false, cleared: 0 });
   }
   // A key wrapped again after start (another tool) is left alone, and so is everything else:
   // putting the original back would throw that tool's wrapper away with ours.
@@ -136,7 +133,7 @@ export async function startNetworkLog(client, { timeoutMs } = {}) {
 export async function stopNetworkLog(client, { timeoutMs } = {}) {
   const res = JSON.parse(await client.evaluate(STOP_SCRIPT, { timeoutMs }));
   if (res.installed && !res.restorable) {
-    throw new CdpError(`The network log was installed by another tool, so there is nothing to put back: the ${res.cleared} records were cleared, but fetch/XHR stay patched until the JS reloads.`, 'exception', 1);
+    throw new CdpError('The network log was installed by another tool, so there is nothing to put back. Nothing was changed; fetch/XHR stay patched until the JS reloads.', 'exception', 1);
   }
   if (res.installed && res.foreign?.length) {
     throw new CdpError(`Something wrapped ${res.foreign.join(', ')} again after \`net start\` (another debugging tool?); putting the original back would remove its wrapper too. Nothing was changed and the records were kept; reload the JS to remove the network log.`, 'exception', 1);
