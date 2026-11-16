@@ -158,7 +158,8 @@ async function iosRecord(args) {
   const I = await import('./ios-profile.mjs');
   const seconds = values.seconds === undefined ? I.DEFAULT_SECONDS : positiveNumber('seconds', values.seconds, { integer: true, max: I.MAX_SECONDS });
   const top = values.top === undefined ? 10 : positiveNumber('top', values.top, { integer: true });
-  const timeoutMs = values.timeout === undefined ? undefined : Math.round(positiveNumber('timeout', values.timeout) * 1000);
+  // At most a day: setTimeout fires at once above ~24.8 days, which would stop the recording at its start.
+  const timeoutMs = values.timeout === undefined ? undefined : Math.round(positiveNumber('timeout', values.timeout, { max: 86_400 }) * 1000);
   let outDir;
   let made = false;
   if (values.out) {

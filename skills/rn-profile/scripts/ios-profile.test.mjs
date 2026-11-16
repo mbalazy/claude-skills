@@ -252,7 +252,7 @@ test('cli ios: usage errors exit 64, a missing device 1, several apps 2', async 
     mkdirSync(sc.containers['com.example.other'], { recursive: true });
     writeFileSync(r.env.FAKE_XCRUN_SCENARIO, JSON.stringify(sc));
     for (const args of [['ios', 'record'], ['ios', 'record', '--udid', UDID, '--seconds', '0'], ['ios', 'record', '--udid', UDID, '--seconds', '601'],
-      ['ios', 'record', '--udid', UDID, '--port', '8081'], ['ios', 'report'], ['ios', 'nope'], ['ios', 'record', '--udid', UDID, 'extra']]) {
+      ['ios', 'record', '--udid', UDID, '--port', '8081'], ['ios', 'record', '--udid', UDID, '--timeout', '3000000'], ['ios', 'report'], ['ios', 'nope'], ['ios', 'record', '--udid', UDID, 'extra']]) {
       assert.equal((await cli(r, args)).code, 64, args.join(' '));
     }
     const missing = await cli(r, ['ios', 'record', '--udid', 'NOPE', '--out', join(r.out, 'x')]);
