@@ -78,6 +78,47 @@ test("the time limit never stops a recording another tool started after ours was
   assert.equal(app.run('globalThis.__rn_profile_session.endedBy'), 'stopped-elsewhere');
 });
 
+test('stop after another tool took over: nothing read, its recording and sampler left running, exit 1', async () => {
+  const app = fakeReactApp();
+  await startRecording(app.client);
+  await sleep(5);
+  app.run(`(function() {
+    var ri = __REACT_DEVTOOLS_GLOBAL_HOOK__.rendererInterfaces.get(1);
+    ri.stopProfiling(); ri.startProfiling(); globalThis.__ARGENT_PROFILER_OWNER__ = { tool: 'other-profiler', sessionId: 'x' };
+  })()`);
+  await assert.rejects(stopRecording(app.client), (err) => err.exitCode === 1 && /took over/.test(err.message));
+  assert.equal(app.run('__REACT_DEVTOOLS_GLOBAL_HOOK__.rendererInterfaces.get(1).__argent_isProfiling__'), true);
+  assert.equal(app.sampler.running, true);
+  assert.equal(app.run('globalThis.__rn_profile_session'), undefined);
+});
+
+test('stop after another tool only stopped ours: the data is returned, its length unknown', async () => {
+  const app = fakeReactApp();
+  await startRecording(app.client);
+  app.run('commit([[2, 1, 1]], 1); __REACT_DEVTOOLS_GLOBAL_HOOK__.rendererInterfaces.get(1).stopProfiling()');
+  const profile = await stopRecording(app.client);
+  assert.deepEqual([profile.endedBy, profile.durationMs, profile.react.dataForRoots[0].commitData.length], ['stopped-elsewhere', null, 1]);
+  assert.match(formatSummary(summarize(profile)), /^recorded until another tool stopped it/);
+});
+
+test('a stop that failed after taking the CPU profile can be retried and reads the same ending', async () => {
+  const app = fakeReactApp();
+  await startRecording(app.client);
+  app.run('commit([[2, 1, 1]], 1)');
+  const evaluate = app.client.evaluate;
+  app.client.evaluate = async (expr) => {
+    if (expr.includes('__argent_stopAndRead')) throw Object.assign(new Error('no answer'), { exitCode: 3 });
+    return evaluate(expr);
+  };
+  await assert.rejects(stopRecording(app.client), (err) => err.exitCode === 3);
+  app.client.evaluate = evaluate;
+  const profile = await stopRecording(app.client);
+  assert.equal(profile.endedBy, 'stop');
+  assert.equal(typeof profile.durationMs, 'number');
+  assert.equal(profile.cpuProfile, null, 'the first attempt took the CPU profile');
+  assert.equal(profile.react.dataForRoots[0].commitData.length, 1);
+});
+
 test('starting over an unread recording says it was dropped', async () => {
   const app = fakeReactApp();
   await startRecording(app.client, { maxSeconds: 0.02 });

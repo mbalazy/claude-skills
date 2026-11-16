@@ -57,6 +57,12 @@ export function sessionScript(session) {
   s.startedAtEpochMs = o && typeof o.startedAtEpochMs === 'number' ? o.startedAtEpochMs : Date.now();
   s.endedBy = null;
   s.endedAtEpochMs = null;
+  // Each renderer's start, as READ_STATE_SCRIPT lists them: a later start by another tool changes them.
+  s.rendererStarts = [];
+  var hk = globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  if (hk && hk.rendererInterfaces) hk.rendererInterfaces.forEach(function(ri) {
+    if (ri && typeof ri.__argent_startedAtEpochMs__ === 'number') s.rendererStarts.push(ri.__argent_startedAtEpochMs__);
+  });
   globalThis.__rn_profile_session = s;
   setTimeout(function() {
     var cur = globalThis.__rn_profile_session;
@@ -155,41 +161,59 @@ export async function recordingStatus(client, { timeoutMs } = {}) {
   };
 }
 
+/** Marks how our session ended, in the app, before anything is consumed: a retried stop reads the same. */
+const MARK_ENDED = `(function() {
+  var s = globalThis.__rn_profile_session;
+  if (s && !s.endedBy) {
+    var o = globalThis.__ARGENT_PROFILER_OWNER__;
+    var running = false, h = globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    if (h && h.rendererInterfaces) h.rendererInterfaces.forEach(function(ri) { if (ri && ri.__argent_isProfiling__ === true) running = true; });
+    if (running && o && o.sessionId === s.sessionId) { s.endedBy = 'stop'; s.endedAtEpochMs = Date.now(); }
+    else s.endedBy = 'stopped-elsewhere';
+  }
+  return JSON.stringify(s || null);
+})()`;
+
 /**
  * Ends the recording and returns the profile (the object written to --out).
- * Hermes's sampler is stopped in every case, also when there is nothing to read.
+ * Hermes's sampler is stopped when the recording is ours or there is none;
+ * a recording another tool took over is left to it.
  */
-export async function stopRecording(client, { now = Date.now, timeoutMs } = {}) {
+export async function stopRecording(client, { timeoutMs } = {}) {
   const S = await scripts();
-  const session = await evJson(client, READ_SESSION, timeoutMs);
-  let cpuProfile = null;
-  try {
-    cpuProfile = (await client.send('Profiler.stop', {}, { timeoutMs: COLLECT_TIMEOUT_MS }))?.profile ?? null;
-  } catch { /* no sampler running */ }
-  if (!session) {
+  const collectMs = Math.max(COLLECT_TIMEOUT_MS, timeoutMs ?? 0);
+  const found = await evJson(client, READ_SESSION, timeoutMs);
+  if (!found) {
+    await client.send('Profiler.stop', {}, { timeoutMs: collectMs }).catch(() => {});
     throw new ProfileError('No recording in the app: never started, or the JS reloaded since (a reload loses it). Run `react start` again.');
   }
   const state = await evJson(client, S.READ_STATE_SCRIPT, timeoutMs);
-  let endedBy = session.endedBy;
-  let endedAtEpochMs = session.endedAtEpochMs;
-  if (!endedBy) {
-    endedBy = state.isRunning ? 'stop' : 'stopped-elsewhere';
-    endedAtEpochMs = state.nowEpochMs ?? now();
+  const sameStarts = JSON.stringify(state.rendererStartedAtEpochMs ?? []) === JSON.stringify(found.rendererStarts ?? []);
+  const otherRunning = state.isRunning && state.owner?.sessionId !== found.sessionId;
+  if (!sameStarts || otherRunning) {
+    await ev(client, 'delete globalThis.__rn_profile_session', timeoutMs);
+    throw new ProfileError('Another tool took over React\'s profiler during this recording, so what React holds now is not this recording. Nothing was read; run `react start` again.');
   }
-  const read = await evJson(client, S.STOP_AND_READ_SCRIPT, COLLECT_TIMEOUT_MS);
+  const session = await evJson(client, MARK_ENDED, timeoutMs);
+  let cpuProfile = null;
+  try {
+    cpuProfile = (await client.send('Profiler.stop', {}, { timeoutMs: collectMs }))?.profile ?? null;
+  } catch { /* the sampler was already stopped (an earlier stop that failed later) */ }
+  const read = await evJson(client, S.STOP_AND_READ_SCRIPT, collectMs);
   const commits = (read.live?.dataForRoots ?? []).reduce((n, r) => n + (r.commitData?.length ?? 0), 0);
   let fiberMeta = {};
   if (commits > 0) {
     try { fiberMeta = await evJson(client, S.RESOLVE_FIBER_META_SCRIPT, 15_000); } catch { /* names stay, metadata is optional */ }
   }
   await ev(client, 'delete globalThis.__rn_profile_session', timeoutMs);
-  const durationMs = Math.max(0, endedAtEpochMs - session.startedAtEpochMs);
-  if (cpuProfile && endedBy === 'time-limit') cpuProfile = trimCpuProfile(cpuProfile, durationMs);
+  // Another tool stopped it at a moment nobody recorded: the length is unknown.
+  const durationMs = session.endedAtEpochMs ? Math.max(0, session.endedAtEpochMs - session.startedAtEpochMs) : null;
+  if (cpuProfile && session.endedBy === 'time-limit') cpuProfile = trimCpuProfile(cpuProfile, durationMs);
   return {
     format: FORMAT,
     startedAt: new Date(session.startedAtEpochMs).toISOString(),
     durationMs,
-    endedBy,
+    endedBy: session.endedBy,
     maxMs: session.maxMs,
     intervalUs: session.intervalUs,
     react: { dataForRoots: read.live?.dataForRoots ?? [], displayNameById: read.displayNameById ?? {} },
@@ -286,7 +310,7 @@ export function formatSummary(sum) {
   const ended = sum.endedBy === 'time-limit' ? `ended by its ${secs(sum.maxMs)} time limit`
     : sum.endedBy === 'stopped-elsewhere' ? 'stopped by another tool before this stop'
       : 'ended by stop';
-  const lines = [`recorded ${secs(sum.durationMs)} (${ended})`];
+  const lines = [sum.durationMs === null ? `recorded until another tool stopped it (when is unknown)` : `recorded ${secs(sum.durationMs)} (${ended})`];
   const slow = sum.slowestCommit ? `, slowest ${sum.slowestCommit.durationMs} ms (commit #${sum.slowestCommit.index} at +${secs(sum.slowestCommit.atMs)})` : '';
   lines.push(`React commits: ${sum.commits}, total commit time ${sum.totalCommitMs} ms${slow}`);
   if (sum.cpuSamples !== null) lines.push(`CPU samples: ${sum.cpuSamples}`);
