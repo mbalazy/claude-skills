@@ -135,6 +135,9 @@ test('maxNodes collapses the longest wrapper chain and says so', () => {
   assert.equal(t.collapsedCount, 3);
   assert.deepEqual(t.nodes.map((n) => [n.entry.name, n.via ?? 0]), [['Top', 0], ['W1', 4], ['Leaf', 0]]);
   assert.match(formatText(t), /\.\.\. via 4 wrappers[\s\S]*3 wrapper nodes collapsed\. Run without --max-nodes/);
+  const tight = pruneTree(raw, { maxNodes: 1 });
+  assert.equal(tight.collapsedCount, 3, 'only the outer chain hides nodes');
+  assert.equal(tight.nodes.length, 3);
 });
 
 test('the text form: name, text, testID and tap point in points, two spaces per level', () => {

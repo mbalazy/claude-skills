@@ -198,11 +198,18 @@ export function pruneTree(data, { onScreenOnly = true, maxNodes } = {}) {
   };
   if (maxNodes !== undefined && total > maxNodes) {
     const chains = [];
+    // Only maximal chains: a chain starting inside a longer one would be
+    // counted as collapsed although the longer one already hides it.
     const findChains = (id) => {
       if (isWrapper(id)) {
         let len = 0;
-        for (let cur = id; isWrapper(cur); cur = childrenOf.get(cur)[0]) len++;
-        if (len >= 2) chains.push({ start: id, len });
+        let cur = id;
+        for (; isWrapper(cur); cur = childrenOf.get(cur)[0]) len++;
+        if (len >= 2) {
+          chains.push({ start: id, len });
+          findChains(cur);
+          return;
+        }
       }
       for (const k of childrenOf.get(id) ?? []) findChains(k);
     };
