@@ -8,7 +8,7 @@
 //   rn-devtools.mjs targets [--port N] [--json]
 //   rn-devtools.mjs eval EXPRESSION [target options] [--timeout S] [--no-await]
 //   rn-devtools.mjs net start [target options]
-//   rn-devtools.mjs net read  [target options] [--grep REGEX] [--since 30s|5m|ISO]
+//   rn-devtools.mjs net read  [target options] [--grep REGEX] [--since 30s|5m|HH:MM|ISO]
 //                             [--limit N] [--full] [--headers] [--show-secrets] [--json]
 //   rn-devtools.mjs net stop  [target options]
 //
@@ -29,7 +29,7 @@
 // requests stay in the app between commands until stop or a JS reload. read
 // prints them oldest first: method, status, duration, URL, request and
 // response body (cut at 500 chars unless --full); --grep filters on the URL,
-// --since on the start time, --limit keeps the last N (default 50);
+// --since on the start time (an age, or a UTC time as read prints it), --limit keeps the last N (default 50);
 // --headers adds headers, with Authorization / Cookie / Set-Cookie values
 // redacted unless --show-secrets; --json prints the same as JSON. read exits 1
 // when the log is not running. stop puts the original fetch/XHR back and
@@ -135,7 +135,7 @@ async function cmdNet(args) {
   let since;
   if (values.since !== undefined) {
     since = net.parseSince(values.since);
-    if (since === null) throw new UsageError(`--since wants 30s, 5m, 2h or an ISO time, got ${values.since}`);
+    if (since === null) throw new UsageError(`--since wants 30s, 5m, 2h, a UTC time HH:MM[:SS] or an ISO time, got ${values.since}`);
   }
   let limit = 50;
   if (values.limit !== undefined) {

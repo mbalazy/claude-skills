@@ -208,10 +208,15 @@ export function truncate(text, { full = false, max = BODY_PREVIEW, length = text
   return `${text.slice(0, max)}...[${length - max} more chars; --full prints all]`;
 }
 
-/** "30s", "5m", "2h" ago, or an ISO date/time -> epoch seconds. */
+/**
+ * "30s", "5m", "2h" ago, a time of day "HH:MM[:SS[.mmm]]" (today), or an ISO
+ * date/time -> epoch seconds. Without a zone it is UTC, as read prints times.
+ */
 export function parseSince(value, now = Date.now()) {
   const m = /^(\d+(?:\.\d+)?)(s|m|h)$/.exec(value);
   if (m) return (now - Number(m[1]) * { s: 1e3, m: 6e4, h: 3.6e6 }[m[2]]) / 1000;
+  if (/^\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value)) value = `${new Date(now).toISOString().slice(0, 10)}T${value.padStart(value.indexOf(':') === 1 ? value.length + 1 : value.length, '0')}`;
+  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(value)) value += 'Z';
   const t = Date.parse(value);
   if (Number.isNaN(t)) return null;
   return t / 1000;

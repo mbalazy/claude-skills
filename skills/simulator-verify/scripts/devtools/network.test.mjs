@@ -143,12 +143,15 @@ test('bodies are cut with a visible marker unless full', () => {
   assert.equal(truncate('short'), 'short');
 });
 
-test('since takes 30s / 5m / 2h ago or an ISO time', () => {
+test('since takes 30s / 5m / 2h ago, a UTC time of day, or an ISO time', () => {
   const now = Date.UTC(2026, 0, 1, 12, 0, 0);
   assert.equal(parseSince('30s', now), now / 1000 - 30);
   assert.equal(parseSince('5m', now), now / 1000 - 300);
   assert.equal(parseSince('2h', now), now / 1000 - 7200);
   assert.equal(parseSince('2026-01-01T11:00:00Z', now), now / 1000 - 3600);
+  assert.equal(parseSince('2026-01-01T11:00:00', now), now / 1000 - 3600, 'no zone = UTC, as read prints');
+  assert.equal(parseSince('11:30', now), now / 1000 - 1800, 'a time of day is today, UTC');
+  assert.equal(parseSince('9:15:02.250', now), Date.UTC(2026, 0, 1, 9, 15, 2, 250) / 1000);
   assert.equal(parseSince('yesterday-ish', now), null);
 });
 
