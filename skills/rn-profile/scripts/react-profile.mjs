@@ -45,13 +45,16 @@ const evJson = async (client, expr, timeoutMs) => {
 const READ_SESSION = `JSON.stringify(globalThis.__rn_profile_session || null)`;
 
 /**
- * Installs our session record and the time-limit timer. When the timer fires
+ * Runs after React's profiler started (buildStartScript installed the owner):
+ * installs our session record and the time-limit timer. When the timer fires
  * for this session and it is still running, it stops every renderer (the
  * React data stays readable until the next start) and records why.
  */
 export function sessionScript(session) {
   return `(function() {
   var s = ${JSON.stringify(session)};
+  var o = globalThis.__ARGENT_PROFILER_OWNER__;
+  s.startedAtEpochMs = o && typeof o.startedAtEpochMs === 'number' ? o.startedAtEpochMs : Date.now();
   s.endedBy = null;
   s.endedAtEpochMs = null;
   globalThis.__rn_profile_session = s;
@@ -103,15 +106,36 @@ export async function startRecording(client, { maxSeconds = DEFAULT_MAX_SECONDS,
   await client.send('Profiler.enable', {}, { timeoutMs }).catch(() => {});
   await client.send('Profiler.start', { interval: intervalUs }, { timeoutMs });
   const sessionId = randomUUID();
-  const started = await evJson(client, S.buildStartScript(JSON.stringify({ tool: 'rn-profile', sessionId })), timeoutMs);
+  // React's start, our session record and its timer in ONE evaluate: a recording never runs without its limit.
+  const startAndSession = `(function() {
+    var r = JSON.parse(${S.buildStartScript(JSON.stringify({ tool: 'rn-profile', sessionId }))});
+    if (r.ok) r.session = JSON.parse(${sessionScript({ sessionId, tool: 'rn-profile', maxMs: Math.round(maxSeconds * 1000), intervalUs })});
+    return JSON.stringify(r);
+  })()`;
+  let started;
+  try {
+    started = await evJson(client, startAndSession, timeoutMs);
+  } catch (err) {
+    await rollBack(client, S, sessionId, timeoutMs);
+    throw err;
+  }
   if (!started.ok) {
     await client.send('Profiler.stop', {}, { timeoutMs }).catch(() => {});
     throw new ProfileError(`React's profiler did not start (${started.reason}${started.message ? `: ${started.message}` : ''}).`);
   }
-  const session = await evJson(client, sessionScript({
-    sessionId, tool: 'rn-profile', startedAtEpochMs: started.startedAtEpochMs, maxMs: Math.round(maxSeconds * 1000), intervalUs,
-  }), timeoutMs);
+  const session = started.session;
   return { started: true, session, discarded: previous ? previous.endedBy ?? 'running' : null };
+}
+
+/** After a start that failed midway: stop what may have started, best effort. */
+async function rollBack(client, S, sessionId, timeoutMs) {
+  await ev(client, `(function() {
+    var o = globalThis.__ARGENT_PROFILER_OWNER__;
+    if (o && o.sessionId === ${JSON.stringify(sessionId)}) (${S.STOP_FOR_TAKEOVER_SCRIPT});
+    var s = globalThis.__rn_profile_session;
+    if (s && s.sessionId === ${JSON.stringify(sessionId)}) delete globalThis.__rn_profile_session;
+  })()`, timeoutMs).catch(() => {});
+  await client.send('Profiler.stop', {}, { timeoutMs }).catch(() => {});
 }
 
 /** { recording, session, nowEpochMs, otherOwner }. */

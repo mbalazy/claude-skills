@@ -86,6 +86,24 @@ test('another profiler holds React: start refuses, --takeover ends it and starts
   assert.equal((await recordingStatus(app.client)).recording, true);
 });
 
+test('a start that fails after the sampler started rolls back: React stopped, sampler stopped, no session', async () => {
+  const app = fakeReactApp();
+  const evaluate = app.client.evaluate;
+  app.client.evaluate = async (expr) => {
+    if (expr.includes('__argent_doStart') && expr.includes('__rn_profile_session = s')) {
+      await evaluate(expr); // the app did it, the answer never arrived
+      throw Object.assign(new Error('no answer'), { exitCode: 3 });
+    }
+    return evaluate(expr);
+  };
+  await assert.rejects(startRecording(app.client), (err) => err.exitCode === 3);
+  app.client.evaluate = evaluate;
+  assert.equal(app.sampler.running, false);
+  assert.equal(app.run('globalThis.__rn_profile_session'), undefined);
+  assert.equal(app.run('__REACT_DEVTOOLS_GLOBAL_HOOK__.rendererInterfaces.get(1).__argent_isProfiling__'), false);
+  assert.equal((await startRecording(app.client)).started, true, 'a new start works without --takeover');
+});
+
 test('an app without the DevTools hook: start exits 1 naming a development build', async () => {
   const app = fakeReactApp({ hook: false });
   await assert.rejects(startRecording(app.client), (err) => err.exitCode === 1 && /development build/.test(err.message));
