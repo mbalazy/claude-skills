@@ -56,11 +56,28 @@ async function withEnv(r, fn) {
   }
 }
 
-test('threadLabel drops the (0x..) (App, pid: N) suffix xctrace writes', async () => {
-  const { threadLabel } = await import('./ios-profile.mjs');
-  assert.equal(threadLabel('com.example.js (0xbee0deb) (Sample App, pid: 4242)'), 'com.example.js');
-  assert.equal(threadLabel('Sample App (0xbee0d76)'), 'Sample App');
-  assert.equal(threadLabel('Main Thread'), 'Main Thread');
+test('xctraceThread rewrites Name (0x..) to the Name 0x.. form Argent groups by', async () => {
+  const { xctraceThread } = await import('./ios-profile.mjs');
+  assert.equal(xctraceThread('com.example.js (0xbee0deb) (Sample App, pid: 4242)'), 'com.example.js 0xbee0deb (Sample App, pid: 4242)');
+  assert.equal(xctraceThread('Main Thread (0x1) (Sample App, pid: 4242)'), 'Main Thread 0x1 (Sample App, pid: 4242)');
+});
+
+test('a function spread thin over several unnamed threads is still one hotspot', async () => {
+  const r = rig();
+  try {
+    // 96 samples of main() on the main thread, 4 x 2 samples of work() on 4 unnamed threads (8% in total, 2% each).
+    const rows = [];
+    for (let i = 0; i < 104; i++) {
+      const tid = i < 96 ? 1 : 10 + ((i - 96) % 4);
+      const fn = i < 96 ? 'mainWork()' : 'workerDecode()';
+      const name = i < 96 ? 'Main Thread (0x1) (Sample App, pid: 4242)' : `Sample App (0x10${tid}) (Sample App, pid: 4242)`;
+      rows.push(`<row><sample-time id="t${i}" fmt="x">${1_000_000 + i * 10_000_000}</sample-time><thread id="th${i}" fmt="${name}"></thread><weight id="w${i}" fmt="1 ms">1000000</weight><tagged-backtrace id="b${i}"><frame id="f${i}" name="${fn}" addr="0x1"><binary id="bin${i}" name="SampleApp" path="/Users/dev/SampleApp.app/SampleApp"/></frame></tagged-backtrace></row>`);
+    }
+    writeFileSync(join(r.fx, 'spread.xml'), `<?xml version="1.0"?>\n<trace-query-result><node><schema name="time-profile"></schema>${rows.join('\n')}</node></trace-query-result>`);
+    const sum = summarize(await analyze({ cpu: join(r.fx, 'spread.xml'), hangs: null, leaks: null }), { leaksRecorded: false });
+    assert.deepEqual(sum.cpu.hotspots.map((h) => [h.function, h.samples, h.thread]), [['mainWork()', 96, 'Main Thread'], ['workerDecode()', 8, 'Sample App']]);
+    assert.deepEqual(sum.cpu.threads.map((t) => [t.thread, t.samples]), [['Main Thread', 96], ['Sample App', 8]]);
+  } finally { r.done(); }
 });
 
 test('parseLaunchctl keeps running apps only', () => {

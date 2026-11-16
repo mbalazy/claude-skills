@@ -5,8 +5,9 @@
 //
 // Export and analysis are Software Mansion's Argent (Apache 2.0), vendored
 // unmodified under skills/simulator-verify/scripts/devtools/vendor/argent/:
-// exportIosTraceData (ios-profiler/export.ts) and runIosProfilerPipeline
-// (ios-profiler/pipeline/). Finding the app and the record / stop sequence
+// exportIosTraceData (ios-profiler/export.ts) and the stages of
+// runIosProfilerPipeline (ios-profiler/pipeline/; `analyze` below is that
+// function ported, with one step added). Finding the app and the record / stop sequence
 // follow Argent's tools/profiler/native-profiler/platforms/ios.ts, ported:
 //   - the simulator is always named by udid (never "booted");
 //   - xctrace attaches by the app's display name: on Xcode 27.2 attaching by
@@ -174,18 +175,30 @@ export async function exportTrace(tracePath) {
 
 /**
  * Argent's normalizeThreadName expects `Name 0x1e47 (App, pid: N)`; xctrace on
- * Xcode 27 writes `Name (0x1e47) (App, pid: N)`, which it leaves whole. Drop
- * that suffix too, so the threads of one name add up.
+ * Xcode 27 writes `Name (0x1e47) (App, pid: N)`, which it leaves whole, so
+ * every unnamed thread would be a thread of its own - for the per-thread totals
+ * and for the hotspots, which are grouped per (function, thread) with a 3%
+ * floor each. Rewritten to the form it expects before anything groups by it.
  */
-export const threadLabel = (normalized) => normalized.replace(/\s+\(0x[0-9a-f]+\)(\s+\(.*, pid: \d+\))?$/i, '');
+export const xctraceThread = (threadFmt) => threadFmt.replace(/\s+\((0x[0-9a-f]+)\)/i, ' $1');
 
+/** Argent's runIosProfilerPipeline (ios-profiler/pipeline/index.ts), with the thread names rewritten after parsing. */
 export async function analyze(files) {
-  const { runIosProfilerPipeline } = await import(vendorPath(`${BASE}ios-profiler/pipeline/index.ts`));
+  const P = `${BASE}ios-profiler/pipeline/`;
+  const { parseCpuFile, parseHangsFile, parseLeaksFile } = await import(vendorPath(`${P}xml-parser.ts`));
+  const { correlateHangsWithCpu, aggregateLeaks } = await import(vendorPath(`${P}01-correlate.ts`));
+  const { aggregateCpuHotspots } = await import(vendorPath(`${P}02-aggregate.ts`));
   const { normalizeThreadName } = await import(vendorPath(`${BASE}profiler-shared/thread.ts`));
-  const result = await runIosProfilerPipeline(files);
+  const [cpuSamples, rawHangs, rawLeaks] = await Promise.all([
+    parseCpuFile(files.cpu ?? null, null), parseHangsFile(files.hangs ?? null), parseLeaksFile(files.leaks ?? null),
+  ]);
+  for (const s of cpuSamples) s.threadFmt = xctraceThread(s.threadFmt);
+  for (const h of rawHangs) h.threadFmt = xctraceThread(h.threadFmt);
+  const { uiHangs, hangSampleTimestamps } = correlateHangsWithCpu(rawHangs, cpuSamples);
+  const result = { cpuSamples, uiHangs, cpuHotspots: aggregateCpuHotspots(cpuSamples, hangSampleTimestamps), memoryLeaks: aggregateLeaks(rawLeaks) };
   const threads = new Map();
   for (const s of result.cpuSamples) {
-    const t = threadLabel(normalizeThreadName(s.threadFmt));
+    const t = normalizeThreadName(s.threadFmt);
     const e = threads.get(t) ?? { thread: t, samples: 0, ms: 0 };
     e.samples++;
     e.ms += s.weightNs / 1e6;
@@ -210,7 +223,7 @@ export function summarize(result, { meta = {}, leaksRecorded, exportErrors = {},
       threads: result.threads.slice(0, 5).map((t) => ({ ...t, ms: round(t.ms) })),
       hotspots: result.cpuHotspots.slice(0, top).map((h) => ({
         function: h.dominantFunction, ms: round(h.totalWeightMs), percent: h.weightPercentage, samples: h.sampleCount,
-        thread: threadLabel(h.thread), duringHang: h.duringHang, callChain: h.topCallChain.slice(0, 4),
+        thread: h.thread, duringHang: h.duringHang, callChain: h.topCallChain.slice(0, 4),
       })),
       hotspotsTotal: result.cpuHotspots.length,
     },
