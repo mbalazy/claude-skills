@@ -21,7 +21,8 @@
 // Exit codes:
 //   0  done
 //   1  nothing to talk to (Metro not on the port, no matching target, socket
-//      refused) or the expression threw (its text on stderr)
+//      refused), the expression threw or its Promise rejected (the text on
+//      stderr), or the result is a value JSON cannot carry (NaN, a BigInt, a cycle)
 //   2  several targets match - refusing to guess, the candidates are listed
 //   3  no answer in time, or the page went away mid-command - including
 //      another debugger taking it (Metro allows one per app: connecting here

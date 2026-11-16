@@ -185,6 +185,8 @@ class CdpClient {
     const res = await this.send('Runtime.evaluate', { expression, returnByValue: false, awaitPromise: false }, { timeoutMs });
     if (res.exceptionDetails) throw new CdpError(exceptionText(res.exceptionDetails), 'exception', 1);
     const remote = res.result ?? {};
+    // NaN, Infinity, -0 and BigInt arrive as unserializableValue, with no value.
+    if ('unserializableValue' in remote) throw unserializable(`The result is ${remote.unserializableValue}, which JSON cannot carry`);
     if (!remote.objectId) return remote.value;
 
     await this.#ensureRuntime(timeoutMs);

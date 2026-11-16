@@ -23,6 +23,7 @@ const handler = fakeRuntime({
   'hang': { hang: true },
   'later()': { resolve: { ok: true } },
   'forever()': { pending: true },
+  '0/0': { unserializable: 'NaN' },
 });
 
 async function withMetro(targets, fn) {
@@ -47,6 +48,13 @@ test('eval awaits a Promise; --no-await prints the Promise object; a never-settl
   const r = await run(['eval', 'forever()', '--port', port, '--timeout', '0.3']);
   assert.equal(r.code, 3);
   assert.match(r.stderr, /did not settle within 300 ms/);
+}));
+
+test('a result JSON cannot carry exits 1 naming it', () => withMetro(oneApp, async (port) => {
+  const r = await run(['eval', '0/0', '--port', port]);
+  assert.equal(r.code, 1);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /The result is NaN, which JSON cannot carry/);
 }));
 
 test('the port comes from METRO_PORT when --port is absent', () => withMetro(oneApp, async (port) => {

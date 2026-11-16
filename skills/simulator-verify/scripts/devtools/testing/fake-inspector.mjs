@@ -112,6 +112,7 @@ export async function startFakeInspector({ targets = () => [], handler = () => (
  * expressions. specs: { [expression]: spec }, spec one of
  *   { value }                 a primitive or a JSON object (objects get an objectId)
  *   { throws: 'description' } a JS exception
+ *   { unserializable: 'NaN' } a primitive CDP sends as unserializableValue (NaN, -0, 10n)
  *   { resolve: v, delay }     a Promise (as RN's polyfill: an Object, no CDP await)
  *   { reject: 'Error: x' }    a rejected Promise
  *   { resolveUnserializable: 'msg' } a Promise whose value JSON cannot carry
@@ -131,6 +132,7 @@ export function fakeRuntime(specs) {
       if (!spec) return { result: { type: 'undefined' } };
       if (spec.hang) return undefined;
       if (spec.close) { setTimeout(() => session.close(...spec.close), 10); return undefined; }
+      if (spec.unserializable) return { result: { type: spec.unserializable.endsWith('n') ? 'bigint' : 'number', unserializableValue: spec.unserializable, description: spec.unserializable } };
       if (spec.throws) return { result: { type: 'object' }, exceptionDetails: { text: 'Uncaught', exception: { description: spec.throws } } };
       if ('value' in spec && (spec.value === null || typeof spec.value !== 'object')) {
         return { result: spec.value === undefined ? { type: 'undefined' } : { type: typeof spec.value, value: spec.value } };

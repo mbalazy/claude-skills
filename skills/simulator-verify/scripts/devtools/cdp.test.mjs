@@ -15,6 +15,8 @@ const runtime = fakeRuntime({
   'later(7)': { resolve: { n: 7 }, delay: 30 },
   'failLater()': { reject: 'Error: nope\n    at global (:1:1)' },
   'forever()': { pending: true },
+  '0/0': { unserializable: 'NaN' },
+  '10n': { unserializable: '10n' },
   'bigLater()': { resolveUnserializable: 'Do not know how to serialize a BigInt' },
 });
 function hermesLike(msg, session) {
@@ -79,6 +81,11 @@ test('each await uses a requestId no other command reuses', async () => {
 
 test('a Promise resolving to a value JSON cannot carry rejects at once with kind "unserializable"', () => withSession(async (c) => {
   await assert.rejects(c.evaluate('bigLater()', { timeoutMs: 2000 }), (err) => err.kind === 'unserializable' && err.exitCode === 1 && /JSON cannot carry \(Do not know how to serialize a BigInt\)/.test(err.message));
+}));
+
+test('NaN or a BigInt result rejects with kind "unserializable" naming the value, never undefined', () => withSession(async (c) => {
+  await assert.rejects(c.evaluate('0/0'), (err) => err.kind === 'unserializable' && err.exitCode === 1 && /The result is NaN/.test(err.message));
+  await assert.rejects(c.evaluate('10n'), (err) => err.kind === 'unserializable' && /The result is 10n/.test(err.message));
 }));
 
 test('the in-app await function reports every outcome over the binding, unserializable ones included', async () => {
