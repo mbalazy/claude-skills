@@ -164,7 +164,9 @@ export async function readNetworkLog(client, { metroPort, grep, since, limit = 5
     const scripts = shown.map((e) => (full ? makeNetworkDetailReadScript(e.requestId) : cutInApp(makeNetworkDetailReadScript(e.requestId))));
     details = (await client.evaluate(`[${scripts.join(',\n')}]`, { timeoutMs })).map((s) => JSON.parse(s));
   }
-  return { total: list.total, matched: kept.length, entries: details };
+  // An entry the interceptor evicted between the two reads comes back as { error }: it is gone.
+  const gone = details.filter((d) => d.error).length;
+  return { total: list.total - gone, matched: kept.length - gone, entries: details.filter((d) => !d.error) };
 }
 
 // ---- output -------------------------------------------------------------

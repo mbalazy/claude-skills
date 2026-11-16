@@ -98,6 +98,21 @@ test('stop leaves everything as it is when another tool wrapped a patched functi
   assert.equal((await readNetworkLog(app.client, { metroPort: 8081 })).total, 1);
 });
 
+test('an entry evicted between the list and the details is left out, not printed empty', async () => {
+  const app = fakeApp();
+  await startNetworkLog(app.client);
+  await app.run('request("GET", "https://api.example.test/a")');
+  await app.run('request("GET", "https://api.example.test/b")');
+  let calls = 0;
+  const client = { evaluate: async (expr) => {
+    if (++calls === 2) app.run('delete globalThis.__argent_network_by_id["rn-net-1"]');
+    return app.client.evaluate(expr);
+  } };
+  const log = await readNetworkLog(client, { metroPort: 8081 });
+  assert.deepEqual(log.entries.map((e) => e.request.url), ['https://api.example.test/b']);
+  assert.deepEqual([log.total, log.matched], [1, 1]);
+});
+
 test('read before any start, and stop with nothing installed', async () => {
   const app = fakeApp();
   await assert.rejects(readNetworkLog(app.client, { metroPort: 8081 }), (err) => err instanceof NotInstalledError && err.exitCode === 1 && /net start/.test(err.message));
