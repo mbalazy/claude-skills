@@ -1,6 +1,6 @@
 ---
 name: rn-profile
-description: Profile a running React Native app (development build, iOS simulator) from the command line - record which React components re-render and how long each commit takes, with Hermes's CPU sampler alongside, and print the commits and the heaviest components. Use when a question is about performance - "what re-renders when I tap X", "why is this screen slow", "which component costs the most", "does this change cut renders" - instead of answering it by reading code. Triggers - "/rn-profile", "sprofiluj", "profiler react", "co się re-renderuje", "dlaczego ten ekran muli", "zmierz rendery". Talks to the app over Metro's CDP inspector through simulator-verify's devtools code; Node built-ins only.
+description: Profile a running React Native app (development build, iOS simulator) from the command line - record which React components re-render and how long each commit takes, with Hermes's CPU sampler alongside, and print the commits and the heaviest components; then, from the saved file without the app, renders per component, the slowest commits and why a component rendered. Use when a question is about performance - "what re-renders when I tap X", "why is this screen slow", "which component costs the most", "does this change cut renders" - instead of answering it by reading code. Triggers - "/rn-profile", "sprofiluj", "profiler react", "co się re-renderuje", "dlaczego ten ekran muli", "zmierz rendery". Talks to the app over Metro's CDP inspector through simulator-verify's devtools code; Node built-ins only.
 ---
 
 # rn-profile
@@ -27,7 +27,21 @@ node $RP react stop --port 8090 --out /tmp/p.json # end, write the profile, prin
   - CPU sample count;
   - the top components (`--top N`, default 10) by render count and by self time (time spent in the component itself, children excluded);
   - unattributed renders: fibers whose name could not be read because the component unmounted before stop (modals, transient views) - their time is missing from the per-component lists, the commit durations stay right.
-  `--json` prints the same summary as JSON. The file holds the raw data (`format: rn-profile-react/1`: React's commit data per root, fiber id -> name, per-component hook metadata, the Hermes CPU profile) for a closer look.
+  `--json` prints the same summary as JSON. The file holds the raw data (`format: rn-profile-react/1`: React's commit data per root, fiber id -> name, per-component hook metadata, the Hermes CPU profile) for the analysis commands below.
+
+**Analysing a saved profile** - no app, no Metro; they read the file `stop` wrote:
+
+```
+node $RP react renders /tmp/p.json [--sort time|renders] [--grep REGEX] [--top 20]
+node $RP react commits /tmp/p.json [--top 10] [--min-ms 16]
+node $RP react why /tmp/p.json <Component> [--top 20]
+```
+
+- **renders**: per component, its renders, how many of them were first mounts, total and max self time, and the dominant reason it re-rendered (`props`, `state`, `hooks`, `context`, `parent`) with the props / hooks that changed most. Sorted by total self time, or by render count with `--sort renders`; `--grep` keeps the names matching a case-insensitive regex.
+- **commits**: the slowest commits, longest first: when (`+N s`), how long, whether it was mostly first mounts, the root cause of a cascade (the nearest ancestor with a real change), the components that rendered in it by self time (`xN` = N instances, e.g. list rows) with their reason, the fibers that lost their names, and the JS functions busiest in that window from the CPU samples. `--min-ms` drops commits below a duration (16 ms = one frame at 60 Hz).
+- **why**: every render of one component, by its exact display name: the reason, the changed props or hooks (index and type), or for a `parent` render the ancestor whose change set it off and the chain to it. A name that never rendered exits 1 and lists the names that contain it.
+- `--json` on each prints the full result. A missing file, a file cut short or one that is not a `react stop` profile exits 1 saying which.
+- Reasons come from React DevTools' change data: `hooks` vs `state` needs the hook types of a development build; a context provider has no change data: `-` in `renders`, `unknown` in `why`. A component with only first mounts also shows `-`. A re-render with no change of its own is `parent`.
 
 **Reading the numbers**
 
