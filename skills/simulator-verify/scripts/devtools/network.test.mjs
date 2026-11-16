@@ -113,6 +113,27 @@ test('an entry evicted between the list and the details is left out, not printed
   assert.deepEqual([log.total, log.matched], [1, 1]);
 });
 
+test("stop puts back Expo fetch's request and response methods and React Native's network module too", async () => {
+  const ctx = makeAppContext({ native: true });
+  const run = (code) => vm.runInContext(code, ctx);
+  const client = { evaluate: async (expr) => { const v = run(expr); return v !== null && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v; } };
+  const PLACES = `(function() {
+    var f = globalThis.expo.modules.ExpoFetchModule, req = f.NativeRequest, res = f.NativeResponse.prototype, n = globalThis.networkingModule;
+    return [req, req.prototype.start, req.prototype.cancel, res.arrayBuffer, res.text, res.startStreaming, n.sendRequest, n.abortRequest,
+      XMLHttpRequest.prototype.open, XMLHttpRequest.prototype.send];
+  })()`;
+  const before = run(PLACES);
+  const started = await startNetworkLog(client);
+  assert.deepEqual(started, { installed: true, saved: 13 });
+  const during = run(PLACES);
+  const names = ['NativeRequest', 'start', 'cancel', 'arrayBuffer', 'text', 'startStreaming', 'sendRequest', 'abortRequest', 'open', 'send'];
+  assert.deepEqual(names.filter((_, i) => during[i] === before[i]), [], 'the interceptor patches every one of them');
+  const stopped = await stopNetworkLog(client);
+  assert.deepEqual([stopped.restored, stopped.failed], [13, []]);
+  const after = run(PLACES);
+  assert.deepEqual(names.filter((_, i) => after[i] !== before[i]), [], 'every one is the original again');
+});
+
 test('read before any start, and stop with nothing installed', async () => {
   const app = fakeApp();
   await assert.rejects(readNetworkLog(app.client, { metroPort: 8081 }), (err) => err instanceof NotInstalledError && err.exitCode === 1 && /net start/.test(err.message));

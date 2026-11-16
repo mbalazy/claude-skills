@@ -37,8 +37,25 @@ globalThis.request = (method, url, body, headers) => new Promise((resolve) => {
 });
 `;
 
-export function makeAppContext() {
-  const ctx = vm.createContext({ setTimeout, clearTimeout, console });
+// Expo's native fetch module and React Native's network module, as the
+// interceptor finds them (globalThis.expo.modules, Metro's __r.getModules()).
+// They only have to exist: tests check what is patched and put back.
+const NATIVE = `
+globalThis.expo = { modules: { ExpoFetchModule: {
+  NativeRequest: class NativeRequest { constructor(response) { this.response = response; } start() { return Promise.resolve(); } cancel() {} },
+  NativeResponse: class NativeResponse { arrayBuffer() {} text() {} startStreaming() {} },
+} } };
+const networking = { sendRequest() {}, abortRequest() {}, addListener() { return { remove() {} }; } };
+const modules = new Map([[7, { verboseName: 'node_modules/react-native/Libraries/Network/RCTNetworking.ios.js',
+  isInitialized: true, publicModule: { exports: { default: networking } } }]]);
+globalThis.__r = Object.assign(() => undefined, { getModules: () => modules });
+globalThis.networkingModule = networking;
+`;
+
+/** native: also Expo's fetch module and React Native's network module. */
+export function makeAppContext({ native = false } = {}) {
+  const ctx = vm.createContext({ setTimeout, clearTimeout, console, TextDecoder });
   vm.runInContext(APP, ctx);
+  if (native) vm.runInContext(NATIVE, ctx);
   return ctx;
 }
