@@ -19,9 +19,9 @@ node $RP react status --port 8090                 # recording for N s (limit M s
 node $RP react stop --port 8090 --out /tmp/p.json # end, write the profile, print the summary
 ```
 
-- **start** turns on React's profiler on every renderer and Hermes's CPU sampler (`--interval-us`, default 1000). The recording **ends by itself after `--max` seconds** (default 60, at most 600): a timer in the app stops the React side, and `stop` still returns what was recorded up to then, with the CPU samples cut at the limit. A second `start` while recording changes nothing. If React is already being profiled by another tool (React DevTools' Profiler tab, Argent), start exits 1 naming it; `--takeover` ends that recording and starts this one. Starting over a recording nobody stopped drops it, and says so.
+- **start** turns on React's profiler on every renderer and Hermes's CPU sampler (`--interval-us`, default 1000). The recording **ends by itself after `--max` seconds** (default 60, at most 600): a timer in the app stops the React side, and `stop` still returns what was recorded up to then, with the CPU samples cut at the limit. The limit bounds React only: Hermes's CPU sampler cannot be stopped from inside the app, so it keeps sampling until `stop` - stop soon after the limit, or the CPU profile `stop` collects (it waits up to 60 s, or `--timeout` when longer) only grows. A second `start` while recording changes nothing. If React is already being profiled by another tool (React DevTools' Profiler tab, Argent), start exits 1 naming it; `--takeover` ends that recording and starts this one. Starting over a recording nobody stopped drops it, and says so.
 - **status**: `recording for N s`, `ended by its time limit and waits for react stop`, `being profiled by <other tool>`, or `not recording` (`--json` for the raw state).
-- **stop** needs `--out FILE` and checks it can write there BEFORE it ends the recording (the app hands the data over once). It prints:
+- **stop** needs `--out FILE` and checks it can write there BEFORE it ends the recording (the app hands the data over once); a stop that fails leaves an existing file as it was. If another tool took over React's profiler during the recording, stop reads nothing, leaves that tool's recording alone and exits 1; if another tool only stopped it, stop returns the data with its length unknown. It prints:
   - how long it recorded and how it ended (stop, or the time limit);
   - React commits: count, total commit time, the slowest commit and when it happened (`+N s` from the start);
   - CPU sample count;
@@ -38,7 +38,7 @@ node $RP react stop --port 8090 --out /tmp/p.json # end, write the profile, prin
 **Limits**
 
 - A JS reload loses the recording: `stop` then exits 1 "No recording in the app".
-- Hermes's sampler is process-wide. `start` and `stop` always stop it, but a recording that is never stopped leaves it running until the next `start`/`stop` or an app relaunch.
+- Hermes's sampler is process-wide and survives a JS reload. `start` stops a leftover one before it starts its own, and `stop` stops it; a recording that is never stopped leaves it running until the next `start`/`stop` or an app relaunch.
 - Connecting takes the app from React Native DevTools and from a following `read-rn-logs-cdp.py` (Metro lets one debugger hold an app; see simulator-verify's section 2b). Run the log tap with `--no-follow` while profiling.
 
 ## Target options and exit codes

@@ -13,7 +13,8 @@
 // react start begins a React profiler recording (every commit, with per-
 // component render times) plus Hermes's CPU sampler (--interval-us, default
 // 1000). It ends by itself after --max seconds (default 60, at most 600);
-// stop still returns what was recorded up to then. A second start while
+// stop still returns what was recorded up to then (the CPU sampler runs on
+// until stop: the app cannot stop it). A second start while
 // recording changes nothing; a recording another tool holds is refused unless
 // --takeover. react status says whether a recording runs and for how long.
 // react stop ends the recording, writes the whole profile as JSON to --out
