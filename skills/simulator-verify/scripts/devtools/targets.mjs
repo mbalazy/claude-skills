@@ -104,12 +104,14 @@ export function selectTarget(targets, opts = {}) {
     throw new TargetError(`No inspector target matches ${searched}. All targets (page | app | device | runtime):\n${listing()}`, 1);
   }
 
+  // Main runtimes first, then the device count - the order read-rn-logs-cdp.py
+  // uses, so a device whose only target is not an app runtime does not count.
+  candidates = mainRuntimes(candidates);
   const devices = [...new Set(candidates.map((t) => t.deviceName ?? '?'))].sort();
   if (devices.length > 1) {
     throw new TargetError(`Several devices on this Metro - refusing to guess. Pass --device:\n${devices.map((d) => `  ${d}`).join('\n')}`, 2);
   }
 
-  candidates = mainRuntimes(candidates);
   if (candidates.length > 1) {
     throw new TargetError(
       `Several runtimes match on ${devices[0]} - refusing to guess. Pass --page:\n${candidates.map((t) => `  ${describeTarget(t)}`).join('\n')}`,

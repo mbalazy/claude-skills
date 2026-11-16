@@ -86,3 +86,8 @@ test('non-node entries (e.g. a page for another frontend) are ignored', () => {
   const other = { ...main({ page: 9 }), type: 'page' };
   assert.equal(pageId(selectTarget([other, main(), ui()])), '1');
 });
+
+test('a device whose only target is not an app runtime does not make the choice ambiguous', () => {
+  const picked = selectTarget([main({ device: 'iPhone A' }), ui({ device: 'iPhone B', page: 5 })]);
+  assert.equal(picked.deviceName, 'iPhone A');
+});

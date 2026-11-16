@@ -76,7 +76,7 @@ test('no answer within --timeout exits 3 naming the timeout', () => withMetro(on
 }));
 
 test('two devices exit 2 listing them; --device then picks one', () => withMetro(
-  (port) => [fakeTarget(port, { page: 1, device: 'iPhone A' }), fakeTarget(port, { page: 3, device: 'iPhone B' })],
+  (port) => [fakeTarget(port, { page: 1, device: 'iPhone A' }), fakeTarget(port, { page: 3, device: 'iPhone B', fusebox: true })],
   async (port) => {
     const r = await run(['eval', '1+1', '--port', port]);
     assert.equal(r.code, 2);
