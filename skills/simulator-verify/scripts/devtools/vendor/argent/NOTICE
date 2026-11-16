@@ -1,0 +1,23 @@
+This directory contains files copied from Argent by Software Mansion S.A.
+
+  Source:   https://github.com/software-mansion/argent
+  Commit:   8cd8fe1e3f344be04f3e571cb99656af2d9fe1e1
+  License:  Apache License 2.0 (LICENSE.txt in this directory, copied unmodified)
+  Copyright 2026 Software Mansion S.A.
+
+Each copied file sits at its upstream path relative to the repository root
+(e.g. packages/tool-server/src/...), byte-identical to that commit. Nothing
+here is changed: where our code needs different behaviour, it lives outside
+this directory (in ../../, the devtools glue) and the copied file is used as
+it is, loaded through ../../vendor-loader.mjs.
+
+Only the open-source JavaScript the tools inject into the app or use to read
+its data is copied. Argent's proprietary parts (simulator-server, ax-service,
+the native-devtools libraries and anything that loads them) are not copied
+and not called.
+
+`vendor-drift.mjs --upstream <argent checkout at the commit above>` checks
+that every file listed below is still byte-identical to upstream and that no
+file here is unlisted.
+
+Copied files (path | change):
