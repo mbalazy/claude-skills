@@ -33,6 +33,7 @@ if (args[0] === 'simctl') {
 if (args[0] === 'xctrace' && args[1] === 'record') {
   const r = sc.record ?? {};
   const out = opt('--output');
+  writeFileSync(`${process.env.FAKE_XCRUN_SCENARIO}.pid`, String(process.pid));
   const save = () => { mkdirSync(out, { recursive: true }); writeFileSync(`${out}/fake`, 'trace'); };
   process.stdout.write(r.output ?? 'Starting recording\n');
   process.on('SIGINT', () => { if (r.ignoreSigint) return; save(); process.exit(0); });

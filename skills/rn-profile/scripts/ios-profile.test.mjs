@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, symlinkSync, mkdirSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { execFile, spawn } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
   parseLaunchctl, pickApp, attachName, checkDevice, runningUserApps, analyze, summarize, formatSummary,
@@ -184,5 +186,86 @@ test('reportDir: a directory without exports, or no directory, exits 1', async (
     await assert.rejects(reportDir(r.out), (e) => e.exitCode === 1 && /holds no xctrace exports/.test(e.message));
     await assert.rejects(reportDir(join(r.dir, 'nope')), (e) => e.exitCode === 1 && /is not a directory/.test(e.message));
     assert.deepEqual(exportFiles(r.fx), { cpu: null, hangs: null, leaks: null });
+  } finally { r.done(); }
+});
+
+const CLI = join(HERE, 'rn-profile.mjs');
+function cli(r, args) {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [CLI, ...args], { env: r.env, timeout: 30_000 }, (err, stdout, stderr) => {
+      resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout, stderr });
+    });
+  });
+}
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test('cli ios record prints the summary and where the exports are; ios report re-reads them', async () => {
+  const r = rig();
+  try {
+    const out = join(r.out, 'run1');
+    const a = await cli(r, ['ios', 'record', '--udid', UDID, '--seconds', '2', '--out', out, '--top', '2']);
+    assert.equal(a.code, 0, a.stderr);
+    assert.match(a.stdout, /^Sample App \(com\.example\.sample, pid 4242\) on Test Phone, 2 s with Time Profiler\nCPU: 100 samples/);
+    assert.match(a.stdout, /hotspots \(functions with >= 3% of the samples, 2 of 3\)/);
+    assert.match(a.stdout, new RegExp(`exports and summary\\.json in ${out}\n$`));
+    const j = JSON.parse((await cli(r, ['ios', 'report', out, '--json'])).stdout);
+    assert.deepEqual([j.cpu.samples, j.hangs.length], [100, 1]);
+    const again = await cli(r, ['ios', 'record', '--udid', UDID, '--out', out]);
+    assert.equal(again.code, 64);
+    assert.match(again.stderr, /already holds a recording/);
+    const dflt = await cli(r, ['ios', 'record', '--udid', UDID, '--seconds', '1', '--json']);
+    const dir = JSON.parse(dflt.stdout).dir;
+    assert.match(dir, /rn-profile-ios-/);
+    rmSync(dir, { recursive: true, force: true });
+  } finally { r.done(); }
+});
+
+test('cli ios: usage errors exit 64, a missing device 1, several apps 2', async () => {
+  const r = rig({ launchctl: '1\t0\tUIKitApplication:com.example.sample[a]\n2\t0\tUIKitApplication:com.example.other[b]\n' });
+  try {
+    const sc = JSON.parse(readFileSync(r.env.FAKE_XCRUN_SCENARIO, 'utf8'));
+    sc.containers['com.example.other'] = sc.containers['com.example.sample'].replace('/A/', '/B/');
+    mkdirSync(sc.containers['com.example.other'], { recursive: true });
+    writeFileSync(r.env.FAKE_XCRUN_SCENARIO, JSON.stringify(sc));
+    for (const args of [['ios', 'record'], ['ios', 'record', '--udid', UDID, '--seconds', '0'], ['ios', 'record', '--udid', UDID, '--seconds', '601'],
+      ['ios', 'record', '--udid', UDID, '--port', '8081'], ['ios', 'report'], ['ios', 'nope'], ['ios', 'record', '--udid', UDID, 'extra']]) {
+      assert.equal((await cli(r, args)).code, 64, args.join(' '));
+    }
+    const missing = await cli(r, ['ios', 'record', '--udid', 'NOPE', '--out', join(r.out, 'x')]);
+    assert.deepEqual([missing.code, /no simulator with udid NOPE/.test(missing.stderr)], [1, true]);
+    const several = await cli(r, ['ios', 'record', '--udid', UDID, '--out', join(r.out, 'y')]);
+    assert.equal(several.code, 2);
+    assert.match(several.stderr, /several user apps are running; pick one with --app/);
+    assert.equal((await cli(r, ['ios', 'report', join(r.out, 'none')])).code, 1);
+  } finally { r.done(); }
+});
+
+test('cli ios record: Ctrl-C stops xctrace, leaves no process and exits 130', async () => {
+  const r = rig({ record: { rc: 0, delayMs: 60_000 } });
+  try {
+    const child = spawn(process.execPath, [CLI, 'ios', 'record', '--udid', UDID, '--seconds', '60', '--out', r.out], { env: r.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (b) => { stderr += b; });
+    const pidFile = `${r.env.FAKE_XCRUN_SCENARIO}.pid`;
+    for (let i = 0; i < 100 && !existsSync(pidFile); i++) await sleep(50);
+    const xpid = Number(readFileSync(pidFile, 'utf8'));
+    assert.equal(alive(xpid), true);
+    child.kill('SIGINT');
+    const code = await new Promise((res) => child.on('close', res));
+    assert.equal(code, 130, stderr);
+    assert.match(stderr, /interrupted: xctrace was stopped and nothing was exported/);
+    assert.equal(alive(xpid), false);
+    assert.deepEqual(readdirSync(r.out), []);
+  } finally { r.done(); }
+});
+
+test('recordTrace: an xctrace that ignores SIGINT gets SIGTERM after the save grace', async () => {
+  const r = rig({ record: { rc: 0, delayMs: 60_000, ignoreSigint: true } });
+  try {
+    const { recordTrace } = await import('./ios-profile.mjs');
+    const res = await withEnv(r, () => recordTrace({ udid: UDID, name: 'Sample App', seconds: 60, template: TIME_PROFILER, tracePath: join(r.out, 't.trace'), timeoutMs: 100, saveGraceMs: 200 }));
+    assert.deepEqual([res.ended, res.code], ['timeout', 143]);
+    assert.ok(r.calls().some((c) => c[1] === 'record'));
+    assert.equal(alive(Number(readFileSync(`${r.env.FAKE_XCRUN_SCENARIO}.pid`, 'utf8'))), false);
   } finally { r.done(); }
 });

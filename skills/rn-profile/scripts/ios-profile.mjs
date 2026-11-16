@@ -123,7 +123,7 @@ export const attachName = (app) => app.displayName ?? app.executable;
  * (SIGINT, then SIGTERM, then SIGKILL) when `timeoutMs` passes or this process
  * gets SIGINT / SIGTERM, and returns only once xctrace has exited.
  */
-export function recordTrace({ udid, name, seconds, template, tracePath, timeoutMs }) {
+export function recordTrace({ udid, name, seconds, template, tracePath, timeoutMs, saveGraceMs = SAVE_GRACE_MS }) {
   const args = ['xctrace', 'record', '--template', template, '--device', udid, '--attach', name,
     '--time-limit', `${seconds}s`, '--output', tracePath, '--no-prompt'];
   return new Promise((resolve, reject) => {
@@ -139,8 +139,8 @@ export function recordTrace({ udid, name, seconds, template, tracePath, timeoutM
       ended = why;
       const kill = (sig) => { try { child.kill(sig); } catch { /* gone */ } };
       kill('SIGINT');
-      timers.push(setTimeout(() => kill('SIGTERM'), SAVE_GRACE_MS));
-      timers.push(setTimeout(() => kill('SIGKILL'), SAVE_GRACE_MS + TERM_GRACE_MS));
+      timers.push(setTimeout(() => kill('SIGTERM'), saveGraceMs));
+      timers.push(setTimeout(() => kill('SIGKILL'), saveGraceMs + TERM_GRACE_MS));
     };
     const onSignal = () => stopChild('interrupted');
     process.on('SIGINT', onSignal);
