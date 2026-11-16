@@ -119,3 +119,12 @@ test('loadProfile: a missing, cut, foreign or empty file exits 1 with what is wr
     for (const [path, re] of cases) assert.throws(() => loadProfile(path), (err) => err instanceof AnalysisError && err.exitCode === 1 && re.test(err.message), path);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('why: a component with hundreds of thousands of renders (a long recording of a list row)', async () => {
+  const p = structuredClone(PROFILE);
+  const pairs = Array.from({ length: 200_000 }, (_, i) => [1000 + i, 0.01]);
+  p.react.dataForRoots[0].commitData.push({ timestamp: 1900, duration: 3, fiberActualDurations: pairs, fiberSelfDurations: pairs, changeDescriptions: [] });
+  for (let i = 0; i < 200_000; i++) p.react.displayNameById[1000 + i] = 'Cell';
+  const r = await whyRendered(p, 'Cell', { top: 1 });
+  assert.deepEqual([r.renders, r.maxSelfMs], [200_000, 0.01]);
+});

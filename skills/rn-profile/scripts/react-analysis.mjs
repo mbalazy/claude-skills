@@ -240,7 +240,7 @@ export async function whyRendered(profile, name, { top = 20 } = {}) {
     name,
     renders: renders.length,
     selfMs: round(mine.reduce((a, c) => a + c.selfDuration, 0)),
-    maxSelfMs: round(Math.max(...mine.map((c) => c.selfDuration))),
+    maxSelfMs: round(mine.reduce((m, c) => Math.max(m, c.selfDuration), 0)),
     reasons,
     hasChangeData: mine.some((c) => c.changeDescription !== null),
     shown: renders.slice(0, top),
