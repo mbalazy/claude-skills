@@ -172,13 +172,20 @@ export async function exportTrace(tracePath) {
   return exportIosTraceData(tracePath);
 }
 
+/**
+ * Argent's normalizeThreadName expects `Name 0x1e47 (App, pid: N)`; xctrace on
+ * Xcode 27 writes `Name (0x1e47) (App, pid: N)`, which it leaves whole. Drop
+ * that suffix too, so the threads of one name add up.
+ */
+export const threadLabel = (normalized) => normalized.replace(/\s+\(0x[0-9a-f]+\)(\s+\(.*, pid: \d+\))?$/i, '');
+
 export async function analyze(files) {
   const { runIosProfilerPipeline } = await import(vendorPath(`${BASE}ios-profiler/pipeline/index.ts`));
   const { normalizeThreadName } = await import(vendorPath(`${BASE}profiler-shared/thread.ts`));
   const result = await runIosProfilerPipeline(files);
   const threads = new Map();
   for (const s of result.cpuSamples) {
-    const t = normalizeThreadName(s.threadFmt);
+    const t = threadLabel(normalizeThreadName(s.threadFmt));
     const e = threads.get(t) ?? { thread: t, samples: 0, ms: 0 };
     e.samples++;
     e.ms += s.weightNs / 1e6;
@@ -203,7 +210,7 @@ export function summarize(result, { meta = {}, leaksRecorded, exportErrors = {},
       threads: result.threads.slice(0, 5).map((t) => ({ ...t, ms: round(t.ms) })),
       hotspots: result.cpuHotspots.slice(0, top).map((h) => ({
         function: h.dominantFunction, ms: round(h.totalWeightMs), percent: h.weightPercentage, samples: h.sampleCount,
-        thread: h.thread, duringHang: h.duringHang, callChain: h.topCallChain.slice(0, 4),
+        thread: threadLabel(h.thread), duringHang: h.duringHang, callChain: h.topCallChain.slice(0, 4),
       })),
       hotspotsTotal: result.cpuHotspots.length,
     },

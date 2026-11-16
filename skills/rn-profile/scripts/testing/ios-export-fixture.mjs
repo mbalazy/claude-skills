@@ -23,7 +23,7 @@ export function cpuXml() {
     const thread = i === 0
       ? '<thread id="1" fmt="Main Thread (0x1) (Sample App, pid: 4242)"><process id="2" fmt="Sample App (4242)"><pid id="3" fmt="4242">4242</pid></process></thread>'
       : i === 60
-        ? '<thread id="4" fmt="com.example.decoder 0x2 (Sample App, pid: 4242)"><process ref="2"/></thread>'
+        ? '<thread id="4" fmt="com.example.decoder (0x2) (Sample App, pid: 4242)"><process ref="2"/></thread>'
         : `<thread ref="${main ? 1 : 4}"/>`;
     const weight = i === 0 ? '<weight id="5" fmt="1.00 ms">1000000</weight>' : '<weight ref="5"/>';
     const bin = i === 0 ? `<binary id="6" name="SampleApp.debug.dylib" path="${APP_BIN}"/>` : '<binary ref="6"/>';

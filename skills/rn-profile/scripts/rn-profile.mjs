@@ -43,7 +43,7 @@
 // several apps; 3 no answer within --timeout; 64 usage; 130 interrupted.
 
 import { parseArgs } from 'node:util';
-import { writeFileSync, renameSync, accessSync, constants, existsSync, statSync, mkdirSync, mkdtempSync, readdirSync } from 'node:fs';
+import { writeFileSync, renameSync, accessSync, constants, existsSync, statSync, mkdirSync, mkdtempSync, readdirSync, rmdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { withRuntime, UsageError } from '../../simulator-verify/scripts/devtools/runtime.mjs';
@@ -160,16 +160,26 @@ async function iosRecord(args) {
   const top = values.top === undefined ? 10 : positiveNumber('top', values.top, { integer: true });
   const timeoutMs = values.timeout === undefined ? undefined : Math.round(positiveNumber('timeout', values.timeout) * 1000);
   let outDir;
+  let made = false;
   if (values.out) {
     outDir = resolve(values.out);
+    made = !existsSync(outDir);
     mkdirSync(outDir, { recursive: true });
     const clash = readdirSync(outDir).filter((n) => n === 'native.trace' || /^native_raw_.*\.xml$/.test(n) || n === I.SUMMARY_FILE);
     if (clash.length) throw new UsageError(`--out ${outDir} already holds a recording (${clash.join(', ')}); pick an empty directory`);
   } else {
     outDir = mkdtempSync(join(tmpdir(), 'rn-profile-ios-'));
+    made = true;
   }
   if (values.leaks) process.stderr.write('note: the leaks template turns malloc stack logging on in the app; it stays on until the app is relaunched and skews later CPU and hang readings\n');
-  const sum = await I.record({ udid: values.udid, app: values.app, seconds, leaks: values.leaks, outDir, keepTrace: values['keep-trace'], timeoutMs, top });
+  let sum;
+  try {
+    sum = await I.record({ udid: values.udid, app: values.app, seconds, leaks: values.leaks, outDir, keepTrace: values['keep-trace'], timeoutMs, top });
+  } catch (err) {
+    // A directory this command made and nothing went into is not left behind.
+    if (made && !readdirSync(outDir).length) rmdirSync(outDir);
+    throw err;
+  }
   process.stdout.write(values.json ? `${JSON.stringify(sum)}\n` : `${I.formatSummary(sum)}\n\nexports and ${I.SUMMARY_FILE} in ${outDir}${sum.trace ? `; trace kept at ${sum.trace}` : ''}\n`);
   return 0;
 }

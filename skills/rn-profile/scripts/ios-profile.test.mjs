@@ -56,6 +56,13 @@ async function withEnv(r, fn) {
   }
 }
 
+test('threadLabel drops the (0x..) (App, pid: N) suffix xctrace writes', async () => {
+  const { threadLabel } = await import('./ios-profile.mjs');
+  assert.equal(threadLabel('com.example.js (0xbee0deb) (Sample App, pid: 4242)'), 'com.example.js');
+  assert.equal(threadLabel('Sample App (0xbee0d76)'), 'Sample App');
+  assert.equal(threadLabel('Main Thread'), 'Main Thread');
+});
+
 test('parseLaunchctl keeps running apps only', () => {
   const m = parseLaunchctl('PID\tStatus\tLabel\n4242\t0\tUIKitApplication:com.example.a[ab][rb-legacy]\n-\t0\tUIKitApplication:com.example.b[cd]\n12\t0\tcom.apple.thing\n');
   assert.deepEqual([...m], [['com.example.a', 4242]]);
@@ -233,6 +240,7 @@ test('cli ios: usage errors exit 64, a missing device 1, several apps 2', async 
     }
     const missing = await cli(r, ['ios', 'record', '--udid', 'NOPE', '--out', join(r.out, 'x')]);
     assert.deepEqual([missing.code, /no simulator with udid NOPE/.test(missing.stderr)], [1, true]);
+    assert.equal(existsSync(join(r.out, 'x')), false);
     const several = await cli(r, ['ios', 'record', '--udid', UDID, '--out', join(r.out, 'y')]);
     assert.equal(several.code, 2);
     assert.match(several.stderr, /several user apps are running; pick one with --app/);
