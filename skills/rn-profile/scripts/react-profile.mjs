@@ -208,6 +208,7 @@ export async function stopRecording(client, { timeoutMs } = {}) {
   await ev(client, 'delete globalThis.__rn_profile_session', timeoutMs);
   // Another tool stopped it at a moment nobody recorded: the length is unknown.
   const durationMs = session.endedAtEpochMs ? Math.max(0, session.endedAtEpochMs - session.startedAtEpochMs) : null;
+  if (cpuProfile) cpuProfile = dropStaleLeadingGap(cpuProfile);
   if (cpuProfile && session.endedBy === 'time-limit') cpuProfile = trimCpuProfile(cpuProfile, durationMs);
   return {
     format: FORMAT,
@@ -220,6 +221,25 @@ export async function stopRecording(client, { timeoutMs } = {}) {
     fiberMeta,
     cpuProfile,
   };
+}
+
+/**
+ * Ported from Argent's dropStaleLeadingGap (utils/react-profiler/pipeline/00-cpu-correlate.ts),
+ * returning a copy: Hermes stamps samples taken while the VM was already suspended at start
+ * with a stale time, so the first positive delta can be a jump (seen: 27,954 s for an 11 s
+ * recording). Such a delta (>= 1 s and longer than everything after it) becomes 0 and moves
+ * startTime; a normal profile comes back as it is.
+ */
+export function dropStaleLeadingGap(profile) {
+  const deltas = profile?.timeDeltas;
+  if (!Array.isArray(deltas)) return profile;
+  const first = deltas.findIndex((d, i) => i > 0 && d > 0);
+  if (first < 0) return profile;
+  const gap = deltas[first];
+  if (gap < 1_000_000 || gap <= profile.endTime - profile.startTime - gap) return profile;
+  const timeDeltas = deltas.slice();
+  timeDeltas[first] = 0;
+  return { ...profile, timeDeltas, startTime: profile.startTime + gap };
 }
 
 /** A Hermes CPU profile cut to its first keepMs (the samples after the time limit dropped). */

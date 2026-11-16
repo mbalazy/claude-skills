@@ -4,7 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fakeReactApp } from './testing/fake-react-app.mjs';
 import {
   startRecording, recordingStatus, stopRecording, ProfileError,
-  trimCpuProfile, flattenCommits, summarize, formatSummary, FORMAT,
+  trimCpuProfile, dropStaleLeadingGap, flattenCommits, summarize, formatSummary, FORMAT,
 } from './react-profile.mjs';
 
 test('start, status, commits, stop: the profile carries the commits, names and the CPU profile', async () => {
@@ -167,6 +167,18 @@ test('trimCpuProfile keeps the samples inside the first keepMs', () => {
   assert.deepEqual(trimCpuProfile(p, 3), { startTime: 100, endTime: 3100, samples: [1, 2, 3], timeDeltas: [1000, 1000, 1000] });
   assert.equal(trimCpuProfile(p, 10).samples.length, 5);
   assert.equal(trimCpuProfile(null, 1), null);
+});
+
+test('a stale leading gap is dropped before the time-limit cut, so the cut keeps the real samples', () => {
+  const stale = { startTime: 0, endTime: 30_005_000, samples: [1, 1, 1, 1, 1, 1], timeDeltas: [0, 30_000_000, 1000, 1000, 1000, 1000] };
+  const fixed = dropStaleLeadingGap(stale);
+  assert.deepEqual([fixed.startTime, fixed.timeDeltas], [30_000_000, [0, 0, 1000, 1000, 1000, 1000]]);
+  assert.equal(stale.timeDeltas[1], 30_000_000, 'the input is not changed');
+  assert.equal(trimCpuProfile(fixed, 3).samples.length, 5);
+  const normal = { startTime: 0, endTime: 3000, samples: [1, 1, 1], timeDeltas: [0, 1500, 1500] };
+  assert.equal(dropStaleLeadingGap(normal), normal);
+  const longFirst = { startTime: 0, endTime: 5_000_000, samples: [1, 1, 1], timeDeltas: [0, 1_500_000, 3_500_000] };
+  assert.equal(dropStaleLeadingGap(longFirst), longFirst, 'a long first interval shorter than the rest stays');
 });
 
 // A synthetic profile: two roots, one fiber without a name (unmounted).
