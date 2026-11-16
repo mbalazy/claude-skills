@@ -28,8 +28,9 @@
 // renders, commits and why read a profile file (no app needed): per component
 // the renders, mounts, total and max self time and the dominant reason it
 // re-rendered (default top 20 by self time); the slowest commits (default 10)
-// with the components that rendered in each, why, the parent that set off a
-// cascade and the busiest JS functions in that window; every render of one
+// with the components that rendered in each, why, the root cause (the
+// heaviest component that changed itself, else the ancestor that set off a
+// cascade) and the busiest JS functions in that window; every render of one
 // component (exact name) with the changed props / hooks or the parent that
 // caused it. A missing, cut or foreign file exits 1; so does an empty answer:
 // no component matching --grep, no commit at or over --min-ms, a component
