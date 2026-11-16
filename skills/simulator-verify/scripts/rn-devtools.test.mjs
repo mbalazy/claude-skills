@@ -153,6 +153,8 @@ test('tree filters: --grep with ancestors, --id exact, --ids a plain list, --jso
   assert.match(id.stdout, /Main-go/);
   assert.equal((await run(['tree', '--port', port, '--ids'])).stdout, 'Main-go\nMain-header\nMain-root\n');
   assert.equal((await run(['tree', '--port', port, '--ids', '--id', 'nope'])).stdout, '');
+  assert.equal((await run(['tree', '--port', port, '--ids', '--id', 'Main-go'])).stdout, 'Main-go\n');
+  assert.equal((await run(['tree', '--port', port, '--ids', '--grep', '^Main-(go|header)$'])).stdout, 'Main-go\nMain-header\n');
   const j = JSON.parse((await run(['tree', '--port', port, '--json', '--id', 'Main-go'])).stdout);
   assert.deepEqual(j.nodes.map((n) => n.testID), ['Main-root', 'Main-go']);
   assert.match((await run(['tree', '--port', port, '--id', 'nope'])).stdout, /nothing matches the filter/);

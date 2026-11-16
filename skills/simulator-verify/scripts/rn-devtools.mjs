@@ -27,7 +27,8 @@
 // of its rect that is on screen, in points. Layout-only wrappers are pruned (Argent's rules; a missing wrapper
 // proves nothing). --grep keeps components whose name, text, label or testID
 // match REGEX (case-insensitive), --id the one testID, both with their
-// ancestors; --ids prints only the testIDs, one per line; --json the same
+// ancestors; --ids prints only the testIDs, one per line (with a filter: of
+// the matches, not of their ancestors); --json the same
 // nodes as JSON; --all keeps off-screen components; --max-nodes collapses
 // wrapper chains past N. Its --timeout default is 15.
 //
@@ -122,9 +123,11 @@ async function cmdTree(args) {
   const raw = await withRuntime(opts, (client) => readComponentTree(client, { timeoutMs: opts.timeoutMs ?? TREE_TIMEOUT_MS }));
   const tree = pruneTree(raw, { onScreenOnly: !values.all, maxNodes });
   const filtered = values.grep !== undefined || values.id !== undefined;
-  const nodes = filtered ? filterNodes(tree.nodes, makeMatcher({ grep: values.grep, id: values.id })) : tree.nodes;
+  const match = makeMatcher({ grep: values.grep, id: values.id });
+  const nodes = filtered ? filterNodes(tree.nodes, match) : tree.nodes;
   if (values.ids) {
-    const ids = testIDs(nodes);
+    // The matches themselves, not the ancestors kept for context.
+    const ids = testIDs(filtered ? tree.nodes.filter((n) => match(n.entry)) : nodes);
     if (ids.length) process.stdout.write(ids.join('\n') + '\n');
   } else if (values.json) {
     process.stdout.write(JSON.stringify(toJson(tree, nodes)) + '\n');
