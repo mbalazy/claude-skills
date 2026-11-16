@@ -24,7 +24,9 @@
 //     text, e.g. the "Submit" inside a Button carrying only a testID);
 //   - "off screen" means the rect does not touch the screen at all; Argent
 //     tests the rect's centre, which dropped a card whose top edge shows at
-//     the bottom of the screen while the accessibility tree lists it;
+//     the bottom of the screen while the accessibility tree lists it. It is
+//     judged per component (a rectless one by its nearest measured ancestor),
+//     not by removing whole subtrees;
 //   - filters (grep, testID) and a testID list are ours.
 
 import { vendorPath } from './vendor-loader.mjs';
@@ -81,30 +83,21 @@ export function pruneTree(data, { onScreenOnly = true, maxNodes } = {}) {
     }
   }
 
-  // Off-screen subtrees (drawers, hidden tabs), rectless children included.
+  // Off screen: a rect that does not touch the screen (drawers, hidden tabs),
+  // and a rectless component whose nearest measured ancestor is such a rect.
+  // Judged per component, not per subtree: a composite's rect is its first
+  // host child's, so an off-screen first child would otherwise take its
+  // on-screen siblings with it.
   if (canNormalize && onScreenOnly) {
-    const kids = new Map();
-    for (const c of components) {
-      if (c.parentIdx >= 0) (kids.get(c.parentIdx) ?? kids.set(c.parentIdx, []).get(c.parentIdx)).push(c.id);
-    }
-    const removeSubtree = (id) => {
-      removed.add(id);
-      stats.offScreen++;
-      for (const k of kids.get(id) ?? []) removeSubtree(k);
+    const off = (r) => r.x >= screenW || r.y >= screenH || r.x + r.w <= 0 || r.y + r.h <= 0;
+    const nearestRect = (c) => {
+      for (let a = c.parentIdx; a >= 0; a = components[a].parentIdx) if (components[a].rect) return components[a].rect;
+      return null;
     };
     for (const c of components) {
-      if (removed.has(c.id) || !c.rect) continue;
-      const r = c.rect;
-      if (r.x >= screenW || r.y >= screenH || r.x + r.w <= 0 || r.y + r.h <= 0) removeSubtree(c.id);
-    }
-    for (const c of components) {
-      if (removed.has(c.id) || c.rect) continue;
-      let a = c.parentIdx;
-      while (a >= 0 && !components[a].rect) {
-        if (removed.has(a)) break;
-        a = components[a].parentIdx;
-      }
-      if (a >= 0 && removed.has(a)) {
+      if (removed.has(c.id)) continue;
+      const r = c.rect ?? nearestRect(c);
+      if (r && off(r)) {
         removed.add(c.id);
         stats.offScreen++;
       }

@@ -72,6 +72,21 @@ test('stacked same-name layers keep the testIDs and text inside each; empty twin
   assert.equal(t.nodes.filter((n) => n.entry.name === 'Layer').length, 2);
 });
 
+test('an on-screen child of a composite measured off screen stays; a rectless testID under a merged twin stays', () => {
+  const raw = { screenW: 400, screenH: 800, components: [
+    { id: 0, name: 'Shell', rect: { x: -400, y: 0, w: 300, h: 800 }, parentIdx: -1 },
+    { id: 1, name: 'Drawer', rect: { x: -400, y: 0, w: 300, h: 800 }, parentIdx: 0, testID: 'drawer' },
+    { id: 2, name: 'DrawerItem', rect: null, parentIdx: 1, testID: 'drawer-item' },
+    { id: 3, name: 'Main', rect: { x: 0, y: 0, w: 400, h: 700 }, parentIdx: 0, testID: 'main' },
+    { id: 4, name: 'ScrollView', rect: { x: 0, y: 100, w: 400, h: 600 }, parentIdx: 3, testID: 'list' },
+    { id: 5, name: 'ScrollView', rect: { x: 0, y: 100, w: 400, h: 600 }, parentIdx: 4 },
+    { id: 6, name: 'Item', rect: null, parentIdx: 5, testID: 'item-1' },
+  ] };
+  const t = pruneTree(raw);
+  assert.deepEqual(testIDs(t.nodes), ['item-1', 'list', 'main']);
+  assert.equal(t.stats.offScreen, 3);
+});
+
 test('onScreenOnly false keeps off-screen subtrees', () => {
   const ids = testIDs(pruneTree(RAW, { onScreenOnly: false }).nodes);
   assert.ok(ids.includes('Drawer'));
