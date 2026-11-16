@@ -1,0 +1,278 @@
+// react-profile.mjs - record React commits in the running app over Metro's
+// CDP inspector, with Argent's profiler scripts (vendored unmodified under
+// skills/simulator-verify/scripts/devtools/vendor/argent/) and the shared CDP
+// client of simulator-verify.
+//
+// Every command is one-shot. A recording lives in the app between commands:
+// the React DevTools backend keeps the commits, Hermes's sampler keeps the
+// CPU profile, and globalThis.__rn_profile_session (ours) keeps the session:
+// id, start, time limit and how it ended. The time limit is a timer in the
+// app that stops the React side; stop then still returns what was recorded,
+// with the CPU profile cut at the limit. A JS reload loses the recording.
+//
+// Sequence (Argent's start/stop tools and session blueprint, as the spike
+// probed it): setup -> read state -> bootstrap the DevTools backend when no
+// renderer interface exists -> root tracker -> Profiler.stop (Hermes's
+// sampler is process-wide and survives a reload) -> Profiler.enable (this
+// Hermes answers "Unsupported method"; ignored) -> Profiler.start ->
+// startProfiling on every renderer. stop = Profiler.stop (CPU profile) ->
+// stop and read the React data -> fiber metadata.
+
+import { randomUUID } from 'node:crypto';
+import { vendorPath } from '../../simulator-verify/scripts/devtools/vendor-loader.mjs';
+
+const SCRIPTS = 'packages/tool-server/src/utils/react-profiler/scripts.ts';
+const BOOTSTRAP = 'packages/tool-server/src/utils/react-profiler/devtools-bootstrap.ts';
+const scripts = () => import(vendorPath(SCRIPTS));
+
+export const FORMAT = 'rn-profile-react/1';
+export const DEFAULT_MAX_SECONDS = 60;
+export const MAX_SECONDS_CAP = 600;
+export const DEFAULT_INTERVAL_US = 1000;
+// Reading a long recording's data can outlast the usual 10 s.
+const COLLECT_TIMEOUT_MS = 60_000;
+
+export class ProfileError extends Error {
+  constructor(message, exitCode = 1) { super(message); this.exitCode = exitCode; }
+}
+
+const ev = async (client, expr, timeoutMs) => client.evaluate(expr, { awaitPromise: false, timeoutMs });
+const evJson = async (client, expr, timeoutMs) => {
+  const raw = await ev(client, expr, timeoutMs);
+  return typeof raw === 'string' ? JSON.parse(raw) : raw;
+};
+
+const READ_SESSION = `JSON.stringify(globalThis.__rn_profile_session || null)`;
+
+/**
+ * Installs our session record and the time-limit timer. When the timer fires
+ * for this session and it is still running, it stops every renderer (the
+ * React data stays readable until the next start) and records why.
+ */
+export function sessionScript(session) {
+  return `(function() {
+  var s = ${JSON.stringify(session)};
+  s.endedBy = null;
+  s.endedAtEpochMs = null;
+  globalThis.__rn_profile_session = s;
+  setTimeout(function() {
+    var cur = globalThis.__rn_profile_session;
+    if (!cur || cur.sessionId !== s.sessionId || cur.endedBy) return;
+    var h = globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    if (h && h.rendererInterfaces) h.rendererInterfaces.forEach(function(ri) { try { ri.stopProfiling(); } catch (e) {} });
+    cur.endedBy = 'time-limit';
+    cur.endedAtEpochMs = Date.now();
+  }, s.maxMs);
+  return JSON.stringify(s);
+})()`;
+}
+
+/**
+ * Starts a recording. Resolves with { started, session, discarded } or { already, session }.
+ * discarded: an earlier recording that was never stopped (e.g. ended by its time limit) is dropped.
+ */
+export async function startRecording(client, { maxSeconds = DEFAULT_MAX_SECONDS, intervalUs = DEFAULT_INTERVAL_US, takeover = false, timeoutMs } = {}) {
+  const S = await scripts();
+  await ev(client, S.REACT_NATIVE_PROFILER_SETUP_SCRIPT, timeoutMs);
+  let state = await evJson(client, S.READ_STATE_SCRIPT, timeoutMs);
+  if (!state.hookExists) {
+    throw new ProfileError('The app has no React DevTools hook: it is not a development build, or React has not started yet.');
+  }
+  if (!state.rendererInterfaceFound) {
+    const boot = await evJson(client, S.BOOTSTRAP_DEVTOOLS_BACKEND_SCRIPT, timeoutMs);
+    if (!boot.ok) {
+      const { bootstrapFailureMessage } = await import(vendorPath(BOOTSTRAP));
+      throw new ProfileError(`Cannot reach React's renderer (${boot.reason}): ${bootstrapFailureMessage(boot)}`);
+    }
+    await ev(client, S.REACT_NATIVE_PROFILER_SETUP_SCRIPT, timeoutMs);
+    state = await evJson(client, S.READ_STATE_SCRIPT, timeoutMs);
+  }
+  if (state.isRunning) {
+    const mine = await evJson(client, READ_SESSION, timeoutMs);
+    if (mine && !mine.endedBy && state.owner?.sessionId === mine.sessionId) return { already: true, session: mine, nowEpochMs: state.nowEpochMs };
+    if (!takeover) {
+      const who = state.owner?.tool ? `${state.owner.tool}` : 'another tool (React DevTools or another profiler)';
+      throw new ProfileError(`React is already being profiled by ${who}. Stop it there, or pass --takeover to end that recording and start this one.`);
+    }
+    await ev(client, S.STOP_FOR_TAKEOVER_SCRIPT, timeoutMs);
+  }
+  const previous = await evJson(client, READ_SESSION, timeoutMs);
+  await ev(client, S.FIBER_ROOT_TRACKER_SCRIPT, timeoutMs);
+  // A sampler left running (an earlier session, a reload) would carry its samples into this one.
+  await client.send('Profiler.stop', {}, { timeoutMs }).catch(() => {});
+  await client.send('Profiler.enable', {}, { timeoutMs }).catch(() => {});
+  await client.send('Profiler.start', { interval: intervalUs }, { timeoutMs });
+  const sessionId = randomUUID();
+  const started = await evJson(client, S.buildStartScript(JSON.stringify({ tool: 'rn-profile', sessionId })), timeoutMs);
+  if (!started.ok) {
+    await client.send('Profiler.stop', {}, { timeoutMs }).catch(() => {});
+    throw new ProfileError(`React's profiler did not start (${started.reason}${started.message ? `: ${started.message}` : ''}).`);
+  }
+  const session = await evJson(client, sessionScript({
+    sessionId, tool: 'rn-profile', startedAtEpochMs: started.startedAtEpochMs, maxMs: Math.round(maxSeconds * 1000), intervalUs,
+  }), timeoutMs);
+  return { started: true, session, discarded: previous ? previous.endedBy ?? 'running' : null };
+}
+
+/** { recording, session, nowEpochMs, otherOwner }. */
+export async function recordingStatus(client, { timeoutMs } = {}) {
+  const S = await scripts();
+  const state = await evJson(client, S.READ_STATE_SCRIPT, timeoutMs);
+  const session = await evJson(client, READ_SESSION, timeoutMs);
+  const ours = session && state.owner?.sessionId === session.sessionId;
+  return {
+    recording: Boolean(state.isRunning && ours),
+    session,
+    nowEpochMs: state.nowEpochMs ?? null,
+    otherOwner: state.isRunning && !ours ? (state.owner?.tool ?? 'unknown') : null,
+  };
+}
+
+/**
+ * Ends the recording and returns the profile (the object written to --out).
+ * Hermes's sampler is stopped in every case, also when there is nothing to read.
+ */
+export async function stopRecording(client, { now = Date.now, timeoutMs } = {}) {
+  const S = await scripts();
+  const session = await evJson(client, READ_SESSION, timeoutMs);
+  let cpuProfile = null;
+  try {
+    cpuProfile = (await client.send('Profiler.stop', {}, { timeoutMs: COLLECT_TIMEOUT_MS }))?.profile ?? null;
+  } catch { /* no sampler running */ }
+  if (!session) {
+    throw new ProfileError('No recording in the app: never started, or the JS reloaded since (a reload loses it). Run `react start` again.');
+  }
+  const state = await evJson(client, S.READ_STATE_SCRIPT, timeoutMs);
+  let endedBy = session.endedBy;
+  let endedAtEpochMs = session.endedAtEpochMs;
+  if (!endedBy) {
+    endedBy = state.isRunning ? 'stop' : 'stopped-elsewhere';
+    endedAtEpochMs = state.nowEpochMs ?? now();
+  }
+  const read = await evJson(client, S.STOP_AND_READ_SCRIPT, COLLECT_TIMEOUT_MS);
+  const commits = (read.live?.dataForRoots ?? []).reduce((n, r) => n + (r.commitData?.length ?? 0), 0);
+  let fiberMeta = {};
+  if (commits > 0) {
+    try { fiberMeta = await evJson(client, S.RESOLVE_FIBER_META_SCRIPT, 15_000); } catch { /* names stay, metadata is optional */ }
+  }
+  await ev(client, 'delete globalThis.__rn_profile_session', timeoutMs);
+  const durationMs = Math.max(0, endedAtEpochMs - session.startedAtEpochMs);
+  if (cpuProfile && endedBy === 'time-limit') cpuProfile = trimCpuProfile(cpuProfile, durationMs);
+  return {
+    format: FORMAT,
+    startedAt: new Date(session.startedAtEpochMs).toISOString(),
+    durationMs,
+    endedBy,
+    maxMs: session.maxMs,
+    intervalUs: session.intervalUs,
+    react: { dataForRoots: read.live?.dataForRoots ?? [], displayNameById: read.displayNameById ?? {} },
+    fiberMeta,
+    cpuProfile,
+  };
+}
+
+/** A Hermes CPU profile cut to its first keepMs (the samples after the time limit dropped). */
+export function trimCpuProfile(profile, keepMs) {
+  if (!Array.isArray(profile?.samples) || !Array.isArray(profile.timeDeltas)) return profile;
+  const limitUs = keepMs * 1000;
+  let t = 0;
+  let n = 0;
+  while (n < profile.timeDeltas.length && t + profile.timeDeltas[n] <= limitUs) {
+    t += profile.timeDeltas[n];
+    n++;
+  }
+  return { ...profile, samples: profile.samples.slice(0, n), timeDeltas: profile.timeDeltas.slice(0, n), endTime: profile.startTime + t };
+}
+
+// ---- summary --------------------------------------------------------------
+
+/**
+ * One row per (commit, named fiber), as Argent's flattenProfilingData builds
+ * them, plus the per-commit timings and the fibers no name was found for.
+ */
+export function flattenCommits(react) {
+  const rows = [];
+  const timings = [];
+  let unattributedFibers = 0;
+  let unattributedMs = 0;
+  const unattributedCommits = new Set();
+  let index = 0;
+  for (const root of react?.dataForRoots ?? []) {
+    for (const c of root.commitData ?? []) {
+      const self = new Map((c.fiberSelfDurations ?? []).filter((p) => Array.isArray(p) && p.length >= 2));
+      const duration = typeof c.duration === 'number' ? c.duration : 0;
+      for (const pair of c.fiberActualDurations ?? []) {
+        if (!Array.isArray(pair) || pair.length < 2) continue;
+        const [id, actual] = pair;
+        const name = react.displayNameById?.[String(id)] ?? null;
+        const selfMs = self.get(id) ?? 0;
+        if (!name) {
+          unattributedFibers++;
+          unattributedMs += selfMs;
+          unattributedCommits.add(index);
+          continue;
+        }
+        rows.push({ commitIndex: index, name, actualMs: actual, selfMs, didRender: actual > 0 });
+      }
+      timings.push({ index, timestamp: c.timestamp, durationMs: duration });
+      index++;
+    }
+  }
+  return { rows, timings, unattributed: { fibers: unattributedFibers, commits: unattributedCommits.size, ms: round(unattributedMs) } };
+}
+
+const round = (n) => Math.round(n * 100) / 100;
+
+/** The numbers stop prints. */
+export function summarize(profile, { top = 10 } = {}) {
+  const { rows, timings, unattributed } = flattenCommits(profile.react);
+  const totalCommitMs = round(timings.reduce((a, t) => a + t.durationMs, 0));
+  const slowest = timings.reduce((best, t) => (!best || t.durationMs > best.durationMs ? t : best), null);
+  const byName = new Map();
+  for (const r of rows) {
+    if (!r.didRender) continue;
+    const e = byName.get(r.name) ?? { name: r.name, renders: 0, selfMs: 0 };
+    e.renders++;
+    e.selfMs += r.selfMs;
+    byName.set(r.name, e);
+  }
+  const all = [...byName.values()].map((e) => ({ ...e, selfMs: round(e.selfMs) }));
+  const cpu = profile.cpuProfile;
+  return {
+    durationMs: profile.durationMs,
+    endedBy: profile.endedBy,
+    maxMs: profile.maxMs,
+    commits: timings.length,
+    totalCommitMs,
+    slowestCommit: slowest ? { index: slowest.index, durationMs: round(slowest.durationMs), atMs: slowest.timestamp } : null,
+    byRenders: [...all].sort((a, b) => b.renders - a.renders || b.selfMs - a.selfMs || a.name.localeCompare(b.name)).slice(0, top),
+    bySelfTime: [...all].sort((a, b) => b.selfMs - a.selfMs || b.renders - a.renders || a.name.localeCompare(b.name)).slice(0, top),
+    components: all.length,
+    unattributed,
+    cpuSamples: Array.isArray(cpu?.samples) ? cpu.samples.length : null,
+  };
+}
+
+const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
+
+export function formatSummary(sum) {
+  const ended = sum.endedBy === 'time-limit' ? `ended by its ${secs(sum.maxMs)} time limit`
+    : sum.endedBy === 'stopped-elsewhere' ? 'stopped by another tool before this stop'
+      : 'ended by stop';
+  const lines = [`recorded ${secs(sum.durationMs)} (${ended})`];
+  const slow = sum.slowestCommit ? `, slowest ${sum.slowestCommit.durationMs} ms (commit #${sum.slowestCommit.index} at +${secs(sum.slowestCommit.atMs)})` : '';
+  lines.push(`React commits: ${sum.commits}, total commit time ${sum.totalCommitMs} ms${slow}`);
+  if (sum.cpuSamples !== null) lines.push(`CPU samples: ${sum.cpuSamples}`);
+  if (sum.commits === 0) {
+    lines.push('No commits: nothing re-rendered while recording.');
+    return lines.join('\n');
+  }
+  lines.push('', `Top components by renders (${sum.components} rendered):`);
+  for (const e of sum.byRenders) lines.push(`  ${String(e.renders).padStart(5)}  ${e.name}  (self ${e.selfMs} ms)`);
+  lines.push('', 'Top components by self time:');
+  for (const e of sum.bySelfTime) lines.push(`  ${String(e.selfMs).padStart(8)} ms  ${e.name}  (${e.renders} renders)`);
+  if (sum.unattributed.fibers) {
+    lines.push('', `Unattributed: ${sum.unattributed.fibers} fiber renders in ${sum.unattributed.commits} commits (${sum.unattributed.ms} ms self) had no name - components that unmounted before stop.`);
+  }
+  return lines.join('\n');
+}
