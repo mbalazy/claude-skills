@@ -87,6 +87,17 @@ test('without full, read cuts long bodies in the app and keeps their full length
   assert.equal(present(whole, { full: true }).requestBody.length, 2000);
 });
 
+test('stop leaves everything as it is when another tool wrapped a patched function after start', async () => {
+  const app = fakeApp();
+  await startNetworkLog(app.client);
+  app.run('var inner = XMLHttpRequest.prototype.open; globalThis.otherTool = function() { return inner.apply(this, arguments); }; XMLHttpRequest.prototype.open = globalThis.otherTool;');
+  await app.run('request("GET", "https://api.example.test/a")');
+  await assert.rejects(stopNetworkLog(app.client), (err) => err.exitCode === 1 && /wrapped open again[\s\S]*Nothing was changed/.test(err.message));
+  assert.equal(app.run('XMLHttpRequest.prototype.open === globalThis.otherTool'), true);
+  assert.equal(app.run('XMLHttpRequest.prototype.send') === app.originals.send, false, 'send still patched: nothing restored');
+  assert.equal((await readNetworkLog(app.client, { metroPort: 8081 })).total, 1);
+});
+
 test('read before any start, and stop with nothing installed', async () => {
   const app = fakeApp();
   await assert.rejects(readNetworkLog(app.client, { metroPort: 8081 }), (err) => err instanceof NotInstalledError && err.exitCode === 1 && /net start/.test(err.message));

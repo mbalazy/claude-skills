@@ -91,6 +91,14 @@ export const STOP_SCRIPT = `(function() {
     if (byId && typeof byId === 'object') for (var k in byId) if (hasOwn.call(byId, k)) delete byId[k];
     return JSON.stringify({ installed: true, restorable: false, cleared: cleared });
   }
+  // A key wrapped again after start (another tool) is left alone, and so is everything else:
+  // putting the original back would throw that tool's wrapper away with ours.
+  var foreign = [];
+  for (var j = 0; j < saved.length; j++) {
+    var cur = saved[j].holder[saved[j].key];
+    if (cur !== saved[j].patched && cur !== saved[j].value) foreign.push(saved[j].key);
+  }
+  if (foreign.length) return JSON.stringify({ installed: true, restorable: true, restored: 0, failed: [], foreign: foreign, cleared: 0 });
   var restored = 0, failed = [];
   for (var i = 0; i < saved.length; i++) {
     var s = saved[i];
@@ -116,7 +124,9 @@ export async function startNetworkLog(client, { timeoutMs } = {}) {
       return JSON.stringify({ already: true, restorable: snap.restorable, count: Array.isArray(log) ? log.length : 0 });
     }
     var res = JSON.parse(${NETWORK_INTERCEPTOR_SCRIPT});
+    var saved = globalThis.__rn_devtools_net_saved;
     if (!res.installed) delete globalThis.__rn_devtools_net_saved;
+    else for (var i = 0; i < saved.length; i++) saved[i].patched = saved[i].holder[saved[i].key];
     return JSON.stringify({ installed: !!res.installed, reason: res.reason, saved: snap.saved });
   })()`, { timeoutMs });
   return JSON.parse(out);
@@ -127,6 +137,9 @@ export async function stopNetworkLog(client, { timeoutMs } = {}) {
   const res = JSON.parse(await client.evaluate(STOP_SCRIPT, { timeoutMs }));
   if (res.installed && !res.restorable) {
     throw new CdpError(`The network log was installed by another tool, so there is nothing to put back: the ${res.cleared} records were cleared, but fetch/XHR stay patched until the JS reloads.`, 'exception', 1);
+  }
+  if (res.installed && res.foreign?.length) {
+    throw new CdpError(`Something wrapped ${res.foreign.join(', ')} again after \`net start\` (another debugging tool?); putting the original back would remove its wrapper too. Nothing was changed and the records were kept; reload the JS to remove the network log.`, 'exception', 1);
   }
   if (res.installed && res.failed.length) {
     throw new CdpError(`Could not put back: ${res.failed.join(', ')}. The records were kept; reload the JS to remove the network log.`, 'exception', 1);
