@@ -20,4 +20,10 @@ and not called.
 that every file listed below is still byte-identical to upstream and that no
 file here is unlisted.
 
+Ported, not copied: our own code under ../../ that follows the behaviour of
+these upstream files (they import zod and Argent's tool registry, so they are
+read, not vendored). Each of our files names its source in its header.
+  packages/tool-server/src/tools/debugger/debugger-component-tree.ts -> ../../component-tree.mjs
+
 Copied files (path | change):
+- packages/tool-server/src/utils/debugger/scripts/component-tree.ts | unmodified
