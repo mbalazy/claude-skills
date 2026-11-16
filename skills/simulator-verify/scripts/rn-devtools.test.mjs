@@ -6,9 +6,9 @@ import { startFakeInspector, fakeTarget, fakeRuntime, withTreeScript } from './d
 
 const CLI = fileURLToPath(new URL('./rn-devtools.mjs', import.meta.url));
 
-function run(args, env = {}) {
+function run(args, env = {}, nodeFlags = []) {
   return new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { env: { ...process.env, METRO_PORT: '', ...env }, timeout: 20_000 }, (err, stdout, stderr) => {
+    execFile(process.execPath, [...nodeFlags, CLI, ...args], { env: { ...process.env, METRO_PORT: '', ...env }, timeout: 20_000 }, (err, stdout, stderr) => {
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout, stderr });
     });
   });
@@ -178,3 +178,14 @@ test('tree: a script error exits 1, no answer exits 3, bad options exit 64', asy
   assert.equal((await run(['tree', '--ids', '--json'])).code, 64);
   assert.equal((await run(['tree', 'extra'])).code, 64);
 });
+
+test('targets and eval work on a Node without TypeScript support; only tree needs it', () => withMetro(oneApp, async (port) => {
+  const off = ['--no-experimental-strip-types'];
+  const e = await run(['eval', '1+1', '--port', port], {}, off);
+  assert.equal(e.code, 0, e.stderr);
+  assert.equal(e.stdout, '2\n');
+  assert.equal((await run(['targets', '--port', port], {}, off)).code, 0);
+  const t = await run(['tree', '--port', port], {}, off);
+  assert.equal(t.code, 1);
+  assert.match(t.stderr, /cannot run TypeScript/);
+}));

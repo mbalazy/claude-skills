@@ -45,7 +45,6 @@
 import { parseArgs } from 'node:util';
 import { fetchTargets, selectTarget, describeTarget, pageId } from './devtools/targets.mjs';
 import { withRuntime, metroPort, UsageError } from './devtools/runtime.mjs';
-import { readComponentTree, pruneTree, filterNodes, makeMatcher, formatText, toJson, testIDs, TREE_TIMEOUT_MS } from './devtools/component-tree.mjs';
 
 const TARGET_OPTIONS = {
   port: { type: 'string' },
@@ -115,6 +114,10 @@ async function cmdTree(args) {
   if (values.grep !== undefined) {
     try { new RegExp(values.grep); } catch (err) { throw new UsageError(`--grep: ${err.message}`); }
   }
+  // Loaded here, not at the top: it needs Node's TypeScript support (the
+  // vendored script), which `targets` and `eval` do not.
+  const { readComponentTree, pruneTree, filterNodes, makeMatcher, formatText, toJson, testIDs, TREE_TIMEOUT_MS } =
+    await import('./devtools/component-tree.mjs');
   const opts = targetOpts(values);
   const raw = await withRuntime(opts, (client) => readComponentTree(client, { timeoutMs: opts.timeoutMs ?? TREE_TIMEOUT_MS }));
   const tree = pruneTree(raw, { onScreenOnly: !values.all, maxNodes });
