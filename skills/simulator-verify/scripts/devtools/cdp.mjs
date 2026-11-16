@@ -21,6 +21,18 @@ export class CdpError extends Error {
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
 
+const AWAIT_BINDING = '__rn_devtools_await';
+// Runs with `this` = the evaluated object. Returns false for a non-thenable;
+// for a thenable, reports its outcome over the binding once it settles.
+const AWAIT_FUNCTION = `function (binding, requestId) {
+  if (this === null || this === undefined || typeof this.then !== 'function') return false;
+  var send = function (o) { o.requestId = requestId; globalThis[binding](JSON.stringify(o)); };
+  Promise.resolve(this).then(
+    function (v) { send(v === undefined ? {} : { value: v }); },
+    function (e) { send({ error: String((e && e.stack) || e) }); });
+  return true;
+}`;
+
 const TAKEN_HINT =
   'another debugger took the page (Metro allows one per app). Close React Native DevTools, ' +
   'or run read-rn-logs-cdp.py with --no-follow, then retry once.';
@@ -131,14 +143,75 @@ class CdpClient {
     });
   }
 
+  #runtimeReady = null;
+
+  /** Runtime.enable + the await binding, once per session (callFunctionOn needs the domain). */
+  #ensureRuntime(timeoutMs) {
+    this.#runtimeReady ??= (async () => {
+      await this.send('Runtime.enable', {}, { timeoutMs });
+      await this.send('Runtime.addBinding', { name: AWAIT_BINDING }, { timeoutMs });
+    })();
+    return this.#runtimeReady;
+  }
+
   /**
-   * Runtime.evaluate returning the value (returnByValue + awaitPromise by default).
-   * A JS exception rejects with CdpError kind "exception" carrying its text.
+   * Evaluate in the app's global scope and return the value (as JSON would
+   * carry it). A JS exception, or a rejected Promise, rejects with CdpError
+   * kind "exception" carrying its text.
+   *
+   * CDP's own awaitPromise does not work in React Native: `Promise` there is
+   * a polyfill Hermes does not recognise, so a Promise came back as its
+   * internals ({"_h":0,...}). A thenable result is therefore awaited in the
+   * app (Promise.resolve(it).then(...)) and the outcome sent back over a
+   * Runtime binding; `awaitPromise: false` returns the object as it is.
    */
-  async evaluate(expression, { timeoutMs = DEFAULT_TIMEOUT_MS, awaitPromise = true, returnByValue = true } = {}) {
-    const res = await this.send('Runtime.evaluate', { expression, awaitPromise, returnByValue }, { timeoutMs });
+  async evaluate(expression, { timeoutMs = DEFAULT_TIMEOUT_MS, awaitPromise = true } = {}) {
+    const res = await this.send('Runtime.evaluate', { expression, returnByValue: false, awaitPromise: false }, { timeoutMs });
     if (res.exceptionDetails) throw new CdpError(exceptionText(res.exceptionDetails), 'exception', 1);
-    return res.result?.value;
+    const remote = res.result ?? {};
+    if (!remote.objectId) return remote.value;
+
+    await this.#ensureRuntime(timeoutMs);
+    if (awaitPromise) {
+      const requestId = `await-${this.#nextId}`;
+      const settled = this.#waitForBinding(AWAIT_BINDING, requestId, timeoutMs, 'The Promise did not settle');
+      const isThenable = await this.send('Runtime.callFunctionOn', {
+        objectId: remote.objectId, functionDeclaration: AWAIT_FUNCTION, returnByValue: true,
+        arguments: [{ value: AWAIT_BINDING }, { value: requestId }],
+      }, { timeoutMs });
+      if (isThenable.result?.value === true) {
+        const outcome = await settled.promise;
+        if ('error' in outcome) throw new CdpError(`Promise rejected: ${outcome.error}`, 'exception', 1);
+        return outcome.value;
+      }
+      settled.cancel();
+    }
+    const byValue = await this.send('Runtime.callFunctionOn', {
+      objectId: remote.objectId, functionDeclaration: 'function () { return this; }', returnByValue: true,
+    }, { timeoutMs });
+    if (byValue.exceptionDetails) throw new CdpError(exceptionText(byValue.exceptionDetails), 'exception', 1);
+    return byValue.result?.value;
+  }
+
+  /** Resolves with the parsed payload a binding delivers for requestId; cancel() drops the wait. */
+  #waitForBinding(binding, requestId, timeoutMs, what) {
+    let cancel;
+    const promise = new Promise((resolve, reject) => {
+      const done = (fn, v) => { clearTimeout(timer); off(); offClose(); fn(v); };
+      const timer = setTimeout(() => done(reject, new CdpError(
+        `${what} within ${timeoutMs} ms (no answer over the ${binding} binding) - the runtime may be paused or frozen.`,
+        'timeout', 3)), timeoutMs);
+      const off = this.on('Runtime.bindingCalled', (p) => {
+        if (p.name !== binding) return;
+        let payload;
+        try { payload = JSON.parse(p.payload); } catch { return; }
+        if (payload?.requestId === requestId) done(resolve, payload);
+      });
+      const offClose = this.on('close', () => done(reject, this.#closed));
+      cancel = () => { clearTimeout(timer); off(); offClose(); };
+    });
+    promise.catch(() => {});
+    return { promise, cancel };
   }
 
   /**
@@ -148,24 +221,17 @@ class CdpClient {
    * value), as Argent's binding-based scripts expect.
    */
   async evaluateWithBinding(expression, { binding, requestId, timeoutMs = DEFAULT_TIMEOUT_MS }) {
-    await this.send('Runtime.enable', {}, { timeoutMs });
+    await this.#ensureRuntime(timeoutMs);
     await this.send('Runtime.addBinding', { name: binding }, { timeoutMs });
-    return new Promise((resolve, reject) => {
-      const done = (fn, v) => { clearTimeout(timer); off(); offClose(); fn(v); };
-      const timer = setTimeout(() => done(reject, new CdpError(
-        `The script never answered over the ${binding} binding within ${timeoutMs} ms - the runtime may be paused or frozen.`,
-        'timeout', 3)), timeoutMs);
-      const off = this.on('Runtime.bindingCalled', (p) => {
-        if (p.name !== binding) return;
-        let payload;
-        try { payload = JSON.parse(p.payload); } catch { return; }
-        if (payload?.requestId === requestId) done(resolve, payload);
-      });
-      const offClose = this.on('close', () => done(reject, this.#closed));
-      this.send('Runtime.evaluate', { expression, awaitPromise: false, returnByValue: false }, { timeoutMs })
-        .then((res) => { if (res.exceptionDetails) done(reject, new CdpError(exceptionText(res.exceptionDetails), 'exception', 1)); })
-        .catch((err) => done(reject, err));
-    });
+    const answer = this.#waitForBinding(binding, requestId, timeoutMs, 'The script never answered');
+    try {
+      const res = await this.send('Runtime.evaluate', { expression, awaitPromise: false, returnByValue: false }, { timeoutMs });
+      if (res.exceptionDetails) throw new CdpError(exceptionText(res.exceptionDetails), 'exception', 1);
+    } catch (err) {
+      answer.cancel();
+      throw err;
+    }
+    return answer.promise;
   }
 
   /** Close the socket; resolves when it is closed (or after 1 s). */

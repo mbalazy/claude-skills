@@ -1,30 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { connect, CdpError, exceptionText } from './cdp.mjs';
-import { startFakeInspector } from './testing/fake-inspector.mjs';
+import { startFakeInspector, fakeRuntime } from './testing/fake-inspector.mjs';
 
 // A runtime that answers like Hermes for the expressions the tests send.
+const runtime = fakeRuntime({
+  '1+1': { value: 2 },
+  '({a: [1, "x"]})': { value: { a: [1, 'x'] } },
+  'undefined': { value: undefined },
+  'boom()': { throws: "ReferenceError: Property 'boom' doesn't exist" },
+  'hang': { hang: true },
+  'kick': { close: [1000, '[NEW_DEBUGGER_OPENED] New debugger opened for the same app instance'] },
+  'reload': { close: [1001, 'app reloaded'] },
+  'later(7)': { resolve: { n: 7 }, delay: 30 },
+  'failLater()': { reject: 'Error: nope\n    at global (:1:1)' },
+  'forever()': { pending: true },
+});
 function hermesLike(msg, session) {
-  const { method, params } = msg;
-  if (method !== 'Runtime.evaluate') return {};
-  switch (params.expression) {
-    case '1+1': return { result: { type: 'number', value: 2 } };
-    case '({a: [1, "x"]})': return { result: { type: 'object', value: { a: [1, 'x'] } } };
-    case 'undefined': return { result: { type: 'undefined' } };
-    case 'boom()':
-      return { result: { type: 'object' }, exceptionDetails: { text: 'Uncaught', exception: { description: 'ReferenceError: Property \'boom\' doesn\'t exist' } } };
-    case 'hang': return undefined;
-    case 'kick': setTimeout(() => session.close(1000, '[NEW_DEBUGGER_OPENED] New debugger opened for the same app instance'), 10); return undefined;
-    case 'reload': setTimeout(() => session.close(1001, 'app reloaded'), 10); return undefined;
-    case 'bad': return { error: { code: -32601, message: "Unsupported method 'X'" } };
-    default:
-      if (params.expression.startsWith('CALLBACK:')) {
-        const [, requestId] = params.expression.split(':');
-        setTimeout(() => session.event('Runtime.bindingCalled', { name: '__cb', payload: JSON.stringify({ requestId, result: 'tree' }) }), 10);
-        return { result: { type: 'undefined' } };
-      }
-      return { result: { type: 'undefined' } };
+  const e = msg.params?.expression ?? '';
+  if (msg.method === 'Runtime.evaluate' && e === 'bad') return { error: { code: -32601, message: "Unsupported method 'X'" } };
+  if (msg.method === 'Runtime.evaluate' && e.startsWith('CALLBACK:')) {
+    const [, requestId] = e.split(':');
+    setTimeout(() => session.event('Runtime.bindingCalled', { name: '__cb', payload: JSON.stringify({ requestId, result: 'tree' }) }), 10);
+    return { result: { type: 'undefined' } };
   }
+  return runtime(msg, session);
 }
 
 async function withSession(fn, handler = hermesLike) {
@@ -41,13 +41,28 @@ test('evaluate returns an object by value', () => withSession(async (c) => {
   assert.deepEqual(await c.evaluate('({a: [1, "x"]})'), { a: [1, 'x'] });
 }));
 
-test('evaluate sends returnByValue and awaitPromise, and an Origin header', () => withSession(async (c, fake) => {
-  await c.evaluate('undefined');
+test('evaluate returns undefined, and sends an Origin header', () => withSession(async (c, fake) => {
+  assert.equal(await c.evaluate('undefined'), undefined);
   const [session] = fake.sessions;
-  const sent = session.received.find((m) => m.method === 'Runtime.evaluate');
-  assert.equal(sent.params.returnByValue, true);
-  assert.equal(sent.params.awaitPromise, true);
   assert.match(session.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
+}));
+
+test('a Promise (RN polyfill, no CDP await) is awaited in the app and its value returned', () => withSession(async (c, fake) => {
+  assert.deepEqual(await c.evaluate('later(7)'), { n: 7 });
+  const [session] = fake.sessions;
+  assert.ok(session.received.some((m) => m.method === 'Runtime.enable'), 'callFunctionOn needs Runtime.enable on Hermes');
+}));
+
+test('a rejected Promise rejects with kind "exception" and the rejection text', () => withSession(async (c) => {
+  await assert.rejects(c.evaluate('failLater()'), (err) => err.kind === 'exception' && err.exitCode === 1 && /Promise rejected: Error: nope/.test(err.message));
+}));
+
+test('a Promise that never settles times out with exit 3', () => withSession(async (c) => {
+  await assert.rejects(c.evaluate('forever()', { timeoutMs: 200 }), (err) => err.kind === 'timeout' && err.exitCode === 3 && /did not settle within 200 ms/.test(err.message));
+}));
+
+test('awaitPromise false returns the Promise object as it is', () => withSession(async (c) => {
+  assert.deepEqual(await c.evaluate('later(7)', { awaitPromise: false }), { _h: 0, _i: 0 });
 }));
 
 test('a JS exception rejects with kind "exception", exit 1 and the exception text', () => withSession(async (c) => {
@@ -102,7 +117,7 @@ test('evaluateWithBinding resolves with the payload carrying its requestId', () 
 }));
 
 test('evaluateWithBinding times out when the script never calls back', () => withSession(async (c) => {
-  await assert.rejects(c.evaluateWithBinding('noop', { binding: '__cb', requestId: 'r', timeoutMs: 150 }), (err) => err.kind === 'timeout' && /__cb binding within 150 ms/.test(err.message));
+  await assert.rejects(c.evaluateWithBinding('noop', { binding: '__cb', requestId: 'r', timeoutMs: 150 }), (err) => err.kind === 'timeout' && /never answered within 150 ms \(no answer over the __cb binding\)/.test(err.message));
 }));
 
 test('connecting to a port with nothing listening rejects with kind "connect", exit 1', async () => {

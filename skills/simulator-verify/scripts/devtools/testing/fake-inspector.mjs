@@ -107,6 +107,58 @@ export async function startFakeInspector({ targets = () => [], handler = () => (
   };
 }
 
+/**
+ * A handler that behaves like React Native's Hermes runtime for a fixed set of
+ * expressions. specs: { [expression]: spec }, spec one of
+ *   { value }                 a primitive or a JSON object (objects get an objectId)
+ *   { throws: 'description' } a JS exception
+ *   { resolve: v, delay }     a Promise (as RN's polyfill: an Object, no CDP await)
+ *   { reject: 'Error: x' }    a rejected Promise
+ *   { pending: true }         a Promise that never settles
+ *   { hang: true }            no answer at all
+ *   { close: [code, reason] } the server closes the socket instead of answering
+ * Runtime.callFunctionOn needs Runtime.enable first, as on Hermes.
+ */
+export function fakeRuntime(specs) {
+  return (msg, session) => {
+    session.objects ??= new Map();
+    const { method, params = {} } = msg;
+    if (method === 'Runtime.enable') { session.enabled = true; return {}; }
+    if (method === 'Runtime.addBinding') { (session.bindings ??= new Set()).add(params.name); return {}; }
+    if (method === 'Runtime.evaluate') {
+      const spec = specs[params.expression];
+      if (!spec) return { result: { type: 'undefined' } };
+      if (spec.hang) return undefined;
+      if (spec.close) { setTimeout(() => session.close(...spec.close), 10); return undefined; }
+      if (spec.throws) return { result: { type: 'object' }, exceptionDetails: { text: 'Uncaught', exception: { description: spec.throws } } };
+      if ('value' in spec && (spec.value === null || typeof spec.value !== 'object')) {
+        return { result: spec.value === undefined ? { type: 'undefined' } : { type: typeof spec.value, value: spec.value } };
+      }
+      const objectId = String(session.objects.size + 1);
+      session.objects.set(objectId, spec);
+      if (params.returnByValue) return { result: { type: 'object', value: 'value' in spec ? spec.value : { _h: 0 } } };
+      return { result: { type: 'object', className: 'Object', description: 'Object', objectId } };
+    }
+    if (method === 'Runtime.callFunctionOn') {
+      if (!session.enabled) return { error: { code: -32000, message: 'Runtime domain not enabled' } };
+      const spec = session.objects.get(params.objectId);
+      if (!spec) return { error: { code: -32000, message: 'Could not find object with given id' } };
+      const isPromise = 'resolve' in spec || 'reject' in spec || spec.pending;
+      if (params.functionDeclaration.includes('.then')) {
+        if (!isPromise) return { result: { type: 'boolean', value: false } };
+        const [binding, requestId] = params.arguments.map((a) => a.value);
+        const payload = 'resolve' in spec ? (spec.resolve === undefined ? { requestId } : { requestId, value: spec.resolve }) : { requestId, error: spec.reject };
+        if (!spec.pending && session.bindings?.has(binding)) {
+          setTimeout(() => session.event('Runtime.bindingCalled', { name: binding, payload: JSON.stringify(payload) }), spec.delay ?? 5);
+        }
+        return { result: { type: 'boolean', value: true } };
+      }
+      return { result: { type: 'object', value: isPromise ? { _h: 0, _i: 0 } : spec.value } };
+    }
+    return {};
+  };
+}
+
 /** A Metro-shaped target entry pointing at the fake inspector. */
 export function fakeTarget(port, { page = 1, device = 'iPhone 17 Test', app = 'com.example.app', fusebox = page === 1, description } = {}) {
   return {

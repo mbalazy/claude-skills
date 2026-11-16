@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startFakeInspector, fakeTarget } from './devtools/testing/fake-inspector.mjs';
+import { startFakeInspector, fakeTarget, fakeRuntime } from './devtools/testing/fake-inspector.mjs';
 
 const CLI = fileURLToPath(new URL('./rn-devtools.mjs', import.meta.url));
 
@@ -14,16 +14,16 @@ function run(args, env = {}) {
   });
 }
 
-function handler(msg) {
-  if (msg.method !== 'Runtime.evaluate') return {};
-  const e = msg.params.expression;
-  if (e === '1+1') return { result: { type: 'number', value: 2 } };
-  if (e === '"a"+"b"') return { result: { type: 'string', value: 'ab' } };
-  if (e === 'void 0') return { result: { type: 'undefined' } };
-  if (e === 'nope.x') return { result: {}, exceptionDetails: { exception: { description: "ReferenceError: Property 'nope' doesn't exist" } } };
-  if (e === 'hang') return undefined;
-  return { result: { type: 'undefined' } };
-}
+const handler = fakeRuntime({
+  '1+1': { value: 2 },
+  '"a"+"b"': { value: 'ab' },
+  'void 0': { value: undefined },
+  '({a: 1})': { value: { a: 1 } },
+  'nope.x': { throws: "ReferenceError: Property 'nope' doesn't exist" },
+  'hang': { hang: true },
+  'later()': { resolve: { ok: true } },
+  'forever()': { pending: true },
+});
 
 async function withMetro(targets, fn) {
   const fake = await startFakeInspector({ targets, handler });
@@ -38,6 +38,15 @@ test('eval prints the value as JSON and exits 0', () => withMetro(oneApp, async 
   assert.equal(r.stdout, '2\n');
   assert.equal((await run(['eval', '"a"+"b"', '--port', port])).stdout, '"ab"\n');
   assert.equal((await run(['eval', 'void 0', '--port', port])).stdout, 'undefined\n');
+  assert.equal((await run(['eval', '({a: 1})', '--port', port])).stdout, '{"a":1}\n');
+}));
+
+test('eval awaits a Promise; --no-await prints the Promise object; a never-settling one exits 3', () => withMetro(oneApp, async (port) => {
+  assert.equal((await run(['eval', 'later()', '--port', port])).stdout, '{"ok":true}\n');
+  assert.equal((await run(['eval', 'later()', '--port', port, '--no-await'])).stdout, '{"_h":0,"_i":0}\n');
+  const r = await run(['eval', 'forever()', '--port', port, '--timeout', '0.3']);
+  assert.equal(r.code, 3);
+  assert.match(r.stderr, /did not settle within 300 ms/);
 }));
 
 test('the port comes from METRO_PORT when --port is absent', () => withMetro(oneApp, async (port) => {
