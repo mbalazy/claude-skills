@@ -21,6 +21,9 @@
 //   - the "sole-child leaf" rule drops only a leaf with no text and no label
 //     (Argent's comment says content-free; its code also dropped a leaf with
 //     text, e.g. the "Submit" inside a Button carrying only a testID);
+//   - "off screen" means the rect does not touch the screen at all; Argent
+//     tests the rect's centre, which dropped a card whose top edge shows at
+//     the bottom of the screen while the accessibility tree lists it;
 //   - filters (grep, testID) and a testID list are ours.
 
 import { vendorPath } from './vendor-loader.mjs';
@@ -90,9 +93,8 @@ export function pruneTree(data, { onScreenOnly = true, maxNodes } = {}) {
     };
     for (const c of components) {
       if (removed.has(c.id) || !c.rect) continue;
-      const cy = c.rect.y + c.rect.h / 2;
-      const cx = c.rect.x + c.rect.w / 2;
-      if (cy < -screenH * 0.1 || cy > screenH * 1.05 || cx < -screenW * 0.05 || cx > screenW * 1.05) removeSubtree(c.id);
+      const r = c.rect;
+      if (r.x >= screenW || r.y >= screenH || r.x + r.w <= 0 || r.y + r.h <= 0) removeSubtree(c.id);
     }
     for (const c of components) {
       if (removed.has(c.id) || c.rect) continue;

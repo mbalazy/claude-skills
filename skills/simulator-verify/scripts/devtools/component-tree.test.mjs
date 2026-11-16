@@ -45,6 +45,16 @@ test('pruning follows Argent: wrappers, same-name chains, off-screen subtrees an
   assert.equal(t.stats.fullScreenWrapper, 1);
 });
 
+test('a component whose edge shows at the bottom of the screen stays; one fully below goes', () => {
+  const raw = { screenW: 400, screenH: 800, components: [
+    { id: 0, name: 'List', rect: { x: 0, y: 0, w: 400, h: 2000 }, parentIdx: -1, testID: 'L' },
+    { id: 1, name: 'Card', rect: { x: 0, y: 780, w: 300, h: 400 }, parentIdx: 0, testID: 'peeking' },
+    { id: 2, name: 'Card', rect: { x: 0, y: 1200, w: 300, h: 400 }, parentIdx: 0, testID: 'below' },
+    { id: 3, name: 'Card', rect: { x: 390, y: 100, w: 300, h: 400 }, parentIdx: 0, testID: 'right-edge' },
+  ] };
+  assert.deepEqual(testIDs(pruneTree(raw).nodes), ['L', 'peeking', 'right-edge']);
+});
+
 test('onScreenOnly false keeps off-screen subtrees', () => {
   const ids = testIDs(pruneTree(RAW, { onScreenOnly: false }).nodes);
   assert.ok(ids.includes('Drawer'));
