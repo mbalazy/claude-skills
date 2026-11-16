@@ -17,9 +17,10 @@ techniques and its per-repo config (`.simulator-verify/config.md`,
 compaction** - the re-injected copy is truncated and its scripts are unusable
 without the numbered sections.
 
-Slot ids and ports: in this mode you work in the MAIN checkout, so use the
-main checkout's runtime (the config's default device / Metro port / dev
-server port), not a worktree slot's. Export what the skill says a hand
+Slot ids and ports: in the MAIN checkout use the main checkout's runtime
+(the config's default device / Metro port / dev server port), not a
+worktree slot's. In a pm worktree slot (SKILL.md, "Where a shift runs")
+use that slot's env from `pm executor show`, never the main checkout's. Export what the skill says a hand
 session must export (`SIM_UDID`, `WDA_PORT`, `WEB_PORT`) from the config,
 once, and write the values into the state file.
 

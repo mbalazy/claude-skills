@@ -63,7 +63,7 @@ within the task's scope and AC, keep everything local. Explicitly:
 ```
 /solo <tracker-id | task-id | ticket-key | url ...> [--sim|--web|--no-runtime]
              [--push] [--pr] [--max-tasks N] [--max-hours H] [--base <branch>]
-/solo resume            # continue the newest unfinished shift of this project
+/solo resume            # continue the newest unfinished shift of this project in THIS checkout
 ```
 
 - **Queue**: a tracker id = its subs in `order` (todo first, then waiting
@@ -114,13 +114,42 @@ launch (the interactive window stays as configured) and keeps every call
 cheaper. **First shift on a project: `--no-runtime`, two tasks** - prove the
 loop, the state file and the report hold before adding the runtime.
 
+## Where a shift runs: the main checkout or a pm worktree slot
+
+A shift works in the checkout it was launched in: the main checkout, or a
+**pm worktree slot** - a path listed in the project's `executor.worktrees`
+(`pm executor show <project>`, section "Worktree slots"). A slot is how two
+shifts run on one project at the same time. You are in a slot when
+`git rev-parse --git-dir` differs from `git rev-parse --git-common-dir`. Then:
+
+- **Project: never from cwd.** pm resolves a slot's path to whichever
+  project's path encloses it (often the wrong one). The project is the one
+  whose `path` is the main checkout,
+  `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"`, and
+  `pm executor show <project>` must list this directory as a slot. Not
+  listed = STOP and report: a worktree-task lane or a scratch worktree is
+  not a slot.
+- **Ports and device ids: the slot's**, from that `show` block (a slot's
+  `.envrc` exports the same values; `printenv WEB_PORT` must match `show`).
+  Never the main checkout's. The slot's runtime config
+  (`.web-verify/config.md`, `.simulator-verify/config.md`) already names the
+  slot's path and ports.
+- **Branches**: git refuses to check out a branch another checkout holds
+  (`git worktree list`). Never check out the base branch in a slot. Between
+  tasks and at the close the slot stays DETACHED
+  (`git switch --detach origin/<base>`), so the other shift can take any
+  branch it needs.
+- **One shift per checkout.** The state file's `repo:` is the slot's path;
+  `resume` matches on it (Resume, below).
+
 ## Step 0: Open the shift (once)
 
 0. `scripts/shift-close.sh --stale`: removes markers of dead runs under
    `~/.claude/solo/` (older than their `MAX_HOURS + 2h`). Markers are per
    session, so another session's live run is never touched and never
    touches this one.
-1. `pm session-id` -> the shift id. `pm_context` with cwd -> the project.
+1. `pm session-id` -> the shift id. `pm_context` with cwd -> the project
+   (in a pm worktree slot: the rule above, never cwd).
    `scripts/launch-check.sh <repo>` -> its `window:` line goes into the
    state header. A window above the intended one (400k via the launcher) is a fact
    for the report, not a reason to stop. **Exit 1 IS a reason to stop**:
@@ -131,7 +160,7 @@ loop, the state file and the report hold before adding the runtime.
    skill, playbook, slot ids/ports. These identifiers come from pm, never from
    prose. `pm executor doctor` failing on the handoff block = runtime OFF for
    the shift, said in the report.
-3. Preconditions in the MAIN checkout (no worktree slots in this mode): `git
+3. Preconditions in THIS checkout (the main one, or a pm worktree slot): `git
    status --porcelain` empty (a dirty tree is not yours to stash: STOP and
    report), `git fetch origin`, base branch up to date. Note the HEAD sha.
 4. Resolve the queue: pm ids via `pm_get_task` (a missing id is reported,
@@ -208,7 +237,10 @@ nothing - section 1 in plain words, TL;DR last.
 ## Resume
 
 `/solo resume`: newest `.shift/*.md` of the project whose `## Status`
-is not `closed` -> continue its loop from `## Progress`. The account window
+is not `closed` AND whose header `repo:` is this checkout (`git rev-parse
+--show-toplevel`) -> continue its loop from `## Progress`. Two shifts of
+one project run in two checkouts (main + a slot); picking the other
+checkout's file would run its queue a second time. The account window
 wall (a session that stalls until the limit resets) is the expected reason to
 resume; treat the state file as authoritative and the conversation as gone.
 A resume runs under a NEW session id: run `scripts/launch-check.sh` again,

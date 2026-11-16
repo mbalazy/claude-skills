@@ -85,6 +85,11 @@ by what you worked on last:
   dependency already in the base is satisfied and contributes nothing - the
   base carries it. Record `parent: <dep-branch>` in the task's Log and in
   the state file's `## Progress` line.
+- **A branch another checkout holds** (`git worktree list`: the main
+  checkout, a pm worktree slot, another shift): git refuses to switch to
+  it. Fork from `origin/<that-branch>`, or from its sha (`git switch -c
+  <branch> <sha>`); never `--ignore-other-worktrees`, never remove or
+  touch the other worktree.
 - **This task already has a branch from an earlier shift** (its `branch`
   field names a branch that exists with commits beyond its parent): continue
   on it - `git switch <branch>`, never fork again, never rebuild what its

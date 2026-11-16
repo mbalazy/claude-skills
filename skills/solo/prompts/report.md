@@ -2,7 +2,8 @@
 
 ## 1. Leave things in a known state
 
-- Checkout: `git status` clean, on the base branch, `git worktree list` shows
+- Checkout: `git status` clean, on the base branch (in a pm worktree slot:
+  detached at `origin/<base>`, never on a branch), `git worktree list` shows
   nothing you added. Every task branch exists locally (and on origin when
   `--push`).
 - Runtime: stop nothing that was running when the shift began; stop what you

@@ -137,10 +137,11 @@ data. **Shared and NOT isolatable: CPU and memory** - a heavy loop in a lane
 slows the main checkout's gate; the project's notes say when heavy runs may
 start.
 
-Not supported: `/solo` inside a worktree. `/solo resume` takes the newest
-unclosed state file of the PROJECT, so a worktree shift would be a candidate
-for the main run's resume, and solo's Step 0 resolves the project from cwd.
-A worktree session gets the taking-over contract plus the solo guard instead.
+Not supported: `/solo` inside a worktree-task lane. A lane is one task, one
+session, opened and closed per task; a second solo shift (a queue, a stack of
+subs) runs in a pm worktree slot instead - a persistent worktree declared in
+the project's `executor.worktrees` (solo SKILL.md, "Where a shift runs").
+A lane session gets the taking-over contract plus the solo guard.
 
 ## Facts this rests on (dated, re-check when a version moves)
 
