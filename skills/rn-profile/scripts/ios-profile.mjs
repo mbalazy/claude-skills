@@ -348,7 +348,12 @@ function stoppedError(state, what) {
 
 async function recordSteps({ udid, app: want, seconds = DEFAULT_SECONDS, leaks = false, outDir, keepTrace = false, top = 10 }, state) {
   const device = await checkDevice(udid);
-  const app = pickApp(await runningUserApps(udid), want);
+  const apps = await runningUserApps(udid);
+  const app = pickApp(apps, want);
+  const sameName = apps.filter((a) => a !== app && attachName(a) === attachName(app));
+  if (sameName.length) {
+    throw new IosProfileError(`xctrace attaches by display name, and "${attachName(app)}" is also the name of ${sameName.map((a) => `${a.bundleId} (pid ${a.pid})`).join(', ')}; quit the other app first`, 2);
+  }
   if (state.stopped) throw stoppedError(state, 'nothing was recorded');
   const template = leaks ? LEAKS_TEMPLATE : TIME_PROFILER;
   const tracePath = join(outDir, 'native.trace');

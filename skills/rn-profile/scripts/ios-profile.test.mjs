@@ -348,3 +348,15 @@ test('a table whose export failed is reported unknown with the reason, never as 
     assert.match(formatSummary(cpuOnly), /^CPU: unknown, its export failed: no CPU schema\nUI hangs: none/);
   } finally { r.done(); }
 });
+
+test('record: two running apps that share the display name xctrace attaches by exit 2 before recording', async () => {
+  const r = rig({ launchctl: '1\t0\tUIKitApplication:com.example.sample[a]\n2\t0\tUIKitApplication:com.example.sample.dev[b]\n' });
+  try {
+    const sc = JSON.parse(readFileSync(r.env.FAKE_XCRUN_SCENARIO, 'utf8'));
+    sc.containers['com.example.sample.dev'] = sc.containers['com.example.sample'];
+    writeFileSync(r.env.FAKE_XCRUN_SCENARIO, JSON.stringify(sc));
+    await withEnv(r, () => assert.rejects(record({ udid: UDID, app: 'com.example.sample.dev', outDir: r.out }),
+      (e) => e.exitCode === 2 && /"Sample App" is also the name of com\.example\.sample \(pid 1\); quit the other app first/.test(e.message)));
+    assert.equal(r.calls().some((c) => c[1] === 'record'), false);
+  } finally { r.done(); }
+});
