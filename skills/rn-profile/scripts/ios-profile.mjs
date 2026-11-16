@@ -218,11 +218,13 @@ const round = (n) => Math.round(n * 100) / 100;
  * What the recording showed. `leaksRecorded` false = the template has no Leaks
  * instrument, said as such rather than as "0 leaks".
  */
-export function summarize(result, { meta = {}, leaksRecorded, exportErrors = {}, top = 10 }) {
+export function summarize(result, { meta = {}, leaksRecorded, exported = { cpu: true, hangs: true, leaks: true }, exportErrors = {}, top = 10 }) {
   const totalMs = result.cpuSamples.reduce((a, s) => a + s.weightNs / 1e6, 0);
+  // A table whose export failed is unknown (null / exported: false), never an empty result.
+  const failed = (k) => ({ exported: false, error: exportErrors[k] ? exportReason(exportErrors[k]) : 'no export file' });
   return {
     ...meta,
-    cpu: {
+    cpu: !exported.cpu ? failed('cpu') : {
       samples: result.cpuSamples.length,
       sampledMs: round(totalMs),
       threads: result.threads.slice(0, 5).map((t) => ({ ...t, ms: round(t.ms) })),
@@ -232,10 +234,11 @@ export function summarize(result, { meta = {}, leaksRecorded, exportErrors = {},
       })),
       hotspotsTotal: result.cpuHotspots.length,
     },
-    hangs: result.uiHangs.map((h) => ({
+    hangs: !exported.hangs ? null : result.uiHangs.map((h) => ({
       type: h.hangType, ms: round(h.durationMs), at: h.startTimeFormatted, suspected: h.suspectedFunctions.slice(0, 3),
     })),
-    leaks: leaksRecorded
+    hangsError: exported.hangs ? undefined : failed('hangs').error,
+    leaks: leaksRecorded && !exported.leaks ? { recorded: true, ...failed('leaks') } : leaksRecorded
       ? {
           recorded: true,
           count: result.memoryLeaks.reduce((a, l) => a + l.count, 0),
@@ -253,8 +256,11 @@ export function formatSummary(sum) {
   const lines = [];
   if (sum.app) lines.push(`${sum.app.displayName ?? sum.app.executable} (${sum.app.bundleId}, pid ${sum.app.pid}) on ${sum.device?.name ?? sum.device?.udid}, ${sum.seconds} s with ${sum.template === TIME_PROFILER ? 'Time Profiler' : 'the leaks template'}`);
   const c = sum.cpu;
-  lines.push(`CPU: ${c.samples} samples, ${c.sampledMs} ms sampled${c.threads.length ? ` (${c.threads.map((t) => `${t.thread} ${t.ms} ms`).join(', ')})` : ''}`);
-  if (c.hotspots.length) {
+  if (c.exported === false) lines.push(`CPU: unknown, its export failed: ${c.error}`);
+  else lines.push(`CPU: ${c.samples} samples, ${c.sampledMs} ms sampled${c.threads.length ? ` (${c.threads.map((t) => `${t.thread} ${t.ms} ms`).join(', ')})` : ''}`);
+  if (c.exported === false) {
+    // nothing more to say about CPU
+  } else if (c.hotspots.length) {
     lines.push(`hotspots (functions with >= 3% of the samples, ${c.hotspots.length} of ${c.hotspotsTotal}):`);
     for (const h of c.hotspots) {
       lines.push(`  ${h.ms.toFixed(1).padStart(8)} ms ${`${h.percent.toFixed(1)}%`.padStart(6)}  ${h.thread}${h.duringHang ? ' [during a hang]' : ''}  ${h.function}`);
@@ -262,7 +268,9 @@ export function formatSummary(sum) {
   } else if (c.samples) {
     lines.push('hotspots: no function reached 3% of the samples');
   }
-  if (sum.hangs.length) {
+  if (sum.hangs === null) {
+    lines.push(`UI hangs: unknown, their export failed: ${sum.hangsError}`);
+  } else if (sum.hangs.length) {
     lines.push(`UI hangs: ${sum.hangs.length}`);
     for (const h of sum.hangs) lines.push(`  ${h.type} ${h.ms} ms at ${h.at}${h.suspected.length ? `  suspected: ${h.suspected.join(', ')}` : ''}`);
   } else {
@@ -270,13 +278,11 @@ export function formatSummary(sum) {
   }
   if (!sum.leaks.recorded) {
     lines.push('leaks: not recorded (the Time Profiler template has no Leaks instrument; --leaks records them)');
+  } else if (sum.leaks.exported === false) {
+    lines.push(`leaks: unknown, their export failed: ${sum.leaks.error}`);
   } else {
     lines.push(`leaks: ${sum.leaks.count} (${sum.leaks.bytes} bytes)`);
     for (const l of sum.leaks.top) lines.push(`  ${l.count} x ${l.object} ${l.bytes} bytes  ${l.frame}${l.library ? ` (${l.library})` : ''}${l.attributed ? '' : ' [no call stack: likely system noise]'}`);
-  }
-  for (const [k, msg] of Object.entries(sum.exportErrors ?? {})) {
-    if (k === 'leaks' && !sum.leaks.recorded) continue;
-    lines.push(`export of ${k} failed: ${exportReason(msg)}`);
   }
   return lines.join('\n');
 }
@@ -290,7 +296,7 @@ export async function reportDir(dir, { top } = {}) {
   try { saved = JSON.parse(readFileSync(join(dir, SUMMARY_FILE), 'utf8')); } catch { /* exports without a summary: no header */ }
   const meta = { app: saved.app, device: saved.device, seconds: saved.seconds, template: saved.template, dir };
   const leaksRecorded = saved.leaks ? saved.leaks.recorded === true : Boolean(files.leaks);
-  return summarize(await analyze(files), { meta, leaksRecorded, exportErrors: saved.exportErrors ?? {}, top });
+  return summarize(await analyze(files), { meta, leaksRecorded, exported: { cpu: Boolean(files.cpu), hangs: Boolean(files.hangs), leaks: Boolean(files.leaks) }, exportErrors: saved.exportErrors ?? {}, top });
 }
 
 /**
@@ -373,7 +379,7 @@ async function recordSteps({ udid, app: want, seconds = DEFAULT_SECONDS, leaks =
   }
   dropTrace();
   const meta = { app, device, seconds, template: leaks ? 'leaks' : TIME_PROFILER, dir: outDir, trace: keepTrace ? tracePath : null };
-  const sum = summarize(await analyze(files), { meta, leaksRecorded: leaks, exportErrors: exported.diagnostics.errors, top });
+  const sum = summarize(await analyze(files), { meta, leaksRecorded: leaks, exported: { cpu: Boolean(files.cpu), hangs: Boolean(files.hangs), leaks: Boolean(files.leaks) }, exportErrors: exported.diagnostics.errors, top });
   writeFileSync(join(outDir, SUMMARY_FILE), JSON.stringify(sum, null, 1));
   return sum;
 }

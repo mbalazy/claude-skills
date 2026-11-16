@@ -328,3 +328,23 @@ test('record: when every export fails, the reason is printed and the trace is ke
     assert.equal(existsSync(join(r.out, 'native.trace')), true);
   } finally { r.done(); }
 });
+
+test('a table whose export failed is reported unknown with the reason, never as zero', async () => {
+  const r = rig({ exports: undefined });
+  try {
+    const sc = JSON.parse(readFileSync(r.env.FAKE_XCRUN_SCENARIO, 'utf8'));
+    sc.exports = { 'time-profile': join(r.fx, 'cpu.xml') };
+    writeFileSync(r.env.FAKE_XCRUN_SCENARIO, JSON.stringify(sc));
+    const sum = await withEnv(r, () => record({ udid: UDID, seconds: 1, leaks: true, outDir: r.out }));
+    assert.equal(sum.hangs, null);
+    assert.deepEqual([sum.leaks.recorded, sum.leaks.exported], [true, false]);
+    const text = formatSummary(sum);
+    assert.match(text, /UI hangs: unknown, their export failed: Export failed: no data for \/trace-toc/);
+    assert.match(text, /leaks: unknown, their export failed: Export failed: no data for/);
+    assert.doesNotMatch(text, /UI hangs: none|leaks: 0/);
+    const again = formatSummary(await reportDir(r.out));
+    assert.match(again, /UI hangs: unknown, their export failed: Export failed/);
+    const cpuOnly = summarize({ cpuSamples: [], threads: [], cpuHotspots: [], uiHangs: [], memoryLeaks: [] }, { leaksRecorded: false, exported: { cpu: false, hangs: true, leaks: false }, exportErrors: { cpu: 'Command failed: xctrace export\nno CPU schema' } });
+    assert.match(formatSummary(cpuOnly), /^CPU: unknown, its export failed: no CPU schema\nUI hangs: none/);
+  } finally { r.done(); }
+});
