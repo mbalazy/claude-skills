@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -93,6 +93,20 @@ test('an --out that cannot be written fails before the recording is consumed', a
     assert.match(bad.stderr, /cannot write --out/);
     assert.match((await run(['react', 'status', '--port', port])).stdout, /^recording for/);
     assert.ok(!existsSync(join(dir, 'missing-dir')));
+  });
+});
+
+test('a failed stop leaves an existing --out file as it was and creates none', async () => {
+  const app = fakeReactApp();
+  await withApp(app, async (port, dir) => {
+    const old = join(dir, 'old.json');
+    writeFileSync(old, '{"kept":true}');
+    const res = await run(['react', 'stop', '--port', port, '--out', old]);
+    assert.equal(res.code, 1);
+    assert.equal(readFileSync(old, 'utf8'), '{"kept":true}');
+    assert.equal((await run(['react', 'stop', '--port', port, '--out', join(dir, 'new.json')])).code, 1);
+    assert.deepEqual(readdirSync(dir), ['old.json']);
+    assert.equal((await run(['react', 'stop', '--port', port, '--out', dir])).code, 64, 'a directory is refused');
   });
 });
 

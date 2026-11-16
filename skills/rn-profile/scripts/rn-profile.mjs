@@ -26,8 +26,8 @@
 // target; 3 no answer within --timeout; 64 usage.
 
 import { parseArgs } from 'node:util';
-import { writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { writeFileSync, renameSync, accessSync, constants, existsSync, statSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import { withRuntime, UsageError } from '../../simulator-verify/scripts/devtools/runtime.mjs';
 import {
   startRecording, recordingStatus, stopRecording, summarize, formatSummary,
@@ -109,10 +109,16 @@ async function reactStop(args) {
   const top = values.top === undefined ? 10 : positiveNumber('top', values.top, { integer: true });
   const opts = targetOpts(values);
   const out = resolve(values.out);
-  // Stop hands the data over once: a file that cannot be written must fail before it.
-  try { writeFileSync(out, ''); } catch (err) { throw new UsageError(`cannot write --out ${out}: ${err.message}`); }
+  // Stop hands the data over once: a place that cannot be written must fail before it,
+  // without touching a file already there.
+  try {
+    accessSync(dirname(out), constants.W_OK);
+    if (existsSync(out) && (statSync(out).isDirectory() || (accessSync(out, constants.W_OK), false))) throw new Error('it is a directory');
+  } catch (err) { throw new UsageError(`cannot write --out ${out}: ${err.message}`); }
   const profile = await withRuntime(opts, (client) => stopRecording(client, opts));
-  writeFileSync(out, JSON.stringify(profile));
+  const tmp = `${out}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(profile));
+  renameSync(tmp, out);
   const sum = summarize(profile, { top });
   if (values.json) {
     process.stdout.write(`${JSON.stringify({ file: out, ...sum })}\n`);
