@@ -125,6 +125,8 @@ test('starting over an unread recording says it was dropped', async () => {
   await sleep(60);
   const next = await startRecording(app.client);
   assert.equal(next.discarded, 'time-limit');
+  app.run('__REACT_DEVTOOLS_GLOBAL_HOOK__.rendererInterfaces.get(1).stopProfiling()');
+  assert.equal((await startRecording(app.client)).discarded, 'stopped-elsewhere');
 });
 
 test('another profiler holds React: start refuses, --takeover ends it and starts', async () => {

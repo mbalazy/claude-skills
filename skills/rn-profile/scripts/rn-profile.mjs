@@ -76,7 +76,7 @@ async function reactStart(args) {
     console.log(`already recording for ${secs(elapsed)} (limit ${secs(res.session.maxMs)}) - nothing changed`);
     return 0;
   }
-  if (res.discarded) console.log(`note: an earlier recording that was never stopped (${res.discarded === 'time-limit' ? 'ended by its time limit' : 'still running'}) was dropped`);
+  if (res.discarded) console.log(`note: an earlier recording that was never stopped (${res.discarded === 'time-limit' ? 'ended by its time limit' : res.discarded === 'stop' ? 'its stop did not finish' : 'stopped by another tool'}) was dropped`);
   console.log(`recording React commits and CPU samples; it ends by itself after ${secs(res.session.maxMs)} - run \`react stop --out FILE\``);
   return 0;
 }

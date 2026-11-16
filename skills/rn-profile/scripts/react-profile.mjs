@@ -133,7 +133,8 @@ export async function startRecording(client, { maxSeconds = DEFAULT_MAX_SECONDS,
     throw new ProfileError(`React's profiler did not start (${started.reason}${started.message ? `: ${started.message}` : ''}).`);
   }
   const session = started.session;
-  return { started: true, session, discarded: previous ? previous.endedBy ?? 'running' : null };
+  // A previous session still "running" here was stopped by another tool (ours running returned `already`).
+  return { started: true, session, discarded: previous ? previous.endedBy ?? 'stopped-elsewhere' : null };
 }
 
 /** After a start that failed midway: stop what may have started, best effort. */
