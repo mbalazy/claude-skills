@@ -55,6 +55,23 @@ test('a component whose edge shows at the bottom of the screen stays; one fully 
   assert.deepEqual(testIDs(pruneTree(raw).nodes), ['L', 'peeking', 'right-edge']);
 });
 
+test('stacked same-name layers keep the testIDs and text inside each; empty twins are skipped', () => {
+  const r = { x: 0, y: 0, w: 300, h: 300 };
+  const raw = { screenW: 400, screenH: 800, components: [
+    { id: 0, name: 'Root', rect: { x: 0, y: 0, w: 400, h: 400 }, parentIdx: -1, testID: 'root' },
+    { id: 1, name: 'Layer', rect: r, parentIdx: 0 },
+    { id: 2, name: 'Btn', rect: { x: 10, y: 10, w: 50, h: 20 }, parentIdx: 1, testID: 'a-btn' },
+    { id: 3, name: 'Layer', rect: r, parentIdx: 0 },
+    { id: 4, name: 'Btn', rect: { x: 10, y: 50, w: 50, h: 20 }, parentIdx: 3, testID: 'b-btn', text: 'Pay' },
+    { id: 5, name: 'Layer', rect: r, parentIdx: 0 },
+    { id: 6, name: 'Shape', rect: { x: 10, y: 90, w: 5, h: 5 }, parentIdx: 5 },
+  ] };
+  const t = pruneTree(raw);
+  assert.deepEqual(testIDs(t.nodes), ['a-btn', 'b-btn', 'root']);
+  assert.match(formatText(t), /"Pay"/);
+  assert.equal(t.nodes.filter((n) => n.entry.name === 'Layer').length, 2);
+});
+
 test('onScreenOnly false keeps off-screen subtrees', () => {
   const ids = testIDs(pruneTree(RAW, { onScreenOnly: false }).nodes);
   assert.ok(ids.includes('Drawer'));

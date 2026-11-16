@@ -15,9 +15,10 @@
 //     service, which is not used here, so rects stay in the app window's axes;
 //   - the tap point is the rect's centre in points (what `sim-ui.sh tap X Y`
 //     takes on a portrait simulator), not a 0..1 fraction of the screen;
-//   - a component carrying a testID its neighbour does not carry is never
-//     merged away as a duplicate (same name, same rect), so every testID the
-//     app renders on screen stays in the output;
+//   - a component carrying a testID its parent does not carry is never merged
+//     into that parent (same name, same rect), and a sibling repeating the
+//     previous one is skipped only when nothing inside it carries a testID or
+//     text, so every testID the app renders on screen stays in the output;
 //   - the "sole-child leaf" rule drops only a leaf with no text and no label
 //     (Argent's comment says content-free; its code also dropped a leaf with
 //     text, e.g. the "Submit" inside a Button carrying only a testID);
@@ -221,6 +222,10 @@ export function pruneTree(data, { onScreenOnly = true, maxNodes } = {}) {
     }
   }
 
+  const carriesContent = (id) => {
+    const e = components[id];
+    return !!(e.testID || e.text || e.accLabel) || (childrenOf.get(id) ?? []).some(carriesContent);
+  };
   const render = (id, depth) => {
     const c = components[id];
     if (!c) return;
@@ -236,8 +241,9 @@ export function pruneTree(data, { onScreenOnly = true, maxNodes } = {}) {
     let prev = null;
     for (const k of childrenOf.get(id) ?? []) {
       const child = components[k];
-      // A sibling repeating the previous one (same name, same place) is skipped.
-      if (prev && child.name === prev.name && child.rect && prev.rect && near(child.rect, prev.rect) && !ownTestID(child, prev)) continue;
+      // A sibling repeating the previous one (same name, same place) is skipped,
+      // unless something in it carries a testID or text (stacked layers).
+      if (prev && child.name === prev.name && child.rect && prev.rect && near(child.rect, prev.rect) && !carriesContent(k)) continue;
       render(k, depth + 1);
       prev = child;
     }
