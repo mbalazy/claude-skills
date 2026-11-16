@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pruneTree, filterNodes, makeMatcher, formatText, toJson, testIDs, readComponentTree, TREE_BINDING } from './component-tree.mjs';
 import { connect } from './cdp.mjs';
-import { startFakeInspector, fakeRuntime } from './testing/fake-inspector.mjs';
+import { startFakeInspector, withTreeScript } from './testing/fake-inspector.mjs';
 
 // A synthetic screen, 400x800 pt, in the shape the in-app script reports.
 let nextId = 0;
@@ -120,23 +120,8 @@ test('testIDs lists each shown testID once, sorted', () => {
   assert.deepEqual(testIDs(pruneTree(RAW).nodes), ['Card-1', 'Card-1-inner', 'Main-go', 'Main-header', 'Main-root']);
 });
 
-// The in-app script, as the fake runtime answers it: the requestId is read
-// out of the script text, the answer comes over the binding.
-function treeRuntime(answer) {
-  const base = fakeRuntime({});
-  return (msg, session) => {
-    const expr = msg.params?.expression ?? '';
-    if (msg.method === 'Runtime.evaluate' && expr.includes('REQUEST_ID')) {
-      const requestId = JSON.parse(/var REQUEST_ID = ("[^"]+")/.exec(expr)[1]);
-      if (answer) setTimeout(() => session.event('Runtime.bindingCalled', { name: TREE_BINDING, payload: JSON.stringify({ requestId, result: JSON.stringify(answer) }) }), 5);
-      return { result: { type: 'object', className: 'Promise', objectId: '99' } };
-    }
-    return base(msg, session);
-  };
-}
-
 async function withFake(answer, fn) {
-  const fake = await startFakeInspector({ handler: treeRuntime(answer) });
+  const fake = await startFakeInspector({ handler: withTreeScript(answer) });
   const client = await connect(`ws://localhost:${fake.port}/inspector/debug?device=fake&page=1`);
   try { await fn(client, fake); } finally { await client.close(); await fake.close(); }
 }

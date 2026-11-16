@@ -163,6 +163,27 @@ export function fakeRuntime(specs) {
   };
 }
 
+/**
+ * Wraps a handler so that the component-tree script (recognised by its
+ * REQUEST_ID line) is answered over the __argent_callback binding with
+ * `answer` as its result; answer null = never answers.
+ */
+export function withTreeScript(answer, base = fakeRuntime({})) {
+  return (msg, session) => {
+    const expr = msg.params?.expression ?? '';
+    if (msg.method === 'Runtime.evaluate' && expr.includes('REQUEST_ID')) {
+      const requestId = JSON.parse(/var REQUEST_ID = ("[^"]+")/.exec(expr)[1]);
+      if (answer) {
+        setTimeout(() => session.event('Runtime.bindingCalled', {
+          name: '__argent_callback', payload: JSON.stringify({ requestId, result: JSON.stringify(answer) }),
+        }), 5);
+      }
+      return { result: { type: 'object', className: 'Promise', objectId: '99' } };
+    }
+    return base(msg, session);
+  };
+}
+
 /** A Metro-shaped target entry pointing at the fake inspector. */
 export function fakeTarget(port, { page = 1, device = 'iPhone 17 Test', app = 'com.example.app', fusebox = page === 1, description } = {}) {
   return {

@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // rn-devtools.mjs - ask the running React Native app things over Metro's CDP
-// inspector: which runtime pages exist, and what a JS expression evaluates to
-// inside the app. Node built-ins only.
+// inspector: which runtime pages exist, what a JS expression evaluates to
+// inside the app, and which React components the screen is made of. Node
+// built-ins only.
 //
 // Usage:
 //   rn-devtools.mjs targets [--port N] [--json]
 //   rn-devtools.mjs eval EXPRESSION [target options] [--timeout S] [--no-await]
+//   rn-devtools.mjs tree [target options] [--grep REGEX] [--id TESTID] [--ids]
+//                        [--json] [--all] [--max-nodes N]
 //
 // Target options (the rules of read-rn-logs-cdp.py):
 //   --port N        Metro port (default: $METRO_PORT, else 8081)
@@ -17,6 +20,16 @@
 // eval prints the value as JSON (a bare `undefined` when there is none). The
 // expression runs in the app's global scope; a Promise is awaited unless
 // --no-await.
+//
+// tree prints the React component tree of the screen the app shows, one
+// component per line (two spaces per level): name, "text" (or the
+// accessibility label), [testID=...] and (tap X,Y) = the centre of its rect in
+// points. Layout-only wrappers are pruned (Argent's rules; a missing wrapper
+// proves nothing). --grep keeps components whose name, text, label or testID
+// match REGEX (case-insensitive), --id the one testID, both with their
+// ancestors; --ids prints only the testIDs, one per line; --json the same
+// nodes as JSON; --all keeps off-screen components; --max-nodes collapses
+// wrapper chains past N. Its --timeout default is 15.
 //
 // Exit codes:
 //   0  done
@@ -32,6 +45,7 @@
 import { parseArgs } from 'node:util';
 import { fetchTargets, selectTarget, describeTarget, pageId } from './devtools/targets.mjs';
 import { withRuntime, metroPort, UsageError } from './devtools/runtime.mjs';
+import { readComponentTree, pruneTree, filterNodes, makeMatcher, formatText, toJson, testIDs, TREE_TIMEOUT_MS } from './devtools/component-tree.mjs';
 
 const TARGET_OPTIONS = {
   port: { type: 'string' },
@@ -82,7 +96,43 @@ async function cmdEval(args) {
   return 0;
 }
 
-const COMMANDS = { targets: cmdTargets, eval: cmdEval };
+async function cmdTree(args) {
+  const { values, positionals } = parseArgs({
+    args, allowPositionals: true, strict: true,
+    options: {
+      ...TARGET_OPTIONS,
+      grep: { type: 'string' }, id: { type: 'string' }, ids: { type: 'boolean' },
+      json: { type: 'boolean' }, all: { type: 'boolean' }, 'max-nodes': { type: 'string' },
+    },
+  });
+  if (positionals.length) throw new UsageError(`tree takes no positional arguments, got: ${positionals.join(' ')}`);
+  if (values.ids && values.json) throw new UsageError('--ids and --json exclude each other');
+  let maxNodes;
+  if (values['max-nodes'] !== undefined) {
+    maxNodes = Number(values['max-nodes']);
+    if (!Number.isInteger(maxNodes) || maxNodes < 1) throw new UsageError(`--max-nodes wants a whole number >= 1, got ${values['max-nodes']}`);
+  }
+  if (values.grep !== undefined) {
+    try { new RegExp(values.grep); } catch (err) { throw new UsageError(`--grep: ${err.message}`); }
+  }
+  const opts = targetOpts(values);
+  const raw = await withRuntime(opts, (client) => readComponentTree(client, { timeoutMs: opts.timeoutMs ?? TREE_TIMEOUT_MS }));
+  const tree = pruneTree(raw, { onScreenOnly: !values.all, maxNodes });
+  const filtered = values.grep !== undefined || values.id !== undefined;
+  const nodes = filtered ? filterNodes(tree.nodes, makeMatcher({ grep: values.grep, id: values.id })) : tree.nodes;
+  if (values.ids) {
+    const ids = testIDs(nodes);
+    if (ids.length) process.stdout.write(ids.join('\n') + '\n');
+  } else if (values.json) {
+    process.stdout.write(JSON.stringify(toJson(tree, nodes)) + '\n');
+  } else {
+    process.stdout.write(formatText(tree, nodes) + '\n');
+  }
+  // A filter that matched nothing is an answer ("not on this screen"), not a failure.
+  return 0;
+}
+
+const COMMANDS = { targets: cmdTargets, eval: cmdEval, tree: cmdTree };
 
 async function main(argv) {
   const [cmd, ...rest] = argv;
