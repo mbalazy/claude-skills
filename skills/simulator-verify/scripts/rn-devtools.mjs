@@ -23,8 +23,8 @@
 //
 // tree prints the React component tree of the screen the app shows, one
 // component per line (two spaces per level): name, "text" (or the
-// accessibility label), [testID=...] and (tap X,Y) = the centre of its rect in
-// points. Layout-only wrappers are pruned (Argent's rules; a missing wrapper
+// accessibility label), [testID=...] and (tap X,Y) = the centre of the part
+// of its rect that is on screen, in points. Layout-only wrappers are pruned (Argent's rules; a missing wrapper
 // proves nothing). --grep keeps components whose name, text, label or testID
 // match REGEX (case-insensitive), --id the one testID, both with their
 // ancestors; --ids prints only the testIDs, one per line; --json the same

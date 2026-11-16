@@ -13,8 +13,9 @@
 //     text and the JSON output are made from, instead of the text alone;
 //   - no screen orientation input: the tool reads it from Argent's native
 //     service, which is not used here, so rects stay in the app window's axes;
-//   - the tap point is the rect's centre in points (what `sim-ui.sh tap X Y`
-//     takes on a portrait simulator), not a 0..1 fraction of the screen;
+//   - the tap point is in points (what `sim-ui.sh tap X Y` takes on a
+//     portrait simulator), not a 0..1 fraction of the screen, and it is the
+//     centre of the part of the rect that is on screen;
 //   - a component carrying a testID its parent does not carry is never merged
 //     into that parent (same name, same rect), and a sibling repeating the
 //     previous one is skipped only when nothing inside it carries a testID or
@@ -267,16 +268,32 @@ export function makeMatcher({ grep, id } = {}) {
     (!re || [e.name, e.text, e.accLabel, e.testID].some((v) => typeof v === 'string' && re.test(v)));
 }
 
-export function tapPoint(rect) {
-  return rect ? { x: Math.round(rect.x + rect.w / 2), y: Math.round(rect.y + rect.h / 2) } : null;
+/**
+ * Where to tap: the centre of the part of the rect that is on screen (a card
+ * peeking in at the bottom is tapped on its visible edge), null when none of
+ * it is. Without screen dimensions, the centre of the whole rect.
+ */
+export function tapPoint(rect, screenW = 0, screenH = 0) {
+  if (!rect) return null;
+  let { x, y, w, h } = rect;
+  if (screenW > 0 && screenH > 0) {
+    const x2 = Math.min(x + w, screenW);
+    const y2 = Math.min(y + h, screenH);
+    x = Math.max(x, 0);
+    y = Math.max(y, 0);
+    if (x2 <= x || y2 <= y) return null;
+    w = x2 - x;
+    h = y2 - y;
+  }
+  return { x: Math.round(x + w / 2), y: Math.round(y + h / 2) };
 }
 
-function label(e) {
+function label(e, tree) {
   let s = e.name;
   const shown = e.text ?? e.accLabel;
   if (shown) s += ` "${shown}"`;
   if (e.testID) s += ` [testID=${e.testID}]`;
-  const tap = tapPoint(e.rect);
+  const tap = tapPoint(e.rect, tree.screenW, tree.screenH);
   if (tap) s += ` (tap ${tap.x},${tap.y})`;
   return s;
 }
@@ -284,10 +301,10 @@ function label(e) {
 /** The text form: one line per component, two spaces per level. */
 export function formatText(tree, nodes = tree.nodes) {
   if (!tree.nodes.length) return 'No visible components found on screen.';
-  const lines = [`Screen: ${tree.screenW}x${tree.screenH} pt (tap = rect centre in points)`, ''];
+  const lines = [`Screen: ${tree.screenW}x${tree.screenH} pt (tap = centre of the visible part, in points)`, ''];
   for (const n of nodes) {
     const indent = '  '.repeat(n.depth);
-    lines.push(indent + label(n.entry));
+    lines.push(indent + label(n.entry, tree));
     if (n.via) lines.push(`${indent}  ... via ${n.via} wrapper${n.via > 1 ? 's' : ''}`);
   }
   if (!nodes.length) lines.push('(nothing matches the filter)');
@@ -314,7 +331,7 @@ export function toJson(tree, nodes = tree.nodes) {
         ...(e.accLabel !== undefined && { accLabel: e.accLabel }),
         ...(e.testID !== undefined && { testID: e.testID }),
         rect: e.rect ? [e.rect.x, e.rect.y, e.rect.w, e.rect.h] : null,
-        tap: tapPoint(e.rect),
+        tap: tapPoint(e.rect, tree.screenW, tree.screenH),
         ...(n.via && { via: n.via }),
       };
     }),

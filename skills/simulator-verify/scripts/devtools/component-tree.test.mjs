@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pruneTree, filterNodes, makeMatcher, formatText, toJson, testIDs, readComponentTree, TREE_BINDING } from './component-tree.mjs';
+import { pruneTree, filterNodes, makeMatcher, formatText, toJson, testIDs, tapPoint, readComponentTree, TREE_BINDING } from './component-tree.mjs';
 import { connect } from './cdp.mjs';
 import { startFakeInspector, withTreeScript } from './testing/fake-inspector.mjs';
 
@@ -85,6 +85,15 @@ test('an on-screen child of a composite measured off screen stays; a rectless te
   const t = pruneTree(raw);
   assert.deepEqual(testIDs(t.nodes), ['item-1', 'list', 'main']);
   assert.equal(t.stats.offScreen, 3);
+});
+
+test('the tap point is the centre of the visible part; none for a rect fully off screen', () => {
+  assert.deepEqual(tapPoint({ x: 0, y: 780, w: 300, h: 400 }, 400, 800), { x: 150, y: 790 });
+  assert.deepEqual(tapPoint({ x: 20, y: 600, w: 100, h: 40 }, 400, 800), { x: 70, y: 620 });
+  assert.equal(tapPoint({ x: -500, y: 0, w: 300, h: 800 }, 400, 800), null);
+  assert.deepEqual(tapPoint({ x: 0, y: 780, w: 300, h: 400 }), { x: 150, y: 980 });
+  const t = pruneTree({ screenW: 400, screenH: 800, components: [{ id: 0, name: 'Card', rect: { x: 0, y: 780, w: 300, h: 400 }, parentIdx: -1, testID: 'peek' }] });
+  assert.match(formatText(t), /Card \[testID=peek\] \(tap 150,790\)/);
 });
 
 test('onScreenOnly false keeps off-screen subtrees', () => {
