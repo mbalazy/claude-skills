@@ -21,3 +21,5 @@ that every file listed below is still byte-identical to upstream and that no
 file here is unlisted.
 
 Copied files (path | change):
+- packages/tool-server/src/utils/react-profiler/devtools-bootstrap.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/scripts.ts | unmodified
