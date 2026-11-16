@@ -13,6 +13,7 @@
 // between localhost peers: masked client frames in, unmasked frames out.
 
 import http from 'node:http';
+import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -158,6 +159,37 @@ export function fakeRuntime(specs) {
         return { result: { type: 'boolean', value: true } };
       }
       return { result: { type: 'object', value: isPromise ? { _h: 0, _i: 0 } : spec.value } };
+    }
+    return {};
+  };
+}
+
+/**
+ * A handler that evaluates every expression in a node:vm context standing in
+ * for the app, so scripts that patch the app's globals really run. Objects
+ * get an objectId; callFunctionOn returns them by value (as JSON) or answers
+ * the await probe with false (nothing here is a thenable).
+ */
+export function vmRuntime(ctx) {
+  return (msg, session) => {
+    session.objects ??= new Map();
+    const { method, params = {} } = msg;
+    if (method === 'Runtime.enable' || method === 'Runtime.addBinding') return {};
+    if (method === 'Runtime.evaluate') {
+      let v;
+      try { v = vm.runInContext(params.expression, ctx); } catch (err) {
+        return { result: { type: 'object' }, exceptionDetails: { text: 'Uncaught', exception: { description: String(err && err.stack || err) } } };
+      }
+      if (v === undefined) return { result: { type: 'undefined' } };
+      if (v === null || typeof v !== 'object') return { result: { type: typeof v, value: v } };
+      const objectId = String(session.objects.size + 1);
+      session.objects.set(objectId, v);
+      return { result: { type: 'object', objectId } };
+    }
+    if (method === 'Runtime.callFunctionOn') {
+      const v = session.objects.get(params.objectId);
+      if (params.functionDeclaration.includes('.then')) return { result: { type: 'boolean', value: false } };
+      return { result: { type: 'object', value: JSON.parse(JSON.stringify(v)) } };
     }
     return {};
   };
