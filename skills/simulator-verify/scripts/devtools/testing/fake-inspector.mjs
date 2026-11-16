@@ -114,6 +114,7 @@ export async function startFakeInspector({ targets = () => [], handler = () => (
  *   { throws: 'description' } a JS exception
  *   { resolve: v, delay }     a Promise (as RN's polyfill: an Object, no CDP await)
  *   { reject: 'Error: x' }    a rejected Promise
+ *   { resolveUnserializable: 'msg' } a Promise whose value JSON cannot carry
  *   { pending: true }         a Promise that never settles
  *   { hang: true }            no answer at all
  *   { close: [code, reason] } the server closes the socket instead of answering
@@ -143,11 +144,12 @@ export function fakeRuntime(specs) {
       if (!session.enabled) return { error: { code: -32000, message: 'Runtime domain not enabled' } };
       const spec = session.objects.get(params.objectId);
       if (!spec) return { error: { code: -32000, message: 'Could not find object with given id' } };
-      const isPromise = 'resolve' in spec || 'reject' in spec || spec.pending;
+      const isPromise = 'resolve' in spec || 'reject' in spec || 'resolveUnserializable' in spec || spec.pending;
       if (params.functionDeclaration.includes('.then')) {
         if (!isPromise) return { result: { type: 'boolean', value: false } };
         const [binding, requestId] = params.arguments.map((a) => a.value);
-        const payload = 'resolve' in spec ? (spec.resolve === undefined ? { requestId } : { requestId, value: spec.resolve }) : { requestId, error: spec.reject };
+        const payload = 'resolve' in spec ? (spec.resolve === undefined ? { requestId } : { requestId, value: spec.resolve })
+          : 'resolveUnserializable' in spec ? { requestId, unserializable: spec.resolveUnserializable } : { requestId, error: spec.reject };
         if (!spec.pending && session.bindings?.has(binding)) {
           setTimeout(() => session.event('Runtime.bindingCalled', { name: binding, payload: JSON.stringify(payload) }), spec.delay ?? 5);
         }

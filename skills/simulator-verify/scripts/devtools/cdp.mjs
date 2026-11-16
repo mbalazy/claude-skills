@@ -11,7 +11,7 @@
 // in turn. Such a close is reported as CdpError kind "taken" with what to do.
 
 export class CdpError extends Error {
-  /** kind: "connect" | "timeout" | "closed" | "taken" | "protocol" | "exception" */
+  /** kind: "connect" | "timeout" | "closed" | "taken" | "protocol" | "exception" | "unserializable" */
   constructor(message, kind, exitCode) {
     super(message);
     this.kind = kind;
@@ -23,12 +23,24 @@ export const DEFAULT_TIMEOUT_MS = 10_000;
 
 const AWAIT_BINDING = '__rn_devtools_await';
 // Runs with `this` = the evaluated object. Returns false for a non-thenable;
-// for a thenable, reports its outcome over the binding once it settles.
-const AWAIT_FUNCTION = `function (binding, requestId) {
+// for a thenable, reports its outcome over the binding once it settles. A
+// value JSON cannot carry (a BigInt, a cycle, NaN) is reported as such
+// instead of throwing inside the callback, where nothing would answer.
+export const AWAIT_FUNCTION = `function (binding, requestId) {
   if (this === null || this === undefined || typeof this.then !== 'function') return false;
-  var send = function (o) { o.requestId = requestId; globalThis[binding](JSON.stringify(o)); };
+  var send = function (o) {
+    var text;
+    o.requestId = requestId;
+    try { text = JSON.stringify(o); } catch (e) {
+      text = JSON.stringify({ requestId: requestId, unserializable: String((e && e.message) || e) });
+    }
+    globalThis[binding](text);
+  };
   Promise.resolve(this).then(
-    function (v) { send(v === undefined ? {} : { value: v }); },
+    function (v) {
+      if (typeof v === 'bigint' || (typeof v === 'number' && !isFinite(v))) send({ unserializable: String(v) + (typeof v === 'bigint' ? 'n' : '') });
+      else send(v === undefined ? {} : { value: v });
+    },
     function (e) { send({ error: String((e && e.stack) || e) }); });
   return true;
 }`;
@@ -41,6 +53,10 @@ function closeError(code, reason) {
   if (/NEW_DEBUGGER_OPENED/.test(reason ?? '')) return new CdpError(`Connection closed: ${TAKEN_HINT}`, 'taken', 3);
   const why = reason ? `${code} ${reason}` : String(code);
   return new CdpError(`Connection to the app's runtime closed (${why}) - app restarted or reloaded?`, 'closed', 3);
+}
+
+function unserializable(what) {
+  return new CdpError(`${what}. Return something JSON can carry, e.g. String(x) or a plain object.`, 'unserializable', 1);
 }
 
 /** The text of a Runtime.evaluate exception, with call frames when the description has none. */
@@ -184,6 +200,7 @@ class CdpClient {
       if (isThenable.result?.value === true) {
         const outcome = await settled.promise;
         if ('error' in outcome) throw new CdpError(`Promise rejected: ${outcome.error}`, 'exception', 1);
+        if ('unserializable' in outcome) throw unserializable(`The Promise resolved to a value JSON cannot carry (${outcome.unserializable})`);
         return outcome.value;
       }
       settled.cancel();

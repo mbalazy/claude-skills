@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { connect, CdpError, exceptionText } from './cdp.mjs';
+import { connect, CdpError, exceptionText, AWAIT_FUNCTION } from './cdp.mjs';
 import { startFakeInspector, fakeRuntime } from './testing/fake-inspector.mjs';
 
 // A runtime that answers like Hermes for the expressions the tests send.
@@ -15,6 +15,7 @@ const runtime = fakeRuntime({
   'later(7)': { resolve: { n: 7 }, delay: 30 },
   'failLater()': { reject: 'Error: nope\n    at global (:1:1)' },
   'forever()': { pending: true },
+  'bigLater()': { resolveUnserializable: 'Do not know how to serialize a BigInt' },
 });
 function hermesLike(msg, session) {
   const e = msg.params?.expression ?? '';
@@ -74,6 +75,28 @@ test('each await uses a requestId no other command reuses', async () => {
   await fake.close();
   assert.equal(ids.length, 2);
   assert.notEqual(ids[0], ids[1]);
+});
+
+test('a Promise resolving to a value JSON cannot carry rejects at once with kind "unserializable"', () => withSession(async (c) => {
+  await assert.rejects(c.evaluate('bigLater()', { timeoutMs: 2000 }), (err) => err.kind === 'unserializable' && err.exitCode === 1 && /JSON cannot carry \(Do not know how to serialize a BigInt\)/.test(err.message));
+}));
+
+test('the in-app await function reports every outcome over the binding, unserializable ones included', async () => {
+  const awaitIn = new Function(`return (${AWAIT_FUNCTION});`)();
+  const run = (thenable) => new Promise((resolve) => {
+    globalThis.__test_await = (text) => resolve(JSON.parse(text));
+    assert.equal(awaitIn.call(thenable, '__test_await', 'r1'), true);
+  });
+  const cycle = {}; cycle.self = cycle;
+  assert.deepEqual(await run(Promise.resolve({ a: 1 })), { value: { a: 1 }, requestId: 'r1' });
+  assert.deepEqual(await run(Promise.resolve(undefined)), { requestId: 'r1' });
+  assert.deepEqual(await run(Promise.resolve(10n)), { unserializable: '10n', requestId: 'r1' });
+  assert.deepEqual(await run(Promise.resolve(NaN)), { unserializable: 'NaN', requestId: 'r1' });
+  assert.match((await run(Promise.resolve(cycle))).unserializable, /circular/i);
+  assert.match((await run(Promise.resolve({ big: 1n }))).unserializable, /BigInt/);
+  assert.match((await run(Promise.reject(new Error('nope')))).error, /Error: nope/);
+  assert.equal(awaitIn.call({ plain: 1 }, '__test_await', 'r2'), false);
+  delete globalThis.__test_await;
 });
 
 test('awaitPromise false returns the Promise object as it is', () => withSession(async (c) => {
