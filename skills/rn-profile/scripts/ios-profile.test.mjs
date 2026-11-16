@@ -170,7 +170,7 @@ test('record: xctrace failure exits 1 with its message; a timeout and an ignored
   try {
     const started = Date.now();
     await withEnv(t, () => assert.rejects(record({ udid: UDID, seconds: 1, outDir: t.out, timeoutMs: 300 }),
-      (e) => e.exitCode === 3 && /did not finish within 0 s; it was stopped and nothing was exported/.test(e.message)));
+      (e) => e.exitCode === 3 && /no result within --timeout \(0 s\): xctrace was stopped and nothing was exported/.test(e.message)));
     assert.ok(Date.now() - started < 10_000);
     assert.deepEqual(readdirSync(t.out), []);
   } finally { t.done(); }
@@ -276,4 +276,26 @@ test('recordTrace: an xctrace that ignores SIGINT gets SIGTERM after the save gr
     assert.ok(r.calls().some((c) => c[1] === 'record'));
     assert.equal(alive(Number(readFileSync(`${r.env.FAKE_XCRUN_SCENARIO}.pid`, 'utf8'))), false);
   } finally { r.done(); }
+});
+
+test('cli ios record: Ctrl-C or --timeout during the export kills the export, leaves no process, exports nothing', async () => {
+  for (const [how, expect] of [['sigint', 130], ['timeout', 3]]) {
+    const r = rig({ record: { rc: 0, delayMs: 50 }, exportDelayMs: 60_000 });
+    try {
+      const extra = how === 'timeout' ? ['--timeout', '2'] : [];
+      const child = spawn(process.execPath, [CLI, 'ios', 'record', '--udid', UDID, '--seconds', '1', '--out', r.out, ...extra], { env: r.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      child.stderr.on('data', (b) => { stderr += b; });
+      const pidFile = `${r.env.FAKE_XCRUN_SCENARIO}.export.pid`;
+      for (let i = 0; i < 200 && !existsSync(pidFile); i++) await sleep(50);
+      const xpid = Number(readFileSync(pidFile, 'utf8'));
+      if (how === 'sigint') child.kill('SIGINT');
+      const code = await new Promise((res) => child.on('close', res));
+      assert.equal(code, expect, `${how}: ${stderr}`);
+      assert.match(stderr, /the export was stopped and nothing was exported/);
+      await sleep(300);
+      assert.equal(alive(xpid), false, how);
+      assert.deepEqual(readdirSync(r.out), [], how);
+    } finally { r.done(); }
+  }
 });

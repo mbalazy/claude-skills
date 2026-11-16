@@ -18,7 +18,7 @@
 //     CPU or hang reading of that process is skewed; it is used only with
 //     `leaks: true`.
 
-import { execFile, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, readdirSync, rmSync, statSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -279,30 +279,77 @@ export async function reportDir(dir, { top } = {}) {
  * The whole recording: device and app checks, xctrace, export, analysis.
  * The .trace bundle is deleted unless keepTrace; the exports and summary.json stay in outDir.
  */
-export async function record({ udid, app: want, seconds = DEFAULT_SECONDS, leaks = false, outDir, keepTrace = false, timeoutMs, top = 10 }) {
+/** Every process below this one: xcrun -> xctrace, and the `xctrace export` runs Argent's helper starts. */
+function descendants(pid = process.pid) {
+  let kids = [];
+  try {
+    kids = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8', timeout: 5_000 }).split('\n').filter(Boolean).map(Number);
+  } catch { /* pgrep exits 1 when there are none */ }
+  return kids.flatMap((k) => [k, ...descendants(k)]);
+}
+
+export async function record(opts) {
+  // --timeout and SIGINT / SIGTERM cover the whole command. While xctrace records,
+  // recordTrace stops it so it can save; while the exports run, they are killed
+  // (Argent's export helper gives no handle on its processes) until the export returns.
+  const limitMs = opts.timeoutMs ?? (opts.seconds ?? DEFAULT_SECONDS) * 1000 + 90_000;
+  const state = { stopped: null, phase: 'check', startedAt: Date.now(), limitMs, killer: null };
+  const stop = (why) => {
+    if (state.stopped) return;
+    state.stopped = why;
+    if (state.phase !== 'export') return;
+    const killAll = () => { for (const pid of descendants()) { try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ } } };
+    killAll();
+    state.killer = setInterval(killAll, 200);
+  };
+  const onSignal = () => stop('interrupted');
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  const watchdog = setTimeout(() => stop('timeout'), limitMs);
+  try {
+    return await recordSteps(opts, state);
+  } finally {
+    clearTimeout(watchdog);
+    clearInterval(state.killer);
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+  }
+}
+
+function stoppedError(state, what) {
+  return state.stopped === 'timeout'
+    ? new IosProfileError(`no result within --timeout (${Math.round(state.limitMs / 1000)} s): ${what} and nothing was exported`, 3)
+    : new IosProfileError(`interrupted: ${what} and nothing was exported`, 130);
+}
+
+async function recordSteps({ udid, app: want, seconds = DEFAULT_SECONDS, leaks = false, outDir, keepTrace = false, top = 10 }, state) {
   const device = await checkDevice(udid);
   const app = pickApp(await runningUserApps(udid), want);
+  if (state.stopped) throw stoppedError(state, 'nothing was recorded');
   const template = leaks ? LEAKS_TEMPLATE : TIME_PROFILER;
   const tracePath = join(outDir, 'native.trace');
   if (existsSync(tracePath)) throw new IosProfileError(`${tracePath} already exists; pick another --out`, 64);
-  const limitMs = timeoutMs ?? seconds * 1000 + 90_000;
-  const rec = await recordTrace({ udid, name: attachName(app), seconds, template, tracePath, timeoutMs: limitMs });
+  state.phase = 'record';
+  const rec = await recordTrace({ udid, name: attachName(app), seconds, template, tracePath, timeoutMs: Math.max(1, state.limitMs - (Date.now() - state.startedAt)) });
   const dropTrace = () => { if (!keepTrace) rmSync(tracePath, { recursive: true, force: true }); };
-  if (rec.ended === 'timeout') {
+  if (rec.ended || state.stopped) {
     dropTrace();
-    throw new IosProfileError(`xctrace did not finish within ${Math.round(limitMs / 1000)} s; it was stopped and nothing was exported`, 3);
-  }
-  if (rec.ended === 'interrupted') {
-    dropTrace();
-    throw new IosProfileError('interrupted: xctrace was stopped and nothing was exported', 130);
+    if (!state.stopped) state.stopped = rec.ended;
+    throw stoppedError(state, 'xctrace was stopped');
   }
   if (rec.code !== 0 || !existsSync(tracePath)) {
     dropTrace();
     throw new IosProfileError(`xctrace record failed (exit ${rec.code ?? rec.signal}): ${lastLines(rec.output) || 'no output'}`);
   }
+  state.phase = 'export';
   const exported = await exportTrace(tracePath);
-  dropTrace();
   const files = exported.files;
+  if (state.stopped) {
+    for (const f of Object.values(files)) if (f) rmSync(f, { force: true });
+    dropTrace();
+    throw stoppedError(state, 'the export was stopped');
+  }
+  dropTrace();
   if (!files.cpu && !files.hangs) {
     throw new IosProfileError(`xctrace export produced neither CPU samples nor hangs: ${Object.entries(exported.diagnostics.errors).map(([k, v]) => `${k}: ${v.split('\n')[0]}`).join('; ')}`);
   }

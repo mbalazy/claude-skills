@@ -7,6 +7,7 @@
 //   containers bundle id -> app path (`simctl get_app_container`)
 //   record     { rc, delayMs, ignoreSigint, output } for `xctrace record`
 //   exports    schema / track name -> file to copy for `xctrace export --xpath`
+//   exportDelayMs  how long each export takes
 // Every call is appended to $FAKE_XCRUN_SCENARIO.log as one JSON line.
 import { readFileSync, appendFileSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -50,9 +51,12 @@ if (args[0] === 'xctrace' && args[1] === 'record') {
   }
   const xpath = opt('--xpath') ?? '';
   const key = xpath.match(/schema="([^"]+)"/)?.[1] ?? xpath.match(/track\[@name="([^"]+)"\]/)?.[1];
-  if (!exports[key]) fail(`Export failed: no data for ${xpath}`);
-  copyFileSync(exports[key], opt('--output'));
-  process.exit(0);
+  writeFileSync(`${process.env.FAKE_XCRUN_SCENARIO}.export.pid`, String(process.pid));
+  setTimeout(() => {
+    if (!exports[key]) fail(`Export failed: no data for ${xpath}`);
+    copyFileSync(exports[key], opt('--output'));
+    process.exit(0);
+  }, sc.exportDelayMs ?? 0);
 } else if (args[0] !== 'xctrace') {
   fail(`fake xcrun: ${args.join(' ')}`);
 }

@@ -57,7 +57,7 @@ Records the app's native side with Xcode's `xctrace` (Instruments on the command
   - leaks: `not recorded` unless `--leaks`.
   `--json` prints the same as JSON.
 - **--leaks** records with Argent's template (Time Profiler + Allocations + Leaks) instead. Allocations turns on malloc stack logging in the app process and **it stays on until the app is relaunched**: every later CPU or hang reading of that process is skewed (its own stack logging shows up as the top hotspot, and as multi-second "hangs"). Relaunch the app after a leaks run. The trace is much larger (hundreds of MB before export).
-- **Ending**: the recording ends at `--seconds` (xctrace needs a few more seconds to attach and save). `--timeout` (default `--seconds` + 90) and Ctrl-C stop xctrace (SIGINT, then SIGTERM after 60 s, then SIGKILL), delete the partial trace and export nothing (exit 3 and 130). No xctrace process is left in any case. A failed run leaves no empty `--out` directory it created.
+- **Ending**: the recording ends at `--seconds` (xctrace needs a few more seconds to attach and save). `--timeout` (default `--seconds` + 90, for the whole command, export included) and Ctrl-C stop xctrace (SIGINT, then SIGTERM after 60 s, then SIGKILL) or kill a running export, delete the partial trace and export nothing (exit 3 and 130). No xctrace process is left in any case. A failed run leaves no empty `--out` directory it created.
 
 **Reading the numbers**: simulator CPU is the Mac's CPU, shared with everything else running; compare a recording with input against an idle one of the same length, never with a device budget. A development build carries debug-only work (React Native's dev checks, Metro's connection).
 
@@ -70,6 +70,6 @@ The `react` commands select their target the same way as `simulator-verify/scrip
 | 0 | done |
 | 1 | nothing to talk to (Metro not on the port, no matching app), no React DevTools hook (release build), nothing recording, or another tool holds the profiler; `ios`: no such booted simulator, the app not running, or xctrace failed (its message is printed) |
 | 2 | ambiguous target; `ios`: several user apps running and no `--app` |
-| 3 | no answer within `--timeout`; `ios record`: xctrace did not finish within `--timeout` |
+| 3 | no answer within `--timeout`; `ios record`: recording and export did not finish within `--timeout` |
 | 64 | usage |
 | 130 | `ios record` interrupted (Ctrl-C) |

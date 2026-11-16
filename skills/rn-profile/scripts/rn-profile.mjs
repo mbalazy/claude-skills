@@ -34,8 +34,8 @@
 // samples per thread, the hotspot functions (--top, default 10), the hangs and
 // leaks. --leaks records with Argent's template (Allocations + Leaks), which
 // leaves malloc stack logging on in the app until it is relaunched. --timeout
-// (default --seconds + 90) or Ctrl-C stops xctrace (SIGINT, then SIGTERM, then
-// SIGKILL) and exports nothing. ios report re-reads the exports in a DIR.
+// (default --seconds + 90, export included) or Ctrl-C stops xctrace (SIGINT,
+// then SIGTERM, then SIGKILL) or kills a running export, and exports nothing. ios report re-reads the exports in a DIR.
 //
 // Exit codes: 0 done; 1 nothing to talk to, no React DevTools hook (release
 // build), nothing recording, another tool holds the profiler, no such booted
