@@ -15,7 +15,7 @@
 //   3. LICENSE.txt is byte-identical to <upstream>/LICENSE.txt
 // Exit 0 = no drift; 1 = drift (every difference listed); 64 = usage.
 
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -94,4 +94,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exitCode = main(process.argv.slice(2));
+// Run as a script, also through a symlink (skills are installed as symlinks):
+// import.meta.url is the real path, argv[1] the path as typed.
+const invokedPath = process.argv[1] && existsSync(process.argv[1]) ? realpathSync(process.argv[1]) : null;
+if (invokedPath === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));

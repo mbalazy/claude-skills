@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync, appendFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -72,6 +72,17 @@ test('a file marked as changed is not compared byte for byte, but must exist', (
   write(join(f.vendor, 'NOTICE'), 'Copied files (path | change):\n- packages/x/src/a.ts | trimmed to one export\n');
   appendFileSync(join(f.vendor, 'packages/x/src/a.ts'), '// changed on purpose\n');
   assert.deepEqual(checkDrift(f).problems, []);
+});
+
+test('run through a symlinked directory (as an installed skill is), it still checks', async (t) => {
+  const f = fixture(); t.after(f.done);
+  appendFileSync(join(f.vendor, 'packages/x/src/a.ts'), '// local edit\n');
+  const link = join(f.root, 'linked-devtools');
+  symlinkSync(HERE, link);
+  const r = await new Promise((resolve) => execFile(process.execPath, [join(link, 'vendor-drift.mjs'), '--upstream', f.upstream, '--vendor', f.vendor],
+    (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr })));
+  assert.equal(r.code, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /differs from upstream/);
 });
 
 test('without --upstream or ARGENT_UPSTREAM it is a usage error', async () => {
