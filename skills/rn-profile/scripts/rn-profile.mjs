@@ -6,6 +6,9 @@
 //   rn-profile.mjs react start  [target options] [--max S] [--interval-us N] [--takeover]
 //   rn-profile.mjs react status [target options] [--json]
 //   rn-profile.mjs react stop --out FILE [target options] [--top N] [--json]
+//   rn-profile.mjs react renders FILE [--sort time|renders] [--grep REGEX] [--top N] [--json]
+//   rn-profile.mjs react commits FILE [--top N] [--min-ms MS] [--json]
+//   rn-profile.mjs react why FILE COMPONENT [--top N] [--json]
 //
 // Target options (as simulator-verify's rn-devtools.mjs): --port (default
 // $METRO_PORT, else 8081), --device, --app, --page, --timeout S (default 10).
@@ -21,6 +24,15 @@
 // and prints a summary: commit count, total and slowest commit, the top
 // components (--top, default 10) by renders and by self time. A JS reload
 // loses a recording; stop then exits 1.
+//
+// renders, commits and why read a profile file (no app needed): per component
+// the renders, mounts, total and max self time and the dominant reason it
+// re-rendered (default top 20 by self time); the slowest commits (default 10)
+// with the components that rendered in each, why, the parent that set off a
+// cascade and the busiest JS functions in that window; every render of one
+// component (exact name) with the changed props / hooks or the parent that
+// caused it. A missing, cut or foreign file exits 1; so does a component that
+// never rendered (the message names similar ones).
 //
 // Exit codes: 0 done; 1 nothing to talk to, no React DevTools hook (release
 // build), nothing recording, or another tool holds the profiler; 2 ambiguous
@@ -129,16 +141,61 @@ async function reactStop(args) {
   return 0;
 }
 
-const REACT = { start: reactStart, status: reactStatus, stop: reactStop };
+function parseFileArgs(args, options, count) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options });
+  if (positionals.length !== count) throw new UsageError(`expected ${count === 1 ? 'FILE' : 'FILE COMPONENT'}, got ${positionals.length ? positionals.join(' ') : 'nothing'}`);
+  return { values, positionals };
+}
+
+const print = (json, data, text) => process.stdout.write(`${json ? JSON.stringify(data) : text(data)}\n`);
+
+async function reactRenders(args) {
+  const { values, positionals } = parseFileArgs(args, { sort: { type: 'string' }, grep: { type: 'string' }, top: { type: 'string' }, json: { type: 'boolean' } }, 1);
+  const sort = values.sort ?? 'time';
+  if (!['time', 'renders'].includes(sort)) throw new UsageError(`--sort takes time or renders, got ${sort}`);
+  if (values.grep !== undefined) { try { new RegExp(values.grep); } catch (err) { throw new UsageError(`--grep: ${err.message}`); } }
+  const top = values.top === undefined ? 20 : positiveNumber('top', values.top, { integer: true });
+  const A = await import('./react-analysis.mjs');
+  print(values.json, await A.componentRenders(A.loadProfile(positionals[0]), { sort, grep: values.grep, top }), A.formatRenders);
+  return 0;
+}
+
+async function reactCommits(args) {
+  const { values, positionals } = parseFileArgs(args, { top: { type: 'string' }, 'min-ms': { type: 'string' }, json: { type: 'boolean' } }, 1);
+  const top = values.top === undefined ? 10 : positiveNumber('top', values.top, { integer: true });
+  let minMs = 0;
+  if (values['min-ms'] !== undefined) {
+    minMs = Number(values['min-ms']);
+    if (!(minMs >= 0)) throw new UsageError(`--min-ms wants a number >= 0, got ${values['min-ms']}`);
+  }
+  const A = await import('./react-analysis.mjs');
+  print(values.json, await A.slowestCommits(A.loadProfile(positionals[0]), { top, minMs }), A.formatCommits);
+  return 0;
+}
+
+async function reactWhy(args) {
+  const { values, positionals } = parseFileArgs(args, { top: { type: 'string' }, json: { type: 'boolean' } }, 2);
+  const top = values.top === undefined ? 20 : positiveNumber('top', values.top, { integer: true });
+  const A = await import('./react-analysis.mjs');
+  const r = await A.whyRendered(A.loadProfile(positionals[0]), positionals[1], { top });
+  if (!r.renders) {
+    process.stderr.write(`${A.formatWhy(r)}\n`);
+    return 1;
+  }
+  print(values.json, r, A.formatWhy);
+  return 0;
+}
+
+const REACT = { start: reactStart, status: reactStatus, stop: reactStop, renders: reactRenders, commits: reactCommits, why: reactWhy };
 
 async function main(argv) {
   const [area, cmd, ...rest] = argv;
   if (area === undefined || area === '-h' || area === '--help') {
-    process.stderr.write('usage: rn-profile.mjs react start|status|stop ... (see the header of this file)\n');
+    process.stderr.write('usage: rn-profile.mjs react start|status|stop|renders|commits|why ... (see the header of this file)\n');
     return 0;
   }
   try {
-    if (area !== 'react' || !REACT[cmd]) throw new UsageError('usage: rn-profile.mjs react start|status|stop ... (see the header of this file)');
+    if (area !== 'react' || !REACT[cmd]) throw new UsageError('usage: rn-profile.mjs react start|status|stop|renders|commits|why ... (see the header of this file)');
     return await REACT[cmd](rest);
   } catch (err) {
     process.stderr.write(`${err.message}\n`);

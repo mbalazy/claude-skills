@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { startFakeInspector, fakeTarget } from '../../simulator-verify/scripts/devtools/testing/fake-inspector.mjs';
 import { fakeReactApp } from './testing/fake-react-app.mjs';
+import { PROFILE } from './testing/react-profile-fixture.mjs';
 
 const CLI = fileURLToPath(new URL('./rn-profile.mjs', import.meta.url));
 
@@ -117,4 +118,34 @@ test('usage errors exit 64; no Metro exits 1', async () => {
   }
   const none = await run(['react', 'status', '--port', '1']);
   assert.equal(none.code, 1);
+});
+
+test('renders, commits and why read a profile file without an app', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-profile-cli-'));
+  try {
+    const file = join(dir, 'p.json');
+    writeFileSync(file, JSON.stringify(PROFILE));
+    const r = await run(['react', 'renders', file, '--top', '2']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^3 commits over 2\.0 s; 3 components rendered \(by self time, top 2\)\n.*\n.*List\n.*Screen\n/);
+    const j = JSON.parse((await run(['react', 'renders', file, '--sort', 'renders', '--json'])).stdout);
+    assert.deepEqual(j.rows.map((e) => e.name), ['Row', 'List', 'Screen']);
+    const c = await run(['react', 'commits', file, '--top', '1']);
+    assert.match(c.stdout, /#1 at \+0\.5 s {2}30\.00 ms {2}root cause: Screen/);
+    const w = await run(['react', 'why', file, 'Row']);
+    assert.match(w.stdout, /^Row: 3 renders/);
+    const none = await run(['react', 'why', file, 'ro']);
+    assert.deepEqual([none.code, none.stdout], [1, '']);
+    assert.match(none.stderr, /did not render in this profile\. Names containing it: Row/);
+    const cut = join(dir, 'cut.json');
+    writeFileSync(cut, JSON.stringify(PROFILE).slice(0, 100));
+    const bad = await run(['react', 'commits', cut]);
+    assert.equal(bad.code, 1);
+    assert.match(bad.stderr, /not valid JSON/);
+    assert.equal((await run(['react', 'renders', join(dir, 'missing.json')])).code, 1);
+    for (const args of [['react', 'renders'], ['react', 'why', file], ['react', 'renders', file, '--sort', 'size'], ['react', 'renders', file, '--grep', '('],
+      ['react', 'commits', file, '--min-ms', '-1'], ['react', 'commits', file, '--port', '8081']]) {
+      assert.equal((await run(args)).code, 64, args.join(' '));
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
