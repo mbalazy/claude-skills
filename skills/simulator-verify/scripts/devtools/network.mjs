@@ -138,7 +138,7 @@ export async function stopNetworkLog(client, { timeoutMs } = {}) {
  * Captured requests with their details, oldest first. filter: { grep, since (epoch s) }.
  * Rejects with NotInstalledError when the interceptor is not in the app.
  */
-export async function readNetworkLog(client, { metroPort, grep, since, limit = 50, timeoutMs } = {}) {
+export async function readNetworkLog(client, { metroPort, grep, since, limit = 50, full = false, timeoutMs } = {}) {
   const { makeNetworkLogReadScript, makeNetworkDetailReadScript } = await vendored();
   const list = JSON.parse(await client.evaluate(makeNetworkLogReadScript(0, 100000, metroPort), { timeoutMs }));
   if (!list.interceptorInstalled) throw new NotInstalledError();
@@ -147,7 +147,8 @@ export async function readNetworkLog(client, { metroPort, grep, since, limit = 5
   const shown = kept.slice(-limit);
   let details = [];
   if (shown.length) {
-    const scripts = shown.map((e) => makeNetworkDetailReadScript(e.requestId));
+    // Without full, the bodies are cut in the app: up to 1 MiB each would cross CDP only to be cut here.
+    const scripts = shown.map((e) => (full ? makeNetworkDetailReadScript(e.requestId) : cutInApp(makeNetworkDetailReadScript(e.requestId))));
     details = (await client.evaluate(`[${scripts.join(',\n')}]`, { timeoutMs })).map((s) => JSON.parse(s));
   }
   return { total: list.total, matched: kept.length, entries: details };
@@ -157,6 +158,23 @@ export async function readNetworkLog(client, { metroPort, grep, since, limit = 5
 
 export const SECRET_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie']);
 export const BODY_PREVIEW = 500;
+
+/** A detail script whose bodies come back cut to BODY_PREVIEW chars, their full length kept beside them. */
+function cutInApp(detailScript) {
+  return `(function() {
+    var d = JSON.parse(${detailScript});
+    var max = ${BODY_PREVIEW};
+    if (typeof d.responseBody === 'string' && d.responseBody.length > max) {
+      d.responseBodyFullLength = d.responseBody.length;
+      d.responseBody = d.responseBody.slice(0, max);
+    }
+    if (d.request && typeof d.request.postData === 'string' && d.request.postData.length > max) {
+      d.request.postDataFullLength = d.request.postData.length;
+      d.request.postData = d.request.postData.slice(0, max);
+    }
+    return JSON.stringify(d);
+  })()`;
+}
 
 /** Header values that carry credentials, replaced by their length. */
 export function redactHeaders(headers, { showSecrets = false } = {}) {
@@ -168,11 +186,14 @@ export function redactHeaders(headers, { showSecrets = false } = {}) {
   return out;
 }
 
-/** A body cut to `max` chars with a visible marker; whole when full. */
-export function truncate(text, { full = false, max = BODY_PREVIEW } = {}) {
+/**
+ * A body cut to `max` chars with a visible marker; whole when full. `length` is
+ * the body's full length when the app already cut it (cutInApp).
+ */
+export function truncate(text, { full = false, max = BODY_PREVIEW, length = text?.length } = {}) {
   if (typeof text !== 'string') return text;
-  if (full || text.length <= max) return text;
-  return `${text.slice(0, max)}...[${text.length - max} more chars; --full prints all]`;
+  if (full || length <= max) return text;
+  return `${text.slice(0, max)}...[${length - max} more chars; --full prints all]`;
 }
 
 /** "30s", "5m", "2h" ago, or an ISO date/time -> epoch seconds. */
@@ -200,11 +221,11 @@ export function present(entry, { full = false, showSecrets = false } = {}) {
     mimeType: res?.mimeType,
     error: entry.errorText,
     requestHeaders: redactHeaders(req.headers, { showSecrets }),
-    requestBody: truncate(req.postData, { full }),
-    requestBodyLength: typeof req.postData === 'string' ? req.postData.length : undefined,
+    requestBody: truncate(req.postData, { full, length: req.postDataFullLength ?? req.postData?.length }),
+    requestBodyLength: req.postDataFullLength ?? (typeof req.postData === 'string' ? req.postData.length : undefined),
     responseHeaders: redactHeaders(res?.headers, { showSecrets }),
-    responseBody: truncate(entry.responseBody, { full }),
-    responseBodyLength: entry.bodyLength ?? (typeof entry.responseBody === 'string' ? entry.responseBody.length : undefined),
+    responseBody: truncate(entry.responseBody, { full, length: entry.responseBodyFullLength ?? entry.responseBody?.length }),
+    responseBodyLength: entry.bodyLength ?? entry.responseBodyFullLength ?? (typeof entry.responseBody === 'string' ? entry.responseBody.length : undefined),
     bodyCutByInterceptor: entry.bodyTruncated || undefined,
     bodyOmitted: entry.bodyOmitted || undefined,
   };

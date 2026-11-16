@@ -147,7 +147,7 @@ async function cmdNet(args) {
   }
   const port = metroPort(values.port);
   const result = await withRuntime(opts, (client) =>
-    net.readNetworkLog(client, { metroPort: port, grep: values.grep, since, limit, timeoutMs: opts.timeoutMs }));
+    net.readNetworkLog(client, { metroPort: port, grep: values.grep, since, limit, full: values.full, timeoutMs: opts.timeoutMs }));
   const view = { full: values.full, showSecrets: values['show-secrets'], headers: values.headers };
   if (values.json) {
     process.stdout.write(JSON.stringify({ total: result.total, matched: result.matched, entries: result.entries.map((e) => net.present(e, view)) }) + '\n');

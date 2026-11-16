@@ -71,6 +71,22 @@ test('stop puts the original functions back, deletes the records, and read then 
   assert.deepEqual(log.entries.map((e) => e.request.url), ['https://api.example.test/c']);
 });
 
+test('without full, read cuts long bodies in the app and keeps their full length; full brings them whole', async () => {
+  const app = fakeApp();
+  await startNetworkLog(app.client);
+  await app.run('request("POST", "https://api.example.test/upload", "p".repeat(2000))');
+  const cut = (await readNetworkLog(app.client, { metroPort: 8081 })).entries[0];
+  assert.equal(cut.request.postData.length, BODY_PREVIEW);
+  assert.equal(cut.request.postDataFullLength, 2000);
+  assert.ok(cut.responseBody.length <= BODY_PREVIEW);
+  const shown = present(cut);
+  assert.equal(shown.requestBodyLength, 2000);
+  assert.match(shown.requestBody, /\.\.\.\[1500 more chars; --full prints all\]$/);
+  const whole = (await readNetworkLog(app.client, { metroPort: 8081, full: true })).entries[0];
+  assert.equal(whole.request.postData.length, 2000);
+  assert.equal(present(whole, { full: true }).requestBody.length, 2000);
+});
+
 test('read before any start, and stop with nothing installed', async () => {
   const app = fakeApp();
   await assert.rejects(readNetworkLog(app.client, { metroPort: 8081 }), (err) => err instanceof NotInstalledError && err.exitCode === 1 && /net start/.test(err.message));
