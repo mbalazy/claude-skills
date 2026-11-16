@@ -112,6 +112,9 @@ test('loadProfile: a missing, cut, foreign or empty file exits 1 with what is wr
       [at('other.json', '{"format":"chrome-trace"}'), /not a React profile written by `rn-profile\.mjs react stop` \(format: chrome-trace\)/],
       [at('empty.json', ''), /not valid JSON/],
       [at('broken.json', JSON.stringify({ format: 'rn-profile-react/1', react: { dataForRoots: [{}] } })), /no readable React commit data/],
+      [at('null-commit.json', JSON.stringify({ format: 'rn-profile-react/1', react: { dataForRoots: [{ commitData: [null] }] } })), /damaged commit \(root 0, commit 0\)/],
+      [at('no-time.json', JSON.stringify({ format: 'rn-profile-react/1', react: { dataForRoots: [{ commitData: [{ duration: 1 }] }] } })), /damaged commit/],
+      [at('bad-pairs.json', JSON.stringify({ format: 'rn-profile-react/1', react: { dataForRoots: [{ commitData: [{ timestamp: 0, duration: 1, fiberActualDurations: { a: 1 } }] }] } })), /damaged commit/],
     ];
     for (const [path, re] of cases) assert.throws(() => loadProfile(path), (err) => err instanceof AnalysisError && err.exitCode === 1 && re.test(err.message), path);
   } finally { rmSync(dir, { recursive: true, force: true }); }

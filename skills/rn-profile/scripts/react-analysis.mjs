@@ -43,6 +43,12 @@ export function loadProfile(path) {
   if (!Array.isArray(profile.react?.dataForRoots) || !profile.react.dataForRoots.every((r) => Array.isArray(r?.commitData))) {
     throw new AnalysisError(`${path} has no readable React commit data`);
   }
+  const pairList = (v) => v === undefined || v === null || (Array.isArray(v) && v.every((p) => Array.isArray(p)));
+  profile.react.dataForRoots.forEach((root, r) => root.commitData.forEach((c, i) => {
+    const ok = c && typeof c === 'object' && Number.isFinite(c.timestamp) && Number.isFinite(c.duration)
+      && pairList(c.fiberActualDurations) && pairList(c.fiberSelfDurations) && pairList(c.changeDescriptions);
+    if (!ok) throw new AnalysisError(`${path} has a damaged commit (root ${r}, commit ${i}): it needs a numeric timestamp and duration and [id, value] lists`);
+  }));
   return profile;
 }
 
