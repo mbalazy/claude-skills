@@ -115,6 +115,15 @@ the gate, look at the evidence files it names, check the rig state it claims,
 and do the acceptance the way `batch-finish` does (verify every ASSUMPTION
 with evidence). Record the acceptance in the pm task Log and brief.
 
+## Called from a project-watch session
+
+The `project-watch` skill hands its to-do items over with this message shape on
+the user's "przekaż <id>" (`~/.claude/skills/project-watch/prompts/commands.md`).
+There steps 1-4 apply as written; the file goes to the watch's
+`<state_dir>/handoffs/`, the record is `watch.py todo sent` instead of a pm
+`body_append`, and step 6 (acceptance) is NOT done by the watch - the answer is
+saved, shown in the next report and left to the user.
+
 ## Example
 
 ```
