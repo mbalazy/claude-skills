@@ -66,6 +66,18 @@ test('the time limit ends the React side in the app; stop returns what was recor
   assert.ok(profile.cpuProfile.samples.length <= profile.durationMs, 'samples after the limit are dropped');
 });
 
+test("the time limit never stops a recording another tool started after ours was stopped", async () => {
+  const app = fakeReactApp();
+  await startRecording(app.client, { maxSeconds: 0.08 });
+  app.run(`(function() {
+    var ri = __REACT_DEVTOOLS_GLOBAL_HOOK__.rendererInterfaces.get(1);
+    ri.stopProfiling(); ri.startProfiling(); globalThis.__ARGENT_PROFILER_OWNER__ = { tool: 'other-profiler', sessionId: 'x' };
+  })()`);
+  await sleep(150);
+  assert.equal(app.run('__REACT_DEVTOOLS_GLOBAL_HOOK__.rendererInterfaces.get(1).__argent_isProfiling__'), true, "the other tool's recording runs on");
+  assert.equal(app.run('globalThis.__rn_profile_session.endedBy'), 'stopped-elsewhere');
+});
+
 test('starting over an unread recording says it was dropped', async () => {
   const app = fakeReactApp();
   await startRecording(app.client, { maxSeconds: 0.02 });

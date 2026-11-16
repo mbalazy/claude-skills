@@ -61,6 +61,9 @@ export function sessionScript(session) {
   setTimeout(function() {
     var cur = globalThis.__rn_profile_session;
     if (!cur || cur.sessionId !== s.sessionId || cur.endedBy) return;
+    // Another tool stopped or took over the profiler since: its recording is not ours to end.
+    var owner = globalThis.__ARGENT_PROFILER_OWNER__;
+    if (!owner || owner.sessionId !== s.sessionId) { cur.endedBy = 'stopped-elsewhere'; return; }
     var h = globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__;
     if (h && h.rendererInterfaces) h.rendererInterfaces.forEach(function(ri) { try { ri.stopProfiling(); } catch (e) {} });
     cur.endedBy = 'time-limit';
