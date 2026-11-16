@@ -235,6 +235,7 @@ export function present(entry, { full = false, showSecrets = false } = {}) {
     requestHeaders: redactHeaders(req.headers, { showSecrets }),
     requestBody: truncate(req.postData, { full, length: req.postDataFullLength ?? req.postData?.length }),
     requestBodyLength: req.postDataFullLength ?? (typeof req.postData === 'string' ? req.postData.length : undefined),
+    requestBodyCutByInterceptor: req.postDataTruncated || undefined,
     responseHeaders: redactHeaders(res?.headers, { showSecrets }),
     responseBody: truncate(entry.responseBody, { full, length: entry.responseBodyFullLength ?? entry.responseBody?.length }),
     responseBodyLength: entry.bodyLength ?? entry.responseBodyFullLength ?? (typeof entry.responseBody === 'string' ? entry.responseBody.length : undefined),
@@ -254,7 +255,10 @@ export function formatLog(result, { full = false, showSecrets = false, headers =
     const took = typeof e.durationMs === 'number' ? ` ${e.durationMs} ms` : '';
     lines.push('', `#${e.id} ${clock(e.timestamp)} ${e.method ?? '?'} ${status}${took} ${e.url ?? ''}`);
     if (headers && e.requestHeaders) lines.push(`  > headers ${JSON.stringify(e.requestHeaders)}`);
-    if (e.requestBody !== undefined) lines.push(`  > body (${e.requestBodyLength} chars) ${e.requestBody}`);
+    if (e.requestBody !== undefined) {
+      const cut = e.requestBodyCutByInterceptor ? ', cut by the interceptor: only this much was recorded' : '';
+      lines.push(`  > body (${e.requestBodyLength} chars${cut}) ${e.requestBody}`);
+    }
     if (headers && e.responseHeaders) lines.push(`  < headers ${JSON.stringify(e.responseHeaders)}`);
     if (e.responseBody !== undefined) {
       const cut = e.bodyCutByInterceptor ? ', cut by the interceptor at 1 MiB' : '';

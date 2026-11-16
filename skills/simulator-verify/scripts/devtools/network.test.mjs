@@ -171,6 +171,13 @@ test('the text form: one block per request with status, duration, bodies; header
   assert.match(formatLog(r, { headers: true, showSecrets: true }), /Bearer abc/);
 });
 
+test('a request body the interceptor cut says so', () => {
+  const r = { total: 1, matched: 1, entries: [{ ...ENTRY, request: { ...ENTRY.request, postDataTruncated: true } }] };
+  assert.match(formatLog(r), /> body \(12 chars, cut by the interceptor: only this much was recorded\)/);
+  assert.equal(present(r.entries[0]).requestBodyCutByInterceptor, true);
+  assert.doesNotMatch(formatLog({ ...r, entries: [ENTRY] }), /cut by the interceptor/);
+});
+
 test('pending and failed requests read as such', () => {
   const r = { total: 2, matched: 2, entries: [
     { id: 1, state: 'pending', timestamp: 1, request: { method: 'GET', url: 'https://a.test/' } },
