@@ -1,0 +1,442 @@
+/**
+ * Builds the JS injected via Runtime.evaluate that walks the React fiber tree and
+ * reports `{ screenW, screenH, components }` as a JSON string over the
+ * `__argent_callback` binding; each component carries a name, rect, parent index,
+ * testID, accessibilityLabel and visible text.
+ *
+ * Every renderer is enumerated and the mounted root with the largest fiber subtree
+ * wins, because a secondary reconciler (react-native-skia, react-native-svg) can own
+ * renderer id 1.
+ *
+ * Fabric measures through the public host instance (ReactNativeElement) measureInWindow,
+ * falling back to nativeFabricUIManager.measure with the shadow node; Paper uses
+ * UIManager.measureInWindow with native tags. Measurement is batched via Promise.all
+ * with a per-host cache because Paper's measureInWindow is async.
+ *
+ * includeSkipped additionally reports totalFibers and a per-name count of skipped
+ * components.
+ */
+export function makeComponentTreeScript(opts: {
+  includeSkipped?: boolean;
+  requestId: string;
+}): string {
+  const trackSkipped = opts?.includeSkipped ? "true" : "false";
+  const requestId = JSON.stringify(opts.requestId);
+  return `(async function() {
+  var REQUEST_ID = ${requestId};
+  var TRACK_SKIPPED = ${trackSkipped};
+  // Deliver errors through the SAME binding channel as the success path. The
+  // consumer (evaluateWithBinding) runs Runtime.evaluate WITHOUT returnByValue/
+  // awaitPromise, so the IIFE's return value is discarded — a 'return' here never
+  // settles the promise and the tool hangs until the 15s binding timeout. Route
+  // every error through __argent_callback with result = JSON.stringify({ error }),
+  // matching the shape the tool parses (response.result → JSON.parse → .error).
+  function __argent_fail(msg) {
+    __argent_callback(JSON.stringify({ requestId: REQUEST_ID, result: JSON.stringify({ error: msg }) }));
+  }
+  // Route any UNEXPECTED throw (outside the named guards below) through the same
+  // binding, so a crash still settles immediately instead of hanging to the 15s
+  // binding timeout. Mirrors inspect-at-point.ts's top-level try/catch.
+  try {
+  var hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  if (!hook) { __argent_fail('No DevTools hook'); return; }
+  // Collect fiber roots across ALL renderers. A single React renderer id is not
+  // safe to assume: secondary reconcilers (e.g. react-native-skia) frequently
+  // register first and own renderer id 1, whose roots contain only that library's
+  // nodes (Skia shapes, etc.) and none of the tappable app UI.
+  var _allRoots = [];
+  if (hook.renderers && typeof hook.renderers.forEach === 'function') {
+    hook.renderers.forEach(function(_r, _rendererId) {
+      try {
+        var _rs = hook.getFiberRoots(_rendererId);
+        if (_rs) _rs.forEach(function(_rt) { _allRoots.push(_rt); });
+      } catch (e) {}
+    });
+  }
+  if (_allRoots.length === 0) {
+    var _legacy = hook.getFiberRoots(1);
+    if (_legacy) _legacy.forEach(function(_rt) { _allRoots.push(_rt); });
+  }
+  if (_allRoots.length === 0) { __argent_fail('No fiber roots'); return; }
+  // Pick the mounted root with the largest fiber subtree — i.e. the real app UI.
+  var root = _allRoots[0];
+  var _bestSize = -1;
+  for (var _ri = 0; _ri < _allRoots.length; _ri++) {
+    var _sz = 0, _stk = [_allRoots[_ri].current];
+    while (_stk.length > 0 && _sz < 20000) {
+      var _nd = _stk.pop();
+      if (!_nd) continue;
+      _sz++;
+      if (_nd.child) _stk.push(_nd.child);
+      if (_nd.sibling) _stk.push(_nd.sibling);
+    }
+    if (_sz > _bestSize) { _bestSize = _sz; root = _allRoots[_ri]; }
+  }
+
+  var useFabric = typeof nativeFabricUIManager !== 'undefined';
+  var UIManagerMod;
+  if (!useFabric) {
+    if (typeof __r.getModules === 'function') {
+      var _mods = __r.getModules();
+      for (var _entry of _mods) {
+        if (!_entry[1].isInitialized) continue;
+        try { var m = __r(_entry[0]); if (m && m.UIManager) { UIManagerMod = m.UIManager; break; } } catch(e) {}
+      }
+    } else {
+      for (var i = 0; i < 300; i++) {
+        try { var m = __r(i); if (m && m.UIManager) { UIManagerMod = m.UIManager; break; } } catch(e) {}
+      }
+    }
+    if (!UIManagerMod) { __argent_fail('Could not find UIManager'); return; }
+  }
+
+  var SKIP = new Set([
+    'View','RCTView','RCTText','RCTScrollView','RCTScrollContentView','RCTImageView',
+    'RCTSafeAreaView','RCTVirtualText','RCTSinglelineTextInputView','RCTMultilineTextInputView',
+    'RNCSafeAreaProvider','RNSScreen','RNSScreenStack',
+    'RNSScreenContentWrapper','RNSScreenNavigationContainer','RNSScreenStackHeaderConfig',
+    'ScreenStackHeaderConfig','NavigationContent','NavigationStateListenerProvider',
+    'PreventRemoveProvider','EnsureSingleNavigator','StaticContainer','SceneView',
+    'NativeStackView','NativeStackNavigator','DelayedFreeze','Freeze','Suspender',
+    'DebugContainer','ScreenContentWrapper','Screen','ScreenStack','ScreenContainer',
+    'MaybeScreenContainer','MaybeScreen','FrameSizeProvider','FrameSizeProviderInner',
+    'FrameSizeListenerNativeFallback','SafeAreaProviderCompat','SafeAreaProvider',
+    'SafeAreaInsetsContext','SafeArea','SafeAreaFrameContext',
+    'ErrorOverlay','ErrorToastContainer',
+    'PerformanceLoggerContext','AppContainer','RootTagContext','DebuggingOverlay',
+    'DebuggingOverlayRegistrySubscription',
+    'LogBoxStateSubscription','_LogBoxNotificationContainer','LogBoxInspectorContainer',
+    'LogBoxInspector','LogBoxInspectorCodeFrame','CellRenderer',
+    'VirtualizedListContextProvider','VirtualizedListCellContextProvider',
+    'wrapper','Background','Pressable','PlatformPressable',
+    'ExpoRoot','ContextNavigator','RootApp','ThemeProvider','StatusBar',
+    'ReactNativeProfiler','FeedbackWidgetProvider',
+    'NavigationRouteContext','BottomTabNavigator','BottomTabView',
+    'TabBarIcon','Icon','MissingIcon','Label','ImageAnalyticsTagContext',
+    'Image','RootLayout','TabLayout',
+    'GestureHandlerRootView','GestureDetector','Wrap',
+    'RenderRegistryProvider','SharedPropsProvider','ListStyleSpecsProvider',
+    'RenderersPropsProvider','TRenderEngineProvider','RenderHTMLConfigProvider',
+    'RenderHtmlSource','RawSourceLoader','SourceLoaderInline','RenderTTree',
+    'TNodeChildrenRenderer','MemoizedTNodeRenderer',
+    'PortalProviderComponent',
+    'KeyboardProviderWrapper','KeyboardProvider','KeyboardControllerView',
+    'ScrollViewContext','TextAncestorContext',
+    'TextInputLabel',
+    'ThemeContext',
+    'BaseHTMLEngineProvider',
+    'VScrollViewNativeComponent','InnerScreen','ScreenStackItem',
+    'BaseNavigationContainer','NavigationContainerInner','PlatformPressableInternal',
+  ]);
+
+  var HARD_SKIP = new Set([
+    'BaseTextInput','InternalTextInput','RNTextInputWithRef',
+    'RCTSinglelineTextInputView','RCTMultilineTextInputView',
+    'LottieAnimationView','Lottie',
+    'ExpoImage',
+  ]);
+
+  function isHardSkip(name) {
+    if (HARD_SKIP.has(name)) return true;
+    if (name.indexOf('AnimatedComponent(') === 0) return true;
+    if (name.indexOf('Animated(') === 0) return true;
+    if (name.indexOf('With') === 0 && name.indexOf('(') > 3) return true;
+    if (name.indexOf('with') === 0 && name.indexOf('(') > 3) return true;
+    if (name.indexOf('ViewManagerAdapter_') >= 0) return true;
+    return false;
+  }
+
+  function shouldSkip(name) {
+    if (isHardSkip(name)) return true;
+    if (SKIP.has(name)) return true;
+    if (name.charAt(0) === '_' && name.charAt(1) === '_') return true;
+    if (name.indexOf('withDevTools(') === 0) return true;
+    if (name === 'Route' || name.indexOf('Route(') === 0) return true;
+    if (name.indexOf('main(') === 0) return true;
+    if (name.length > 8 && name.slice(-8) === 'Provider') return true;
+    if (name.length > 7 && name.slice(-7) === 'Context') return true;
+    return false;
+  }
+
+  function getCompName(f) {
+    var t = f.type;
+    if (!t) return null;
+    if (typeof t === 'string') return t;
+    return t.displayName || t.name || null;
+  }
+
+  // Per-host dedup/measure cache key. MUST be a primitive: on Fabric the host
+  // "node" is a shadow-node OBJECT, so the old key ('f' + hi.n) stringified it
+  // to "f[object Object]" for EVERY node — collapsing all hosts to one entry and
+  // giving every component the first (root) view's full-screen rect, i.e. a
+  // (0.5, 0.5) tap for everything. Key by the numeric nativeTag instead, with a
+  // WeakMap-by-identity fallback so distinct nodes never share a key.
+  var _hostKeySeq = 0;
+  var _fabricKeyMap = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+
+  // Prefer the numeric nativeTag; when it is unavailable, assign a stable
+  // WeakMap-by-identity id so distinct shadow nodes never collide.
+  function fabricKey(nativeTag, node) {
+    if (typeof nativeTag === 'number') return 'f' + nativeTag;
+    if (_fabricKeyMap && node) {
+      var k = _fabricKeyMap.get(node);
+      if (k === undefined) { k = 'fo' + (++_hostKeySeq); _fabricKeyMap.set(node, k); }
+      return k;
+    }
+    return 'fo' + (++_hostKeySeq);
+  }
+
+  function getHostInfo(fiber) {
+    if (typeof fiber.type !== 'string' || !fiber.stateNode) return null;
+    if (useFabric && fiber.stateNode.canonical) {
+      // New-arch Fabric host instance: stateNode = { node, canonical }. Carry the
+      // public instance (ReactNativeElement, exposes measureInWindow) and the shadow
+      // node for the legacy nativeFabricUIManager.measure fallback; key the host by
+      // a primitive id (numeric nativeTag, WeakMap-by-identity fallback) per above.
+      var _canon = fiber.stateNode.canonical;
+      var _sn = fiber.stateNode.node || null;
+      return {
+        f: true,
+        n: typeof _canon.nativeTag === 'number' ? _canon.nativeTag : _sn,
+        key: fabricKey(_canon.nativeTag, _sn),
+        pi: _canon.publicInstance || null,
+        sn: _sn
+      };
+    }
+    if (useFabric && fiber.stateNode.node) {
+      // Older Fabric host without a canonical instance: only the shadow node
+      // is available. Still needs a primitive key.
+      var _sn2 = fiber.stateNode.node;
+      return { f: true, n: _sn2, key: fabricKey(null, _sn2), sn: _sn2 };
+    }
+    if (!useFabric) {
+      if (fiber.stateNode.canonical && typeof fiber.stateNode.canonical.nativeTag === 'number')
+        return { f: false, n: fiber.stateNode.canonical.nativeTag, key: 'p' + fiber.stateNode.canonical.nativeTag };
+      if (typeof fiber.stateNode._nativeTag === 'number')
+        return { f: false, n: fiber.stateNode._nativeTag, key: 'p' + fiber.stateNode._nativeTag };
+    }
+    return null;
+  }
+
+  function findHostNode(fiber, d) {
+    if (!fiber || d > 15) return null;
+    var info = getHostInfo(fiber);
+    if (info) return info;
+    return findHostNode(fiber.child, d + 1);
+  }
+
+  // --- Screen dimensions via Dimensions API (reliable fallback) ---
+  var screenW = 0, screenH = 0;
+  try {
+    function _findDimensions(mod) {
+      if (mod && mod.Dimensions) {
+        var win = mod.Dimensions.get('window');
+        if (win && win.width > 0 && win.height > 0) {
+          screenW = Math.round(win.width);
+          screenH = Math.round(win.height);
+          return true;
+        }
+      }
+      return false;
+    }
+    if (typeof __r.getModules === 'function') {
+      var _dMods = __r.getModules();
+      for (var _dEntry of _dMods) {
+        if (!_dEntry[1].isInitialized) continue;
+        try { if (_findDimensions(__r(_dEntry[0]))) break; } catch(e) {}
+      }
+    } else {
+      for (var i = 0; i < 500; i++) {
+        try { if (_findDimensions(__r(i))) break; } catch(e) {}
+      }
+    }
+  } catch(e) {}
+
+  // --- Phase 1: Walk tree, collect candidates (no measurement yet) ---
+  var candidates = [];
+  var totalFibers = 0;
+  var skippedCounts = {};
+
+  function collectAll(fiber, parentCandidateIdx) {
+    if (!fiber) return;
+
+    // Skip entire subtrees of inactive screens/pages. react-native-screens uses
+    // activityState (0=inactive, 2=active) and pagers use isPageFocused.
+    // This prunes off-screen navigation stacks and inactive tab pages.
+    if (fiber.memoizedProps) {
+      var as = fiber.memoizedProps.activityState;
+      if (as === 0 || as === 1) {
+        collectAll(fiber.sibling, parentCandidateIdx);
+        return;
+      }
+      if (fiber.memoizedProps.isPageFocused === false) {
+        collectAll(fiber.sibling, parentCandidateIdx);
+        return;
+      }
+    }
+
+    var name = getCompName(fiber);
+    var emittedIdx = -1;
+
+    if (name) {
+      if (TRACK_SKIPPED) totalFibers++;
+
+      var skip = shouldSkip(name);
+      var testID = null, accLabel = null, text = null;
+      if (fiber.memoizedProps) {
+        var p = fiber.memoizedProps;
+        testID = p.testID || null;
+        accLabel = p.accessibilityLabel || null;
+        if (typeof p.children === 'string') text = p.children.substring(0, 80);
+        else if (typeof p.title === 'string') text = p.title.substring(0, 80);
+        else if (typeof p.label === 'string') text = p.label.substring(0, 80);
+        else if (typeof p.placeholder === 'string') text = p.placeholder.substring(0, 80);
+      }
+
+      if (skip && testID && !isHardSkip(name)) skip = false;
+
+      // Skip host components (native views) with no testID — their parent React
+      // component carries the semantic info and inherits their rect via findHostNode.
+      // This removes rendering internals like UITextView, UITextViewInner, etc.
+      if (!skip && typeof fiber.type === 'string' && !testID) {
+        skip = true;
+      }
+
+      if (!skip) {
+        var hostInfo = getHostInfo(fiber) || findHostNode(fiber, 0);
+        emittedIdx = candidates.length;
+        candidates.push({
+          name: name,
+          hostInfo: hostInfo,
+          parentIdx: parentCandidateIdx,
+          testID: testID,
+          accLabel: accLabel,
+          text: text,
+          rect: null
+        });
+      } else if (TRACK_SKIPPED) {
+        skippedCounts[name] = (skippedCounts[name] || 0) + 1;
+      }
+    }
+
+    collectAll(fiber.child, emittedIdx >= 0 ? emittedIdx : parentCandidateIdx);
+    collectAll(fiber.sibling, parentCandidateIdx);
+  }
+
+  collectAll(root.current.child, -1);
+
+  // --- Phase 2: Batch measure with per-host-tag caching ---
+  var rectCache = {};
+  var uniqueHosts = [];
+  var hostKeyMap = {};
+
+  for (var ci = 0; ci < candidates.length; ci++) {
+    var hi = candidates[ci].hostInfo;
+    if (!hi) continue;
+    var key = hi.key;
+    if (!(key in hostKeyMap)) {
+      hostKeyMap[key] = uniqueHosts.length;
+      uniqueHosts.push(hi);
+    }
+  }
+
+  function measureOne(info) {
+    return new Promise(function(_resolve) {
+      // Guard against measure callbacks that never fire (detached / off-screen
+      // shadow nodes) so the Promise.all below cannot hang indefinitely.
+      var _settled = false;
+      function resolve(v) { if (_settled) return; _settled = true; _resolve(v); }
+      setTimeout(function() { resolve(null); }, 1200);
+      try {
+        if (info.f) {
+          if (info.pi && typeof info.pi.measureInWindow === 'function') {
+            // Preferred path: works on bridgeless, where the global
+            // nativeFabricUIManager is an empty object with no measure().
+            info.pi.measureInWindow(function(x, y, w, h) {
+              if (w > 0 && h > 0) resolve({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
+              else resolve(null);
+            });
+          } else if (typeof nativeFabricUIManager !== 'undefined' && typeof nativeFabricUIManager.measure === 'function') {
+            nativeFabricUIManager.measure(info.sn || info.n, function(x, y, w, h, px, py) {
+              if (w > 0 && h > 0) resolve({ x: Math.round(px), y: Math.round(py), w: Math.round(w), h: Math.round(h) });
+              else resolve(null);
+            });
+          } else {
+            resolve(null);
+          }
+        } else {
+          UIManagerMod.measureInWindow(info.n, function(x, y, w, h) {
+            if (w > 0 && h > 0) resolve({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
+            else resolve(null);
+          });
+        }
+      } catch(e) { resolve(null); }
+    });
+  }
+
+  var rects = await Promise.all(uniqueHosts.map(measureOne));
+
+  for (var ri = 0; ri < uniqueHosts.length; ri++) {
+    var rKey = uniqueHosts[ri].key;
+    rectCache[rKey] = rects[ri];
+  }
+
+  // Assign rects to candidates
+  for (var ai = 0; ai < candidates.length; ai++) {
+    var h = candidates[ai].hostInfo;
+    if (h) {
+      var rk = h.key;
+      candidates[ai].rect = rectCache[rk] || null;
+    }
+  }
+
+  // --- Phase 3: Filter and build final components array ---
+  var components = [];
+  var candidateToComp = {};
+
+  for (var fi = 0; fi < candidates.length; fi++) {
+    var c = candidates[fi];
+    var isTextNode = c.name === 'Text' || c.name === 'RCTText';
+
+    // Skip empty text nodes with no testID
+    if (isTextNode && !c.text && !c.testID) continue;
+
+    // Must have a rect or a testID. Components with only text/accLabel but no
+    // rect and no testID are unmeasurable and untappable — they add context noise
+    // without enabling any interaction.
+    if (!c.rect && !c.testID) continue;
+
+    // Find effective parent in the components array
+    var effectiveParent = c.parentIdx;
+    while (effectiveParent >= 0 && !(effectiveParent in candidateToComp)) {
+      effectiveParent = candidates[effectiveParent].parentIdx;
+    }
+    var parentCompIdx = effectiveParent >= 0 ? candidateToComp[effectiveParent] : -1;
+
+    // Generalized text dedup: skip ANY component whose display text (text or
+    // accLabel) matches its effective parent's display text and has no testID.
+    var displayText = c.text || c.accLabel;
+    if (displayText && !c.testID && parentCompIdx >= 0) {
+      var parentDisplay = components[parentCompIdx].text || components[parentCompIdx].accLabel;
+      if (parentDisplay === displayText) continue;
+    }
+
+    var entry = { id: components.length, name: c.name, rect: c.rect, parentIdx: parentCompIdx };
+    if (c.testID) entry.testID = c.testID;
+    if (c.accLabel) entry.accLabel = c.accLabel;
+    if (c.text) entry.text = c.text;
+    candidateToComp[fi] = components.length;
+    components.push(entry);
+  }
+
+  var result = { screenW: screenW, screenH: screenH, components: components };
+  if (TRACK_SKIPPED) {
+    result.totalFibers = totalFibers;
+    result.skippedCounts = skippedCounts;
+  }
+  __argent_callback(JSON.stringify({ requestId: REQUEST_ID, result: JSON.stringify(result) }));
+  } catch (e) {
+    __argent_fail('Component-tree script crashed: ' + (e && e.message ? e.message : String(e)));
+  }
+})()`;
+}

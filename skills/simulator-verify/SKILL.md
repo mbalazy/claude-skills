@@ -13,6 +13,7 @@ The skill is generic: everything app-specific (bundle id, device, Metro port, sc
 
 - **`scripts/rig-check.sh`** - proves the app is running the code you are testing. Run it before anything else (see Rig gate).
 - **`scripts/sim-ui.sh`** - the driver for everything: observation and interaction via WebDriverAgent's HTTP API (localhost:8100), lifecycle via `xcrun simctl`. No MCP server needed. Run it with no args for the command list. It auto-starts WDA (`com.facebook.WebDriverAgentRunner.xctrunner` must be installed on the sim). **A physical iPhone on the cable is the same driver**: put the phone's udid in `SIM_UDID` and every command works unchanged - see "A physical iPhone is the same loop" below.
+- **`scripts/rn-devtools.mjs`** - asks the app's JS runtime over Metro's CDP inspector (runtime pages, evaluate JS); see 2b. Its shared code is `scripts/devtools/`, Argent-derived files under `scripts/devtools/vendor/argent/` (Apache 2.0, see its NOTICE).
 - **`scripts/wda-device.sh`** - brings WebDriverAgent up on a physical iPhone (and reports or stops it); the one piece of the phone's plumbing that cannot be automatic.
 - **`scripts/wda-sim.sh`** - the simulator counterpart: `status <udid>` (installed / absent / could not inspect), `source <udid>` (a checked runner bundle to install), `build` (builds one from appium-webdriveragent when none exists), and the readiness gate `ensure <udid> --port <p>` - installs the runner if absent, starts it on `<p>` and prints `WDA READY` only after the listener is attributed to `<udid>` and `elements --all` came back through it. A simulator created or assigned for a run passes `ensure` before handoff; `RIG OK` is the separate app/JS proof and says nothing about WDA. `check` is the same proof without installing or starting anything.
 - **`scripts/simbench.sh`** and **`scripts/regress.sh`** - only needed when changing the driver itself: `simbench.sh` separates tool time from round-trip time (its header carries the reference numbers), `regress.sh` captures the driver's whole observable surface so a change can be shown not to alter it, `test-wda-diagnostics.sh` runs the WDA failure branches and the `wda-sim.sh` gate against stubbed tools (no simulator touched).
@@ -148,6 +149,9 @@ So the rule for this loop:
   | what is on this screen, which ids | `elements --names` (`--all` for unlabelled containers) |
   | did the screen stop moving | `elements --settled` |
   | which app is in front | `foreground` |
+  | which React component renders testID X, what it shows | `rn-devtools.mjs tree --id X` (2b) |
+  | which testIDs React rendered here, also ones iOS does not expose | `rn-devtools.mjs tree --ids` (2b) |
+  | what a store, global or flag holds in the running app | `rn-devtools.mjs eval EXPR` (2b) |
   | how does it LOOK - layout, spacing, colour, clipping, glass | `screenshot`, and only then |
 - **After a code change, reach for `rig-check.sh --reload` first.** It keeps the app's
   navigation state, so the whole re-navigation - the expensive part - does not happen at
@@ -240,6 +244,24 @@ All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **
 - **Alerts queue and arrive late.** One read a few seconds after a tap that says "no alert" is not evidence the tap did nothing. Use `$S alert wait [seconds]` to wait for one, and `$S alert accept --all` afterwards - if it drains more alerts than you ever saw, every tap landed.
 - **One read right after a tap is a frame of an animation, not the state.** A dismissing keyboard, a sheet mid-transition or a launch screen reads as "gone" and is back in the next frame (a tap-to-dismiss was CONFIRMED off one read; 4 s later the keyboard was there). Assert transitions with **`$S elements --settled`**: two reads 2 s apart (`SIMUI_SETTLE_SECONDS`), exit 3 with the diff when they differ. Only two reads that agree are evidence.
 - `$S elements` is not a passive read: answering it makes `UITabBarController` instantiate every child controller, so it can mount the very screen you are testing for. Never use it to prove a screen was NOT mounted.
+
+### 2b. Ask the app's JS runtime (`scripts/rn-devtools.mjs`)
+The accessibility tree shows what iOS exposes; the app's JS runtime knows the rest (state, globals, what React rendered). `scripts/rn-devtools.mjs` talks to it over Metro's CDP inspector, the channel `read-rn-logs-cdp.py` reads logs from. Node built-ins only (tested on Node 25.8; the global `WebSocket` needs Node >= 22.4), one-shot: every command connects, does its job, closes.
+```
+RD=<skill-dir>/scripts/rn-devtools.mjs
+node $RD targets --port 8090                     # the runtime pages; * marks the one commands use
+node $RD eval '1+1' --port 8090                  # -> 2 (JSON on stdout)
+node $RD eval 'typeof globalThis.nativeFabricUIManager' --device "iPhone 17"
+node $RD tree --port 8090                        # React component tree of the screen in front
+node $RD tree --id Some-testID                   # that component and its ancestors
+node $RD tree --grep 'checkout|total' --json     # matches on name/text/label/testID, as JSON
+node $RD tree --ids                              # testIDs React rendered on screen, one per line
+```
+- **Target selection is `read-rn-logs-cdp.py`'s**: `--port` (default `$METRO_PORT`, else 8081), `--device` (substring; an exact name wins), `--app <bundle id>`, `--page <n>` (an explicit page, the only way to a worklet runtime such as Reanimated's `UI`). The main runtime is the page that prefers the Fusebox frontend. Several devices, or several app runtimes on one device: exit 2 with the list, never a guess.
+- **Exit codes**: 0 done; 1 nothing to talk to (Metro not on the port, no matching target), the expression threw (its text on stderr) or its result is something JSON cannot carry (NaN, a BigInt, a cycle - wrap it in `String(...)`); 2 ambiguous target; 3 no answer within `--timeout` (seconds, default 10) or the page went away mid-command; 64 usage.
+- `eval` runs in the app's global scope and awaits a Promise (`--no-await` to skip). React Native's `Promise` is a polyfill that CDP's own `awaitPromise` does not recognise (it returns `{"_h":0,...}`), so the wait happens inside the app; a rejection exits 1 with its text, a Promise that never settles exits 3. Hermes has `globalThis`, not Node's `global`.
+- **`tree`** prints one component per line, two spaces per level: `Name "text" [testID=X] (tap X,Y)`, where the text is the visible text or else the accessibility label and `(tap X,Y)` is the centre of the part of its rect that is on screen, in points - what `$S tap X Y` takes on a portrait simulator (no orientation correction: a landscape UI is reported in the window's axes). Layout-only wrappers, components fully off screen (`--all` keeps them) and text an ancestor already shows are pruned with the rules of Argent's component tree, so a wrapper missing from the output proves nothing. Every testID React renders on screen stays, partly visible components included; React usually has more of them than `$S elements --all --names`, because iOS merges many views into one accessible element. `--grep REGEX` (case-insensitive) and `--id X` keep the matches plus their ancestors (with `--ids`, only the matches' testIDs); a filter that matches nothing prints `(nothing matches the filter)` and exits 0. `--max-nodes N` collapses wrapper chains. Its `--timeout` default is 15 s.
+- **Metro lets ONE debugger hold an app.** Connecting here closes React Native DevTools or a running `read-rn-logs-cdp.py` on that app. A log tap in follow mode (the default) reconnects at once and closes this command in turn: it exits 3 with "another debugger took the page". Run the log tap with `--no-follow`, or stop it, while you use `rn-devtools.mjs`.
 
 ### 3. Assert
 Check against the stated expectation:
