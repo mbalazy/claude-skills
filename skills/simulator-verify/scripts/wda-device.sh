@@ -24,7 +24,8 @@
 #   --status      report whether the tunnel and WDA answer, exit 0/1, change nothing
 #   --stop        end this phone's WDA and iproxy screens
 #
-# Where things live: the WDA sources are `npm pack appium-webdriveragent`, unpacked once
+# Where things live: the WDA sources are `npm pack appium-webdriveragent@$WDA_VERSION`
+# (default the pin below; a checkout of another version gets a NOTE), unpacked once
 # into $WDA_DEVICE_HOME (default ~/.cache/wda-device); the build goes to a DerivedData
 # next to it; the xcodebuild log is <home>/wda-<udid>.log (the run is ready when it
 # prints ServerURLHere). Both processes run in `screen` sessions named wda-<udid8> and
@@ -52,6 +53,9 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOME_DIR="${WDA_DEVICE_HOME:-$HOME/.cache/wda-device}"
+# Pinned: an unpinned `npm pack` fetches whatever is latest (17.x needs Node 22/24/26+).
+# 16.18.4+ makes findElements with many matches ~12x faster; measured 2026-11-17 in SKILL.md.
+WDA_VERSION="${WDA_VERSION:-16.18.5}"
 PORT="${WDA_DEVICE_PORT:-8200}"
 TEAM="${WDA_TEAM_ID:-}"
 BUNDLE="${WDA_BUNDLE_ID:-com.${USER}.WebDriverAgentRunner}"
@@ -171,12 +175,15 @@ done
 
 mkdir -p "$HOME_DIR"
 if [[ ! -f "$PKG/WebDriverAgent.xcodeproj/project.pbxproj" ]]; then
-  echo "fetching appium-webdriveragent into $HOME_DIR ..."
-  ( cd "$HOME_DIR" && rm -rf package && npm pack appium-webdriveragent >/dev/null 2>&1 \
+  echo "fetching appium-webdriveragent@$WDA_VERSION into $HOME_DIR ..."
+  ( cd "$HOME_DIR" && rm -rf package && npm pack "appium-webdriveragent@$WDA_VERSION" >/dev/null 2>&1 \
       && tar xzf appium-webdriveragent-*.tgz && rm -f appium-webdriveragent-*.tgz ) \
-    || { echo "ERROR: npm pack appium-webdriveragent failed" >&2; exit 1; }
+    || { echo "ERROR: npm pack appium-webdriveragent@$WDA_VERSION failed" >&2; exit 1; }
 fi
-echo "WDA sources: $PKG ($(grep -m1 '"version"' "$PKG/package.json" | tr -d ' ,"' ))"
+HAVE_VERSION="$(grep -m1 '"version"' "$PKG/package.json" | tr -d ' ,"' | cut -d: -f2)"
+echo "WDA sources: $PKG (version:$HAVE_VERSION)"
+# An older checkout keeps working; replacing it is a rebuild, so it is the user's call.
+[ "$HAVE_VERSION" = "$WDA_VERSION" ] || echo "NOTE: $PKG is $HAVE_VERSION, the pin is $WDA_VERSION - to switch, stop this phone's WDA and remove $PKG and $DD; the next run fetches and builds the pin." >&2
 
 # Stale pieces first: an iproxy on the port with no WDA behind it, an old test run.
 if screen_up "$SCREEN_WDA"; then screen -S "$SCREEN_WDA" -X quit; fi

@@ -35,6 +35,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WDA_RUNNER="com.facebook.WebDriverAgentRunner.xctrunner"
 WDA_HOME="${WDA_DEVICE_HOME:-$HOME/.cache/wda-device}"
 SIM_DERIVED="${WDA_SIM_DERIVED:-$WDA_HOME/DerivedData-sim}"
+# Pinned, as in wda-device.sh (same sources directory, same version).
+WDA_VERSION="${WDA_VERSION:-16.18.5}"
 BUILT_RUNNER="$SIM_DERIVED/Build/Products/Debug-iphonesimulator/WebDriverAgentRunner-Runner.app"
 SEARCH_ROOT="${WDA_SIM_SEARCH_ROOT:-$HOME/Library/Developer/CoreSimulator/Devices}"
 START_TIMEOUT="${WDA_SIM_START_TIMEOUT:-30}"
@@ -237,11 +239,15 @@ case "$cmd" in
     done
     mkdir -p "$WDA_HOME"
     if [[ ! -f "$PKG/WebDriverAgent.xcodeproj/project.pbxproj" ]]; then
-      echo "fetching appium-webdriveragent into $WDA_HOME ..."
-      ( cd "$WDA_HOME" && rm -rf package && npm pack appium-webdriveragent >/dev/null 2>&1 \
+      echo "fetching appium-webdriveragent@$WDA_VERSION into $WDA_HOME ..."
+      ( cd "$WDA_HOME" && rm -rf package && npm pack "appium-webdriveragent@$WDA_VERSION" >/dev/null 2>&1 \
           && tar xzf appium-webdriveragent-*.tgz && rm -f appium-webdriveragent-*.tgz ) \
-        || { echo "ERROR: npm pack appium-webdriveragent failed" >&2; exit 1; }
+        || { echo "ERROR: npm pack appium-webdriveragent@$WDA_VERSION failed" >&2; exit 1; }
     fi
+    have="$(grep -m1 '"version"' "$PKG/package.json" | tr -d ' ,"' | cut -d: -f2)"
+    # The sources directory is shared with wda-device.sh, whose phone run may be using it:
+    # never replace it here.
+    [ "$have" = "$WDA_VERSION" ] || echo "NOTE: building $PKG at $have, the pin is $WDA_VERSION - set WDA_DEVICE_HOME to a new directory to build the pin without touching this one." >&2
     echo "building $PKG for the iOS Simulator into $SIM_DERIVED (log $SIM_DERIVED.log) ..."
     xcodebuild -project "$PKG/WebDriverAgent.xcodeproj" -scheme WebDriverAgentRunner \
       -destination 'generic/platform=iOS Simulator' -derivedDataPath "$SIM_DERIVED" \
