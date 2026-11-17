@@ -1,0 +1,53 @@
+This directory contains files copied from Argent by Software Mansion S.A.
+
+  Source:   https://github.com/software-mansion/argent
+  Commit:   8cd8fe1e3f344be04f3e571cb99656af2d9fe1e1
+  License:  Apache License 2.0 (LICENSE.txt in this directory, copied unmodified)
+  Copyright 2026 Software Mansion S.A.
+
+Each copied file sits at its upstream path relative to the repository root
+(e.g. packages/tool-server/src/...), byte-identical to that commit. Nothing
+here is changed: where our code needs different behaviour, it lives outside
+this directory (in ../../, the devtools glue) and the copied file is used as
+it is, loaded through ../../vendor-loader.mjs.
+
+Only the open-source JavaScript the tools inject into the app or use to read
+its data is copied. Argent's proprietary parts (simulator-server, ax-service,
+the native-devtools libraries and anything that loads them) are not copied
+and not called.
+
+`vendor-drift.mjs --upstream <argent checkout at the commit above>` checks
+that every file listed below is still byte-identical to upstream and that no
+file here is unlisted.
+
+Ported, not copied: our own code under ../../ that follows the behaviour of
+these upstream files (they import zod and Argent's tool registry, so they are
+read, not vendored). Each of our files names its source in its header.
+  packages/tool-server/src/tools/debugger/debugger-component-tree.ts -> ../../component-tree.mjs
+  packages/tool-server/src/tools/profiler/react/react-profiler-start.ts -> skills/rn-profile/scripts/react-profile.mjs
+  packages/tool-server/src/tools/profiler/react/react-profiler-stop.ts -> skills/rn-profile/scripts/react-profile.mjs
+  packages/tool-server/src/blueprints/react-profiler-session.ts -> skills/rn-profile/scripts/react-profile.mjs
+  packages/tool-server/src/utils/react-profiler/pipeline/00-cpu-correlate.ts (dropStaleLeadingGap) -> skills/rn-profile/scripts/react-profile.mjs
+  packages/tool-server/src/utils/ios-profiler/pipeline/index.ts (runIosProfilerPipeline) -> skills/rn-profile/scripts/ios-profile.mjs
+
+Copied files (path | change):
+- packages/tool-server/src/utils/debugger/scripts/component-tree.ts | unmodified
+- packages/tool-server/src/utils/debugger/scripts/network-interceptor.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/component-names.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/Argent.tracetemplate | unmodified
+- packages/tool-server/src/utils/ios-profiler/config.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/export.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/pipeline/01-correlate.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/pipeline/02-aggregate.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/pipeline/xml-parser.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/run-with-timeout.ts | unmodified
+- packages/tool-server/src/utils/ios-profiler/types.ts | unmodified
+- packages/tool-server/src/utils/profiler-shared/aggregate.ts | unmodified
+- packages/tool-server/src/utils/profiler-shared/thread.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/devtools-bootstrap.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-cpu-correlate.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-hot-commits.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-preprocess.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/utils.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/render-summary.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/scripts.ts | unmodified

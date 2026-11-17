@@ -41,6 +41,7 @@ pm-cli **0.66.0** (see [`skills/solo/README.md`](skills/solo/README.md)).
 | Skill | What it does |
 |---|---|
 | `simulator-verify` | Drives a booted iOS simulator so a UI claim can be verified against the running app: launch the dev build, read the accessibility element tree, tap and swipe, take screenshots, read the app's own console logs, and measure alignment or spacing off a full-resolution screenshot. The measuring part is the reason this exists: a 1-2pt offset is a real defect that is invisible at a glance. Rule learned the expensive way: **one round of looking that does not settle a visual claim becomes instrumentation, not a second round of looking.** |
+| `rn-profile` | Profiles the running React Native app from the command line: records which React components re-render and how long each commit takes (with Hermes's CPU sampler alongside), and prints the commit count, the slowest commit and the heaviest components. A recording has a time limit and lives in the app between one-shot commands. On an iOS simulator it also records the app's native side with `xctrace` for a fixed time: CPU hotspots per thread, UI hangs, and leaks on request. |
 | `figma-pp` | Implements a Figma node as React Native code and verifies it on the simulator, with a mandatory step in the middle: every value from the design gets mapped onto something that already exists in the repo's design system before any code is written. |
 | `developing-features` | Takes a feature from a ticket to an open PR in three phases - spec, build, ship. A checkpoint-driven spec from code it actually read, one committable checkpoint at a time behind the project's validation gate, then runtime verification and the pre-PR gate. |
 
@@ -50,6 +51,7 @@ Scripts worth knowing in `simulator-verify`:
 |---|---|
 | `sim-ui.sh` | Simulator driver - launch, tap, type, swipe, dump the element tree, screenshot. WebDriverAgent over HTTP plus `xcrun simctl`. No MCP server needed. |
 | `read-rn-logs.sh` | Reads the app's JavaScript console output straight from the simulator's system log. |
+| `rn-devtools.mjs` | Asks the running app's JavaScript runtime over Metro's debugger connection: evaluate an expression, print the React component tree of the screen (component names, testIDs, text, tap points). Node built-ins only. |
 | `measure-element.py` | Given a screenshot and a region, reports how far off-center the content is, in pixels and points. A number instead of an opinion. |
 | `measure-boxes.py` | For anchored overlays (popover, menu, picker): measures the anchor rectangle against the frame that actually rendered. |
 
