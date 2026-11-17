@@ -24,7 +24,19 @@ Ported, not copied: our own code under ../../ that follows the behaviour of
 these upstream files (they import zod and Argent's tool registry, so they are
 read, not vendored). Each of our files names its source in its header.
   packages/tool-server/src/tools/debugger/debugger-component-tree.ts -> ../../component-tree.mjs
+  packages/tool-server/src/tools/profiler/react/react-profiler-start.ts -> skills/rn-profile/scripts/react-profile.mjs
+  packages/tool-server/src/tools/profiler/react/react-profiler-stop.ts -> skills/rn-profile/scripts/react-profile.mjs
+  packages/tool-server/src/blueprints/react-profiler-session.ts -> skills/rn-profile/scripts/react-profile.mjs
+  packages/tool-server/src/utils/react-profiler/pipeline/00-cpu-correlate.ts (dropStaleLeadingGap) -> skills/rn-profile/scripts/react-profile.mjs
 
 Copied files (path | change):
 - packages/tool-server/src/utils/debugger/scripts/component-tree.ts | unmodified
 - packages/tool-server/src/utils/debugger/scripts/network-interceptor.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/component-names.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/devtools-bootstrap.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-cpu-correlate.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-hot-commits.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/00-preprocess.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/pipeline/utils.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/render-summary.ts | unmodified
+- packages/tool-server/src/utils/react-profiler/scripts.ts | unmodified
