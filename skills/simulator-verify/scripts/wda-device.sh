@@ -193,6 +193,29 @@ echo "WDA sources: $PKG (version:$HAVE_VERSION)"
 # An older checkout keeps working; replacing it is a rebuild, so it is the user's call.
 [ "$HAVE_VERSION" = "$WDA_VERSION" ] || echo "NOTE: $PKG is $HAVE_VERSION, the pin is $WDA_VERSION - to switch, stop this phone's WDA and remove $PKG and $DD; the next run fetches and builds the pin." >&2
 
+# The phone keeps its keyboard settings. WDA's runner calls configureDefaultKeyboardPreferences
+# on every start, which writes Auto-Correction and Predictive Text OFF into the phone's own
+# keyboard preferences and never puts them back - on a personal phone they stayed off after
+# every session. The phone is built from a copy of the sources with that one call removed;
+# $PKG itself (also the simulator build's source) is left as upstream ships it.
+# Cost: autocorrect can now change words typed by `type`; `typeid` reads the field back and
+# fails loudly on any change. WDA_KEEP_KEYBOARD=0 builds upstream's behaviour again.
+BUILD_PKG="$PKG"
+if [ "${WDA_KEEP_KEYBOARD:-1}" = 1 ]; then
+  BUILD_PKG="$HOME_DIR/package-device"
+  if [ "$(grep -m1 '"version"' "$BUILD_PKG/package.json" 2>/dev/null)" != "$(grep -m1 '"version"' "$PKG/package.json")" ]; then
+    rm -rf "$BUILD_PKG" && cp -Rp "$PKG" "$BUILD_PKG"
+  fi
+  RUNNER_SETUP="$BUILD_PKG/WebDriverAgentRunner/UITestingUITests.m"
+  sed -i '' 's|^\( *\)\[FBConfiguration.sharedInstance configureDefaultKeyboardPreferences\];|\1// removed by wda-device.sh: keeps the phone'"'"'s Auto-Correction and Predictive Text|' "$RUNNER_SETUP"
+  if grep -q 'configureDefaultKeyboardPreferences' "$RUNNER_SETUP"; then
+    echo "ERROR: could not remove WDA's keyboard reset from $RUNNER_SETUP (upstream changed the line?)." >&2
+    echo "       Starting would switch Auto-Correction and Predictive Text off on the phone; WDA_KEEP_KEYBOARD=0 accepts that." >&2
+    exit 1
+  fi
+  echo "keyboard: building from $BUILD_PKG without WDA's keyboard reset (phone keeps Auto-Correction and Predictive Text)"
+fi
+
 # Stale pieces first: an iproxy on the port with no WDA behind it, an old test run.
 if screen_up "$SCREEN_WDA"; then screen -S "$SCREEN_WDA" -X quit; fi
 kill_orphaned_diagnose
@@ -206,7 +229,7 @@ if lsof -ti tcp:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 : > "$LOG"
-screen -dmS "$SCREEN_WDA" bash -c "cd '$PKG' && xcodebuild -project WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner \
+screen -dmS "$SCREEN_WDA" bash -c "cd '$BUILD_PKG' && xcodebuild -project WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner \
   -destination 'id=$UDID' -derivedDataPath '$DD' CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM='$TEAM' \
   CODE_SIGN_IDENTITY='Apple Development' PRODUCT_BUNDLE_IDENTIFIER='$BUNDLE' test > '$LOG' 2>&1"
 screen -dmS "$SCREEN_PROXY" bash -c "iproxy $PORT 8100 -u $UDID"
