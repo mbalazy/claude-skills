@@ -77,10 +77,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Plugged in = on USB, which is also what iproxy needs. devicectl's State column is not
+# that: a phone on the cable shows "connected" or "available (paired)" depending on the
+# Xcode version and whether a developer tunnel is up (2026-11-17: wired iPhone 12,
+# "available (paired)", refused here although idevice_id listed it).
 connected_devices() {
-  xcrun devicectl list devices 2>/dev/null \
-    | awk '$0 ~ /physical/ && $0 ~ /connected/' \
-    | grep -oE '0000[0-9A-Fa-f]{4}-[0-9A-Fa-f]{16}|\b[0-9a-f]{40}\b'
+  if command -v idevice_id >/dev/null 2>&1; then
+    idevice_id -l 2>/dev/null | grep -oE '^(0000[0-9A-Fa-f]{4}-[0-9A-Fa-f]{16}|[0-9a-f]{40})$'
+  else
+    xcrun devicectl list devices 2>/dev/null \
+      | awk '$0 ~ /physical/ && $0 ~ /connected/' \
+      | grep -oE '0000[0-9A-Fa-f]{4}-[0-9A-Fa-f]{16}|\b[0-9a-f]{40}\b'
+  fi
 }
 
 if [[ -z "$UDID" ]]; then
