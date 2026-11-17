@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // rn-devtools.mjs - ask the running React Native app things over Metro's CDP
 // inspector: which runtime pages exist, what a JS expression evaluates to
-// inside the app, and which React components the screen is made of. Node
-// built-ins only.
+// inside the app, which React components the screen is made of, and which
+// HTTP requests the app's JavaScript makes. Node built-ins only.
 //
 // Usage:
 //   rn-devtools.mjs targets [--port N] [--json]
 //   rn-devtools.mjs eval EXPRESSION [target options] [--timeout S] [--no-await]
 //   rn-devtools.mjs tree [target options] [--grep REGEX] [--id TESTID] [--ids]
 //                        [--json] [--all] [--max-nodes N]
+//   rn-devtools.mjs net start [target options]
+//   rn-devtools.mjs net read  [target options] [--grep REGEX] [--since 30s|5m|HH:MM|ISO]
+//                             [--limit N] [--full] [--headers] [--show-secrets] [--json]
+//   rn-devtools.mjs net stop  [target options]
 //
 // Target options (the rules of read-rn-logs-cdp.py):
 //   --port N        Metro port (default: $METRO_PORT, else 8081)
@@ -31,6 +35,18 @@
 // the matches, not of their ancestors); --json the same
 // nodes as JSON; --all keeps off-screen components; --max-nodes collapses
 // wrapper chains past N. Its --timeout default is 15.
+//
+// net logs the HTTP requests the app's JavaScript makes (fetch, XHR, axios,
+// Expo fetch), not those of native code. start installs the log in the app
+// (a second start changes nothing and says how many requests it holds); the
+// requests stay in the app between commands until stop or a JS reload. read
+// prints them oldest first: method, status, duration, URL, request and
+// response body (cut at 500 chars unless --full); --grep filters on the URL,
+// --since on the start time (an age, or a UTC time as read prints it), --limit keeps the last N (default 50);
+// --headers adds headers, with Authorization / Cookie / Set-Cookie values
+// redacted unless --show-secrets; --json prints the same as JSON. read exits 1
+// when the log is not running. stop puts the original fetch/XHR back and
+// deletes the records.
 //
 // Exit codes:
 //   0  done
@@ -138,7 +154,65 @@ async function cmdTree(args) {
   return 0;
 }
 
-const COMMANDS = { targets: cmdTargets, eval: cmdEval, tree: cmdTree };
+async function cmdNet(args) {
+  const [sub, ...rest] = args;
+  if (!['start', 'read', 'stop'].includes(sub)) throw new UsageError('net takes start | read | stop');
+  const readOptions = sub === 'read' ? {
+    grep: { type: 'string' }, since: { type: 'string' }, limit: { type: 'string' }, full: { type: 'boolean' },
+    headers: { type: 'boolean' }, 'show-secrets': { type: 'boolean' }, json: { type: 'boolean' },
+  } : {};
+  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { ...TARGET_OPTIONS, ...readOptions } });
+  if (positionals.length) throw new UsageError(`net ${sub} takes no positional arguments, got: ${positionals.join(' ')}`);
+  // Loaded here: it needs Node's TypeScript support (the vendored script).
+  const net = await import('./devtools/network.mjs');
+  const opts = targetOpts(values);
+
+  if (sub === 'start') {
+    const res = await withRuntime(opts, (client) => net.startNetworkLog(client, opts));
+    if (res.already) {
+      console.log(`already running in the app, ${res.count} request(s) captured - nothing changed`);
+      if (!res.restorable) console.log('note: installed by another tool; `net stop` will not be able to put fetch/XHR back');
+    } else if (res.installed) {
+      console.log('network log started in the app (JS requests only); it runs until `net stop` or a JS reload');
+    } else {
+      throw new Error(`the network log did not install: ${res.reason ?? 'no reason given'}`);
+    }
+    return 0;
+  }
+  if (sub === 'stop') {
+    const res = await withRuntime(opts, (client) => net.stopNetworkLog(client, opts));
+    console.log(res.installed
+      ? `network log stopped: fetch/XHR put back (${res.restored} function(s)), ${res.cleared} captured request(s) deleted`
+      : 'the network log was not running - nothing to stop');
+    return 0;
+  }
+
+  let since;
+  if (values.since !== undefined) {
+    since = net.parseSince(values.since);
+    if (since === null) throw new UsageError(`--since wants 30s, 5m, 2h, a UTC time HH:MM[:SS] or an ISO time, got ${values.since}`);
+  }
+  let limit = 50;
+  if (values.limit !== undefined) {
+    limit = Number(values.limit);
+    if (!Number.isInteger(limit) || limit < 1) throw new UsageError(`--limit wants a whole number >= 1, got ${values.limit}`);
+  }
+  if (values.grep !== undefined) {
+    try { new RegExp(values.grep); } catch (err) { throw new UsageError(`--grep: ${err.message}`); }
+  }
+  const port = metroPort(values.port);
+  const result = await withRuntime(opts, (client) =>
+    net.readNetworkLog(client, { metroPort: port, grep: values.grep, since, limit, full: values.full, timeoutMs: opts.timeoutMs }));
+  const view = { full: values.full, showSecrets: values['show-secrets'], headers: values.headers };
+  if (values.json) {
+    process.stdout.write(JSON.stringify({ total: result.total, matched: result.matched, entries: result.entries.map((e) => net.present(e, view)) }) + '\n');
+  } else {
+    process.stdout.write(net.formatLog(result, view) + '\n');
+  }
+  return 0;
+}
+
+const COMMANDS = { targets: cmdTargets, eval: cmdEval, tree: cmdTree, net: cmdNet };
 
 async function main(argv) {
   const [cmd, ...rest] = argv;

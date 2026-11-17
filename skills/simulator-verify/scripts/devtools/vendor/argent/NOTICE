@@ -27,3 +27,4 @@ read, not vendored). Each of our files names its source in its header.
 
 Copied files (path | change):
 - packages/tool-server/src/utils/debugger/scripts/component-tree.ts | unmodified
+- packages/tool-server/src/utils/debugger/scripts/network-interceptor.ts | unmodified

@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startFakeInspector, fakeTarget, fakeRuntime, withTreeScript } from './devtools/testing/fake-inspector.mjs';
+import vm from 'node:vm';
+import { startFakeInspector, fakeTarget, fakeRuntime, withTreeScript, vmRuntime } from './devtools/testing/fake-inspector.mjs';
+import { makeAppContext } from './devtools/testing/fake-app.mjs';
 
 const CLI = fileURLToPath(new URL('./rn-devtools.mjs', import.meta.url));
 
@@ -191,3 +193,54 @@ test('targets and eval work on a Node without TypeScript support; only tree need
   assert.equal(t.code, 1);
   assert.match(t.stderr, /cannot run TypeScript/);
 }));
+
+test('net: start, a second start, read with bodies, grep, redacted headers, JSON, stop, read after stop', async () => {
+  const ctx = makeAppContext();
+  const app = (code) => vm.runInContext(code, ctx);
+  const fake = await startFakeInspector({ targets: oneApp, handler: vmRuntime(ctx) });
+  const port = String(fake.port);
+  try {
+    const before = await run(['net', 'read', '--port', port]);
+    assert.equal(before.code, 1);
+    assert.match(before.stderr, /not running in the app[\s\S]*net start/);
+
+    const s1 = await run(['net', 'start', '--port', port]);
+    assert.equal(s1.code, 0, s1.stderr);
+    assert.match(s1.stdout, /network log started/);
+    const open = app('XMLHttpRequest.prototype.open');
+    const s2 = await run(['net', 'start', '--port', port]);
+    assert.match(s2.stdout, /already running in the app, 0 request\(s\) captured - nothing changed/);
+    assert.equal(app('XMLHttpRequest.prototype.open'), open);
+
+    await app('request("POST", "https://api.example.test/v1/search?query=yoga", JSON.stringify({ q: "yoga" }), { Authorization: "Bearer secret-token" })');
+    await app('request("GET", "https://api.example.test/v1/other")');
+    const r = await run(['net', 'read', '--port', port, '--grep', 'query=yoga', '--headers']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^1 request\(s\) shown, 1 matched, 2 captured/);
+    assert.match(r.stdout, /POST 200 OK \d+ ms https:\/\/api\.example\.test\/v1\/search\?query=yoga/);
+    assert.match(r.stdout, /> body \(12 chars\) \{"q":"yoga"\}/);
+    assert.match(r.stdout, /< body \(\d+ chars, application\/json\)/);
+    assert.doesNotMatch(r.stdout, /secret-token/);
+    assert.match(r.stdout, /<redacted, 19 chars>/);
+    const j = JSON.parse((await run(['net', 'read', '--port', port, '--json'])).stdout);
+    assert.deepEqual(j.entries.map((e) => e.method), ['POST', 'GET']);
+    assert.equal(j.entries[0].requestHeaders.authorization ?? j.entries[0].requestHeaders.Authorization, '<redacted, 19 chars>');
+
+    const stop = await run(['net', 'stop', '--port', port]);
+    assert.equal(stop.code, 0, stop.stderr);
+    assert.match(stop.stdout, /fetch\/XHR put back \(5 function\(s\)\), 2 captured request\(s\) deleted/);
+    assert.notEqual(app('XMLHttpRequest.prototype.open'), open);
+    await app('request("GET", "https://api.example.test/v1/after-stop")');
+    assert.equal((await run(['net', 'read', '--port', port])).code, 1);
+    assert.match((await run(['net', 'stop', '--port', port])).stdout, /was not running/);
+  } finally { await fake.close(); }
+});
+
+test('net: usage errors exit 64', async () => {
+  assert.equal((await run(['net'])).code, 64);
+  assert.equal((await run(['net', 'pause'])).code, 64);
+  assert.equal((await run(['net', 'read', '--since', 'soon'])).code, 64);
+  assert.equal((await run(['net', 'read', '--limit', '0'])).code, 64);
+  assert.equal((await run(['net', 'read', '--grep', '('])).code, 64);
+  assert.equal((await run(['net', 'start', '--full'])).code, 64);
+});
