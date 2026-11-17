@@ -37,7 +37,8 @@
 // wrapper chains past N. Its --timeout default is 15.
 //
 // net logs the HTTP requests the app's JavaScript makes (fetch, XHR, axios,
-// Expo fetch), not those of native code. start installs the log in the app
+// Expo fetch), not those of native code, and read hides Metro's own traffic
+// (any URL on the --port Metro). start installs the log in the app
 // (a second start changes nothing and says how many requests it holds); the
 // requests stay in the app between commands until stop or a JS reload. read
 // prints them oldest first: method, status, duration, URL, request and
