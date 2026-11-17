@@ -1,6 +1,6 @@
 ---
 name: rn-profile
-description: Profile a running React Native app (development build, iOS simulator) from the command line - record which React components re-render and how long each commit takes, with Hermes's CPU sampler alongside, and print the commits and the heaviest components; then, from the saved file without the app, renders per component, the slowest commits and why a component rendered. Use when a question is about performance - "what re-renders when I tap X", "why is this screen slow", "which component costs the most", "does this change cut renders" - instead of answering it by reading code. Triggers - "/rn-profile", "sprofiluj", "profiler react", "co się re-renderuje", "dlaczego ten ekran muli", "zmierz rendery". Talks to the app over Metro's CDP inspector through simulator-verify's devtools code; Node built-ins only.
+description: Profile a running React Native app (development build, iOS simulator) from the command line - record which React components re-render and how long each commit takes, with Hermes's CPU sampler alongside, and print the commits and the heaviest components; then, from the saved file without the app, renders per component, the slowest commits and why a component rendered; and record the app's native side with xctrace (CPU hotspots per thread, UI hangs, leaks). Use when a question is about performance - "what re-renders when I tap X", "why is this screen slow", "which component costs the most", "does this change cut renders", "where does the app burn native CPU", "does the UI thread hang" - instead of answering it by reading code. Triggers - "/rn-profile", "sprofiluj", "profiler react", "co się re-renderuje", "dlaczego ten ekran muli", "zmierz rendery". Talks to the app over Metro's CDP inspector through simulator-verify's devtools code; Node built-ins only.
 ---
 
 # rn-profile
@@ -55,14 +55,35 @@ node $RP react why /tmp/p.json <Component> [--top 20]
 - Hermes's sampler is process-wide and survives a JS reload. `start` stops a leftover one before it starts its own, and `stop` stops it; a recording that is never stopped leaves it running until the next `start`/`stop` or an app relaunch.
 - Connecting takes the app from React Native DevTools and from a following `read-rn-logs-cdp.py` (Metro lets one debugger hold an app; see simulator-verify's section 2b). Run the log tap with `--no-follow` while profiling.
 
+## Native iOS profiler (simulator)
+
+```
+node $RP ios record --udid <simulator udid> [--app <bundle id|name>] [--seconds 15] [--out DIR]
+node $RP ios report DIR                           # read a recording's exports again
+```
+
+Records the app's native side with Xcode's `xctrace` (Instruments on the command line): where the process spends CPU time, which functions run during a UI hang, and with `--leaks` leaked memory. Needs Xcode and a **booted simulator named by its udid** (`xcrun simctl list devices`; never "booted", never a default). Physical devices are not supported.
+
+- **record** finds the user apps running on that simulator (UI test runners such as WebDriverAgent left out); `--app` picks one by bundle id, executable or display name and is required when several run (exit 2 with the list). xctrace attaches by display name, so two running apps with the same one (a production and a development build) exit 2: quit the other. It attaches xctrace's **Time Profiler** to the app by its display name for `--seconds` (default 15, at most 600), waits for it to save, exports the CPU samples and the hangs into `--out` (default a new temp dir; about 1 MB of XML per second recorded), deletes the `.trace` bundle (about 20 MB per 12 s) unless `--keep-trace`, writes `summary.json` and prints:
+  - CPU samples and sampled ms per thread (main thread, the JS thread, the app's unnamed threads added up, the top 5);
+  - hotspots: the functions (leaf-first, app code before React Native and system frames) holding at least 3% of the samples, with their thread and whether they ran during a hang (`--top`, default 10);
+  - UI hangs that xctrace detected (type, duration, start, the functions sampled during it), or `none`;
+  - leaks: `not recorded` unless `--leaks`.
+  `--json` prints the same as JSON.
+- **--leaks** records with Argent's template (Time Profiler + Allocations + Leaks) instead. Allocations turns on malloc stack logging in the app process and **it stays on until the app is relaunched**: every later CPU or hang reading of that process is skewed (its own stack logging shows up as the top hotspot, and as multi-second "hangs"). Relaunch the app after a leaks run. The trace is much larger (hundreds of MB before export).
+- **Ending**: the recording ends at `--seconds` (xctrace needs a few more seconds to attach and save). `--timeout` (default `--seconds` + 90, for the whole command, export included) and Ctrl-C stop xctrace (SIGINT, then SIGTERM after 60 s, then SIGKILL) or kill a running export, delete the partial trace and export nothing (exit 3 and 130). No xctrace process is left in any case. A failed run leaves no empty `--out` directory it created.
+
+**Reading the numbers**: simulator CPU is the Mac's CPU, shared with everything else running; compare a recording with input against an idle one of the same length, never with a device budget. A development build carries debug-only work (React Native's dev checks, Metro's connection).
+
 ## Target options and exit codes
 
-Target selection is the same as `simulator-verify/scripts/rn-devtools.mjs`: `--port` (default `$METRO_PORT`, else 8081), `--device` (substring; an exact name wins), `--app <bundle id>`, `--page <n>`, `--timeout S` (default 10). Several devices or app runtimes: exit 2 with the list, never a guess.
+The `react` commands select their target the same way as `simulator-verify/scripts/rn-devtools.mjs`: `--port` (default `$METRO_PORT`, else 8081), `--device` (substring; an exact name wins), `--app <bundle id>`, `--page <n>`, `--timeout S` (default 10). Several devices or app runtimes: exit 2 with the list, never a guess.
 
 | Exit | Meaning |
 |---|---|
 | 0 | done |
-| 1 | nothing to talk to (Metro not on the port, no matching app), no React DevTools hook (release build), nothing recording, or another tool holds the profiler |
-| 2 | ambiguous target |
-| 3 | no answer within `--timeout` |
+| 1 | nothing to talk to (Metro not on the port, no matching app), no React DevTools hook (release build), nothing recording, or another tool holds the profiler; `ios`: no such booted simulator, the app not running, or xctrace failed (its message is printed) |
+| 2 | ambiguous target; `ios`: several user apps running and no `--app` |
+| 3 | no answer within `--timeout`; `ios record`: recording and export did not finish within `--timeout` |
 | 64 | usage |
+| 130 | `ios record` interrupted (Ctrl-C) |

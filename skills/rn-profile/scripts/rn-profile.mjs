@@ -9,6 +9,9 @@
 //   rn-profile.mjs react renders FILE [--sort time|renders] [--grep REGEX] [--top N] [--json]
 //   rn-profile.mjs react commits FILE [--top N] [--min-ms MS] [--json]
 //   rn-profile.mjs react why FILE COMPONENT [--top N] [--json]
+//   rn-profile.mjs ios record --udid UDID [--app NAME] [--seconds N] [--leaks]
+//                             [--out DIR] [--keep-trace] [--timeout S] [--top N] [--json]
+//   rn-profile.mjs ios report DIR [--top N] [--json]
 //
 // Target options (as simulator-verify's rn-devtools.mjs): --port (default
 // $METRO_PORT, else 8081), --device, --app, --page, --timeout S (default 10).
@@ -36,13 +39,27 @@
 // no component matching --grep, no commit at or over --min-ms, a component
 // that never rendered (the message names similar ones).
 //
+// ios record profiles the app's native side on the simulator --udid names
+// (booted; never "booted" or a default): xctrace's Time Profiler for --seconds
+// (default 15, at most 600), attached to the app by its display name (--app =
+// bundle id, executable or display name; needed when several user apps run).
+// It waits for xctrace, exports CPU samples and UI hangs into --out (default a
+// new temp dir), deletes the .trace bundle unless --keep-trace, and prints the
+// samples per thread, the hotspot functions (--top, default 10), the hangs and
+// leaks. --leaks records with Argent's template (Allocations + Leaks), which
+// leaves malloc stack logging on in the app until it is relaunched. --timeout
+// (default --seconds + 90, export included) or Ctrl-C stops xctrace (SIGINT,
+// then SIGTERM, then SIGKILL) or kills a running export, and exports nothing. ios report re-reads the exports in a DIR.
+//
 // Exit codes: 0 done; 1 nothing to talk to, no React DevTools hook (release
-// build), nothing recording, or another tool holds the profiler; 2 ambiguous
-// target; 3 no answer within --timeout; 64 usage.
+// build), nothing recording, another tool holds the profiler, no such booted
+// simulator, the app not running, or xctrace failed; 2 ambiguous target or
+// several apps; 3 no answer within --timeout; 64 usage; 130 interrupted.
 
 import { parseArgs } from 'node:util';
-import { writeFileSync, renameSync, accessSync, constants, existsSync, statSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { writeFileSync, renameSync, accessSync, constants, existsSync, statSync, mkdirSync, mkdtempSync, readdirSync, rmdirSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { withRuntime, UsageError } from '../../simulator-verify/scripts/devtools/runtime.mjs';
 import {
   startRecording, recordingStatus, stopRecording, summarize, formatSummary,
@@ -192,15 +209,66 @@ async function reactWhy(args) {
 
 const REACT = { start: reactStart, status: reactStatus, stop: reactStop, renders: reactRenders, commits: reactCommits, why: reactWhy };
 
+async function iosRecord(args) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
+    udid: { type: 'string' }, app: { type: 'string' }, seconds: { type: 'string' }, leaks: { type: 'boolean' }, out: { type: 'string' },
+    'keep-trace': { type: 'boolean' }, timeout: { type: 'string' }, top: { type: 'string' }, json: { type: 'boolean' },
+  } });
+  if (positionals.length) throw new UsageError(`unexpected argument: ${positionals.join(' ')}`);
+  if (!values.udid) throw new UsageError('ios record needs --udid UDID (the simulator; `xcrun simctl list devices` lists them)');
+  const I = await import('./ios-profile.mjs');
+  const seconds = values.seconds === undefined ? I.DEFAULT_SECONDS : positiveNumber('seconds', values.seconds, { integer: true, max: I.MAX_SECONDS });
+  const top = values.top === undefined ? 10 : positiveNumber('top', values.top, { integer: true });
+  // At most a day: setTimeout fires at once above ~24.8 days, which would stop the recording at its start.
+  const timeoutMs = values.timeout === undefined ? undefined : Math.round(positiveNumber('timeout', values.timeout, { max: 86_400 }) * 1000);
+  let outDir;
+  let made = false;
+  if (values.out) {
+    outDir = resolve(values.out);
+    made = !existsSync(outDir);
+    mkdirSync(outDir, { recursive: true });
+    const clash = readdirSync(outDir).filter((n) => n === 'native.trace' || /^native_raw_.*\.xml$/.test(n) || n === I.SUMMARY_FILE);
+    if (clash.length) throw new UsageError(`--out ${outDir} already holds a recording (${clash.join(', ')}); pick an empty directory`);
+  } else {
+    outDir = mkdtempSync(join(tmpdir(), 'rn-profile-ios-'));
+    made = true;
+  }
+  if (values.leaks) process.stderr.write('note: the leaks template turns malloc stack logging on in the app; it stays on until the app is relaunched and skews later CPU and hang readings\n');
+  let sum;
+  try {
+    sum = await I.record({ udid: values.udid, app: values.app, seconds, leaks: values.leaks, outDir, keepTrace: values['keep-trace'], timeoutMs, top });
+  } catch (err) {
+    // A directory this command made and nothing went into is not left behind.
+    if (made && !readdirSync(outDir).length) rmdirSync(outDir);
+    throw err;
+  }
+  process.stdout.write(values.json ? `${JSON.stringify(sum)}\n` : `${I.formatSummary(sum)}\n\nexports and ${I.SUMMARY_FILE} in ${outDir}${sum.trace ? `; trace kept at ${sum.trace}` : ''}\n`);
+  return 0;
+}
+
+async function iosReport(args) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: { top: { type: 'string' }, json: { type: 'boolean' } } });
+  if (positionals.length !== 1) throw new UsageError(`ios report takes one DIR, got ${positionals.length ? positionals.join(' ') : 'nothing'}`);
+  const top = values.top === undefined ? 10 : positiveNumber('top', values.top, { integer: true });
+  const I = await import('./ios-profile.mjs');
+  const sum = await I.reportDir(resolve(positionals[0]), { top });
+  process.stdout.write(values.json ? `${JSON.stringify(sum)}\n` : `${I.formatSummary(sum)}\n`);
+  return 0;
+}
+
+const AREAS = { react: REACT, ios: { record: iosRecord, report: iosReport } };
+const USAGE = 'usage: rn-profile.mjs react start|status|stop|renders|commits|why ... | ios record|report ... (see the header of this file)';
+
 async function main(argv) {
   const [area, cmd, ...rest] = argv;
   if (area === undefined || area === '-h' || area === '--help') {
-    process.stderr.write('usage: rn-profile.mjs react start|status|stop|renders|commits|why ... (see the header of this file)\n');
+    process.stderr.write(`${USAGE}\n`);
     return 0;
   }
   try {
-    if (area !== 'react' || !REACT[cmd]) throw new UsageError('usage: rn-profile.mjs react start|status|stop|renders|commits|why ... (see the header of this file)');
-    return await REACT[cmd](rest);
+    const handler = Object.hasOwn(AREAS, area) && Object.hasOwn(AREAS[area], cmd) ? AREAS[area][cmd] : null;
+    if (!handler) throw new UsageError(USAGE);
+    return await handler(rest);
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
     if (typeof err.exitCode === 'number') return err.exitCode;
