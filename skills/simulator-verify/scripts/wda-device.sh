@@ -41,7 +41,9 @@
 # sysdiagnose off the phone. Stop the run and that collector is orphaned, still holding the
 # CoreDevice DeviceFS mount - and from then on EVERY `lsof` and `ps -o args` on the Mac
 # hangs in uninterruptible wait (2026-09-25: 15 minutes of "WDA hangs", it was lsof inside
-# sim-ui.sh). Both --stop and a fresh start kill that collector for this phone.
+# sim-ui.sh). Both --stop and a fresh start kill that collector for this phone, and keep
+# killing it for ~10 s after quitting a run, because quitting is what spawns it. A phone
+# unplugged without --stop can still leave one behind: `pkill -f 'devicectl diagnose'`.
 #
 # Signing, learned the hard way: automatic signing with an existing Xcode-managed wildcard
 # profile ("iOS Team Provisioning Profile: *") that already lists the phone needs no Apple
@@ -135,6 +137,19 @@ kill_orphaned_diagnose() {
   done
 }
 
+# Quitting the run is itself a failed run: xcodebuild may spawn the collector only AFTER the
+# quit, so one kill before it is not enough (2026-11-17: --stop printed no orphan, the
+# collector started seconds later and wedged lsof, ps and new claude sessions overnight).
+# Keep killing for a few seconds after the run is gone.
+reap_diagnose_after_quit() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    kill_orphaned_diagnose
+    sleep 1
+  done
+  kill_orphaned_diagnose
+}
+
 wda_answers() { curl -s -m 3 "http://localhost:$1/status" 2>/dev/null | grep '"ready" : true\|"ready":true' >/dev/null; }
 wda_built() { curl -s -m 3 "http://localhost:$1/status" 2>/dev/null | python3 -c 'import sys,json
 try: print(json.load(sys.stdin)["value"]["build"]["time"])
@@ -165,6 +180,7 @@ case "$MODE" in
     done
     # A tunnel started by hand (not in our screen) is still ours to stop: it names the phone.
     for pid in $(pgrep -f -- "iproxy .* -u $UDID" 2>/dev/null); do kill "$pid" 2>/dev/null && echo "stopped iproxy pid $pid"; done
+    reap_diagnose_after_quit
     exit 0
     ;;
 esac
@@ -217,8 +233,7 @@ if [ "${WDA_KEEP_KEYBOARD:-1}" = 1 ]; then
 fi
 
 # Stale pieces first: an iproxy on the port with no WDA behind it, an old test run.
-if screen_up "$SCREEN_WDA"; then screen -S "$SCREEN_WDA" -X quit; fi
-kill_orphaned_diagnose
+if screen_up "$SCREEN_WDA"; then screen -S "$SCREEN_WDA" -X quit; reap_diagnose_after_quit; else kill_orphaned_diagnose; fi
 if screen_up "$SCREEN_PROXY"; then screen -S "$SCREEN_PROXY" -X quit; fi
 OLD_T="$(existing_tunnel_port)"
 [[ -n "$OLD_T" ]] && for pid in $(pgrep -f -- "iproxy .* -u $UDID"); do kill "$pid" 2>/dev/null; done
