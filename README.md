@@ -150,3 +150,10 @@ leaving a placeholder is a valid answer and guessing is not.
   prop comes out before the commit, and `git status` has to be clean.
 - Nothing here starts Metro, boots a simulator or installs a build. That is the
   project's own tooling; these skills drive what is already running.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Two directories keep their own license:
+`skills/humanizer` (MIT, fork of blader/humanizer, its `LICENSE`) and
+`skills/simulator-verify/scripts/devtools/vendor/argent` (Apache-2.0, its
+`LICENSE.txt` and `NOTICE` list the copied and ported files).
