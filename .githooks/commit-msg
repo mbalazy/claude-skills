@@ -1,0 +1,3 @@
+#!/bin/sh
+# The same check on the commit message - a client name in a message is as public as one in a file.
+exec "$(git rev-parse --show-toplevel)/scripts/check-leaks.sh" --message "$1"

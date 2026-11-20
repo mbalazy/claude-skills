@@ -1,0 +1,4 @@
+#!/bin/sh
+# Block work data (client names, bundle ids, udids, home paths, secrets) from the staged
+# changes of this PUBLIC repo. Installed by install.sh (core.hooksPath = .githooks).
+exec "$(git rev-parse --show-toplevel)/scripts/check-leaks.sh"
