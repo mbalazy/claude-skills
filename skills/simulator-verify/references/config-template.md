@@ -144,7 +144,7 @@ data state.
 ## Outward-facing flows - check before driving
 
 List every create/submit flow that touches the real world (sends an SMS or
-email, charges a card, notifies a user). Section 3d of the skill explains why:
+email, charges a card, notifies a user). The skill's `references/gotchas.md` ("Reaching a state") explains why:
 reaching a visual state by completing one of these is not free.
 
 - `<flow>` -> `<what it fires>` -> `<the instrumentation shortcut to use instead>`

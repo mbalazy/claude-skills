@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""measure-boxes.py - measure the colored debug boxes from skill section 3e.
+"""measure-boxes.py - measure the colored debug boxes from references/measurement.md (3e).
 
 Finds the red (anchor) and lime (rendered frame) overlay rects in a full-res
 screenshot and reports their top/bottom/height in pt plus the gap between them.
