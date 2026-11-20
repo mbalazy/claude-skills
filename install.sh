@@ -76,14 +76,17 @@ done
 
 # This repository is public: its own commits go through scripts/check-leaks.sh (client
 # names from a denylist kept OUTSIDE the repo, bundle ids, udids, home paths, secrets).
-# A hooksPath somebody set on purpose is left alone.
+# A hooksPath set on purpose in THIS repo's config is left alone; a global one (e.g. hooks
+# switched off everywhere) is overridden for this repository only, and the script says so.
 echo
 echo "leak check for commits to this repo:"
 if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
-  current=$(git -C "$REPO" config --get core.hooksPath || true)
+  current=$(git -C "$REPO" config --local --get core.hooksPath || true)
   if [ -z "$current" ]; then
-    git -C "$REPO" config core.hooksPath .githooks
+    inherited=$(git -C "$REPO" config --get core.hooksPath || true)
+    git -C "$REPO" config --local core.hooksPath .githooks
     echo "  set      core.hooksPath = .githooks (pre-commit + commit-msg run scripts/check-leaks.sh)"
+    [ -n "$inherited" ] && echo "           (overrides the global '$inherited' for this repository only)"
   elif [ "$current" = ".githooks" ]; then
     echo "  ok       core.hooksPath = .githooks (already set)"
   else
