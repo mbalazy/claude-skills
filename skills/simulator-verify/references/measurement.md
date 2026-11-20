@@ -67,6 +67,8 @@ Reading the numbers beats reading the pixels: in ACME-1164 the logs showed `SEAR
 
 
 
+**3. An HTTP probe, when the log channel is not usable.** `console.log` is only worth instrumenting if you can read it back. On a **physical device** `idevicesyslog` never relays it (New Architecture + Hermes send JS logs to the DevTools inspector only), but the CDP tap above reads them as long as the phone loads its JS from this Metro (`read-rn-logs-cdp.py --device iPhone`, verified 2026-09-25); a phone running an embedded bundle has no inspector target at all. The other case for a probe is a large payload on any target - a whole element tree or a serialized object gets truncated and line-wrapped into something you cannot parse.
+
 Sidestep the log entirely: have the app POST its data to a collector on the Mac, where the payload arrives whole and machine-readable.
 ```sh
 scripts/probe-collector.py            # :8099 -> /tmp/probe.log, one JSON line per request

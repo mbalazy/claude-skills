@@ -32,7 +32,7 @@ The per-repo `config.md` records the phone's udid, the Apple team whose Xcode-ma
 
 ## Logs from a phone
 
-**3. An HTTP probe, when the log channel is not usable.** `console.log` is only worth instrumenting if you can read it back. On a **physical device** `idevicesyslog` never relays it (New Architecture + Hermes send JS logs to the DevTools inspector only), but the CDP tap above reads them as long as the phone loads its JS from this Metro (`read-rn-logs-cdp.py --device iPhone`, verified 2026-09-25); a phone running an embedded bundle has no inspector target at all. The other case for a probe is a large payload on any target - a whole element tree or a serialized object gets truncated and line-wrapped into something you cannot parse.
+**An HTTP probe, when the log channel is not usable** (technique 3 in `measurement.md`). `console.log` is only worth instrumenting if you can read it back. On a **physical device** `idevicesyslog` never relays it (New Architecture + Hermes send JS logs to the DevTools inspector only), but the CDP tap (`read-rn-logs-cdp.py`, see `measurement.md`) reads them as long as the phone loads its JS from this Metro (`read-rn-logs-cdp.py --device iPhone`, verified 2026-09-25); a phone running an embedded bundle has no inspector target at all. The other case for a probe is a large payload on any target - a whole element tree or a serialized object gets truncated and line-wrapped into something you cannot parse.
 
 **Native logs from a physical device**, when the question is about the OS rather than about JS (audio session state, permissions, CoreAudio):
 ```sh

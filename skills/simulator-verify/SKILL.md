@@ -54,7 +54,7 @@ $SV/rig-check.sh --repo <worktree> --udid <udid> --port <n>
 - **The gate:** on `RIG DEAD` fix the rig and re-run. Do not navigate, do not screenshot, do not report - never report an observation, PASS, FAIL or "the screen looks right" from a session whose rig check did not pass. Silence from instrumentation is a suspicion about the rig, never evidence about the code.
 - Re-run it after anything that could swap what the app runs: a rebuild, a reinstall, a branch switch, a Metro restart.
 
-What each verdict means and what to do about it: `references/rig-check.md`.
+What each verdict means: `references/rig-check.md`; the Metro, binary and store causes behind them: `references/gotchas.md`.
 
 **One driver at a time.** WebDriverAgent holds one session per simulator and Metro lets one debugger hold an app: two sessions on one simulator take turns, they do not overlap (nothing locks this - see `references/driver.md`).
 
