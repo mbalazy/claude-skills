@@ -110,7 +110,7 @@ Verify every instance with a **different code path or layout context** - not eve
   | which requests the JS sent | `node $SV/rn-devtools.mjs net start` ... `net read` |
   | how does it LOOK - layout, spacing, colour, clipping | `screenshot`, and only then |
 
-- An element you can see but the filtered tree lacks (RN pressables are often `type: "Other"`): `elements --all` before falling back to a screenshot.
+- An element you can see but the filtered tree lacks: `elements --all` - RN rows, pressables, glass and icon-only buttons usually live there as `type: "Other"` with an exact rect.
 - One read right after a tap is a frame of an animation: assert transitions with `elements --settled` (two reads that agree).
 - `elements` can mount the screen it reads: never use it to prove a screen was NOT mounted.
 
