@@ -19,7 +19,7 @@
 #   read-rn-logs.sh --udid UDID [...]         # pin the simulator explicitly
 #
 # "Only new logs": record a timestamp before your action, then pass it with --since:
-#   set TS (date '+%Y-%m-%d %H:%M:%S'); curl -s localhost:8081/reload >/dev/null; sleep 6
+#   set TS (date '+%Y-%m-%d %H:%M:%S'); curl -s localhost:<metro-port>/reload >/dev/null; sleep 6
 #   read-rn-logs.sh --since "$TS"
 # (or just `read-rn-logs.sh 8` right after the action - the relative window is the timestamp).
 #

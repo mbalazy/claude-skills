@@ -182,7 +182,7 @@ Before verifying, build an **instance checklist** whenever the changed component
 PASS requires every enumerated instance checked or marked N/A. For layout-sensitive sweeps, instrument once (3c) and read the frame numbers per instance instead of eyeballing each screen.
 
 ### 1. Reach
-All commands below are `S=.claude/skills/simulator-verify/scripts/sim-ui.sh`. **Set `SIM_UDID`** - with more than one simulator booted the script refuses to run rather than pick one, and it checks that the WebDriverAgent answering on `WDA_PORT` really drives that device (a stranger's WDA on the port used to return the other simulator's screen without a word).
+All commands below are `S=<skill-dir>/scripts/sim-ui.sh` (`<skill-dir>` = the directory holding this SKILL.md, user-wide or in the project's `.claude/skills/`). **Set `SIM_UDID`** - with more than one simulator booted the script refuses to run rather than pick one, and it checks that the WebDriverAgent answering on `WDA_PORT` really drives that device (a stranger's WDA on the port used to return the other simulator's screen without a word).
 - Resolve the device: `$S devices` -> pick the booted simulator.
 - Launch the app: `$S launch <bundle-id>` (the bundle id from `config.md`; foregrounds if already running). Use `$S relaunch <id>` when you changed code - it terminates first, so the sim fetches a fresh JS bundle from Metro. A cold start measured 8-9s on this app, so do not guess it: `$S waitfor '<something on the first screen>' --timeout 30` returns as soon as it is up and tells you if it never is.
 - Navigate to the target screen with `$S tapid ID` where the control has a testID (`$S elements --all --names` lists the ids on screen), else by tapping element rects from the tree: `$S tap X Y` (tap the rect center: `x + w/2`, `y + h/2`). Prefer deep links via `$S openurl` only if the config confirms a registered scheme - and only if a probe shows the URL actually reaches JS, which is a separate question from the scheme being registered (see Gotchas).
@@ -292,7 +292,7 @@ When the bug is about alignment/centering/spacing of a **small** element (a labe
 2. Find the element's px region. Use the element tree coordinates (a11y coords are in pt -> x3), or crop-and-zoom (`sips -c H W --cropOffset Y X ...`) to read it off.
 3. Measure with the bundled script:
    ```
-   python3 .claude/skills/simulator-verify/scripts/measure-element.py shot.png \
+   python3 <skill-dir>/scripts/measure-element.py shot.png \
        --region X,Y,W,H --container dark --inset 20 --scale 3
    ```
    It returns container vs inner-content center delta in px **and pt**, plus inner top/bottom padding. Negative vertical = content rides HIGH; positive = LOW.
@@ -327,10 +327,10 @@ const logLayout = (tag: string) => (e: LayoutChangeEvent) => {
 RN routes `console.*` to Apple os_log (`subsystem com.facebook.react.log`, `category javascript`). Read it without the user pasting anything:
 ```
 # record time, trigger the action (reload / navigate), then read only-new logs:
-set TS (date '+%Y-%m-%d %H:%M:%S'); curl -s localhost:8081/reload >/dev/null; sleep 6
-.claude/skills/simulator-verify/scripts/read-rn-logs.sh --since "$TS" --grep '[LAYOUT]'
+set TS (date '+%Y-%m-%d %H:%M:%S'); curl -s localhost:$PORT/reload >/dev/null; sleep 6   # $PORT = Metro port from config.md
+<skill-dir>/scripts/read-rn-logs.sh --since "$TS" --grep '[LAYOUT]'
 # or just grab the last N seconds:
-.claude/skills/simulator-verify/scripts/read-rn-logs.sh 8
+<skill-dir>/scripts/read-rn-logs.sh 8
 ```
 The `--since "$TS"` (timestamp captured before the action) is the "which logs are new" mechanism - everything older is filtered out. `--info --debug` is baked in (JS logs are INFO level; plain `log show` drops them). Gotcha: multi-arg `console.log(a, b)` prints comma-separated quoted args - prefer one template string for clean grepping. Script: `scripts/read-rn-logs.sh` (`--all` also includes native-bridge logs, `--grep` filters).
 
