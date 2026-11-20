@@ -2,6 +2,8 @@
 
 Every measurement the rules in SKILL.md and `driver.md` rest on, with its date, hardware and versions. Re-measure before changing the loop (`scripts/simbench.sh`, its header carries the reference numbers) and prove the driver unchanged with `scripts/regress.sh`.
 
+- **`scripts/simbench.sh`** and **`scripts/regress.sh`** - only needed when changing the driver itself: `simbench.sh` separates tool time from round-trip time (its header carries the reference numbers), `regress.sh` captures the driver's whole observable surface so a change can be shown not to alter it, `test-wda-diagnostics.sh` runs the WDA failure branches and the `wda-sim.sh` gate against stubbed tools (no simulator touched).
+
 ## Round trips vs tool time (2026-08-27 and 2026-11-13/14)
 
 Measured 2026-08-27 on an idle iPhone 17 Pro Max simulator, and it is not what it looks

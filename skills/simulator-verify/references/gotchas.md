@@ -2,6 +2,19 @@
 
 Read when a result surprises you, before driving a create / submit / auth flow, and before reporting a feature that consumes input from another app. Each of these produced a confident, false reading at least once.
 
+## Shared components - the instance nobody opened (full version of "0. Enumerate instances")
+
+The most expensive miss is verifying ONE render site of a shared component and shipping - the bug lives in an instance you never opened. This is exactly how ACME-1164's first attempt shipped a bug to review: a search input was verified on one step of a multi-step flow but broken on another - the same chips component, a different layout context. The ticket title named one screen, which anchored verification to it while the change touched all of them.
+
+Before verifying, build an **instance checklist** whenever the changed component (a) lives in `src/components/`, (b) renders via a `switch` / `map` / enum, or (c) is imported by more than one screen:
+
+- **Render sites:** `grep -rn "<ComponentName>" src/ --include=*.tsx`
+- **State/variant axis:** if it switches on an enum/type (e.g. `ITEM_TYPE`), list the members; cross-reference the flow config (e.g. `STEPS`) for which are reachable in the live app.
+
+**Coverage rule:** verify every instance that exercises a **different code path or layout context** - NOT every data permutation. (ACME-1164: one step renders chips in normal flow, another renders `position:absolute` cards -> different layout context -> verify BOTH. Two cards with different names on the same step -> same path -> one is enough.) Instances that disable the feature (e.g. input hidden on a date step) -> mark **N/A explicitly**, never skip silently.
+
+PASS requires every enumerated instance checked or marked N/A. For layout-sensitive sweeps, instrument once (`measurement.md`, 3c) and read the frame numbers per instance instead of eyeballing each screen.
+
 ## Reaching a state ≠ free (check side effects BEFORE driving creation flows)
 
 Some UI states are only reachable by creating real entities, and in a real app creation flows are often **outward-facing** - they text, email or charge a real person. Before driving any create/submit flow just to reach a visual state, check what it fires; the screen's own copy usually tells you ("How do you want to send the invite?"). Record every outward-facing flow you find in `config.md` so the next session does not have to rediscover it the hard way.
