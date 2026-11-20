@@ -112,7 +112,7 @@ Verify every instance with a **different code path or layout context** - not eve
 
 - An element you can see but the filtered tree lacks: `elements --all` - RN rows, pressables, glass and icon-only buttons usually live there as `type: "Other"` with an exact rect.
 - One read right after a tap is a frame of an animation: assert transitions with `elements --settled` (two reads that agree).
-- `elements` can mount the screen it reads: never use it to prove a screen was NOT mounted.
+- `elements` is not a passive read: answering it makes `UITabBarController` instantiate every child controller, so it can mount the very screen you test for. Never use it to prove a screen was NOT mounted (an element missing from a mounted screen is fine to read from it).
 
 ### 3. Assert
 
