@@ -83,8 +83,8 @@ had parked the ticket as "not reproduced on a 402pt sim, SE sim would not
 launch" and the user had booted a real iPhone SE simulator:
 
 ```
-Task: deliver ACME-1845 (overscroll on the summary step of the invite in
-"Add an item") on the iPhone SE simulator, locally, and report to session
+Task: deliver ACME-1845 (overscroll on the summary step of the
+"Add an item" flow) on the iPhone SE simulator, locally, and report to session
 `solo-prep-1`, which will do the acceptance. You work in
 /Users/alice/repos/orbit/app-additional (pm worktree slot 1).
 
@@ -100,28 +100,28 @@ Linear ACME-1845 ..., iPhone SE (750x1334 px = 375x667 pt), iOS 26.6, build
 orbit/evidence/solo-2026-09-25/acme-1845-reporter-screenshot-2026-09-25.png
 
 ## 3. Code
-- src/screens/clients/addItemFlow/components/FlowTranscript.tsx ~730-775:
-  SummaryWidget ... SUMMARY_SHRINK_STYLE line 47 ...
+- src/screens/items/addItemFlow/components/FlowSummary.tsx ~730-775:
+  SummaryWidget ... SHRINK_STYLE line 47 ...
 
 ## 4. What the previous session already did - do NOT repeat
 Not reproduced on 402x874 across five hypotheses: (H1) ... (H5) ... Evidence:
 /Users/alice/.claude/pm/orbit/.shift/evidence/orbit-186-1/
-Cleanup note: an invite was sent to (512) 555-0189; use 512 555 02xx.
+Cleanup note: one test message was already sent; use a fresh test number.
 
 ## 5. Rig
 - Sim: udid AAAA1111-BBBB-2222-CCCC-3333DDDD4444, iOS 27.0, Booted, 375x667
   pt. State at 02:55: NO app and NO WDA. Metro :8090 is up (screen metro8090).
-  1. xcrun simctl install AAAA1111-... "<path to orbit.app>"
+  1. xcrun simctl install AAAA1111-... "<path to Orbit.app>"
   2. WDA: xcrun simctl install AAAA1111-... <WebDriverAgentRunner-Runner.app
      from the slot>, then SIMCTL_CHILD_USE_PORT=8102 xcrun simctl launch ...
   3. Session without OTP: shut the sim DOWN, rsync the data container + Keychains from the slot
-  4. If the app is signed out: do NOT sign in yourself; write to the user in the
-     terminal and send the same to solo-prep-1.
+  4. If the app is signed out: do NOT sign in yourself; write to the user in
+     the terminal and send the same to solo-prep-1.
   5. rig-check.sh --repo "$PWD" --udid AAAA1111-... --port 8090 --bundle-id
      com.example.orbit.dev must print RIG OK.
 
 ## 6. What to deliver
-- Branch ACME-1845-add-client-invite-summary-overscroll exists locally at
+- Branch ACME-1845-add-item-summary-overscroll exists locally at
   7e0d5a8d8 with no commits - check it out, do not create a new one.
 - Step 1 reproduce ... Step 2 fix ... Step 3 verify with a negative
   control ... Step 4 gate: node .../validate.js, yarn perf:test ALONE,

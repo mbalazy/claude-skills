@@ -176,7 +176,7 @@ merged.
 
 ## Changelog
 
-- 2026-10-06: first version, built for the vega project while a /solo run
+- 2026-10-06: first version, built for the `vega` project while a /solo run
   owned the main checkout; first lanes vega-256 and vega-257.
   Result: both sessions finished cold from the kickoff (vega-256: 8 commits,
   validate 27/27 + e2e 153 on lane 1; vega-257: cause found, 2 commits, stress
