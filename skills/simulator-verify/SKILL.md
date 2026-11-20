@@ -96,7 +96,7 @@ Verify every instance with a **different code path or layout context** - not eve
 - **Never silence the driver** (no `2>/dev/null`, no `>/dev/null`): stderr carries refused taps and timed-out waits. Filter with `elements --grep` / `--names`; check the exit code of every step outside a batch.
 - **No raw `curl` to WebDriverAgent** when the driver has the command.
 - **After a failed batch, read what it printed** (front app + visible labelled elements) instead of spending a call on `elements` or a screenshot.
-- **Prefer text to a screenshot** whenever text can answer:
+- **Prefer text to a screenshot** whenever text can answer: ~750 bytes against an ~870KB image, and every screenshot costs ~8 s of looking at it (`references/benchmarks.md`). Pick the cheapest command that answers the question:
 
   | question | command |
   |---|---|
