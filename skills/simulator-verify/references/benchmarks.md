@@ -78,6 +78,11 @@ The same Mac and server, one Android 16 (API 36) retail phone on USB, `user` bui
 - **Installs** on the unlocked phone: 2-4 s, no consent dialog for the first ones; after
   about five uninstall-and-install rounds of one debug APK in 25 minutes, Play Protect asked
   to send it for a check and the install waited (killed after 180 s, not installed).
+- **Locked phone** (2026-11-22, PIN keyguard, `LOCK_ON_DEVICE=1`): input group 63 passed in
+  one run; `waitid` / `waitfor` with `--timeout 30` named the lock in 1 s (on the emulator
+  0 s; before the race with the lock check, the first `/source` on an asleep screen hung
+  10 s); `unlock` exit 1 naming the PIN; the rig check's locked verdict in 3 s. A new
+  install of the 57 MB debug APK on the locked phone: 3 s, no consent dialog.
 
 ## Where the other dated numbers live
 

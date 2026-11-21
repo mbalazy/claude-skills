@@ -32,7 +32,8 @@ What it does, in order: lists every listener on 8080-8199 with its working direc
 | verdict | what it means |
 |---|---|
 | `RIG OK` | the marker of this tree reached the app. With an embedded bundle in the APK the note says it was not used this time |
-| not installed / waiting for consent | `pm path` has no package, or Play Protect / an active install session of this package holds it (for a reinstall the PREVIOUS APK runs until a person approves) |
+| not installed / waiting for consent | `pm path` has no package, or Play Protect / an active install session of this package holds it (for a reinstall the PREVIOUS APK runs until a person approves); on a locked screen it asks for the unlock too |
+| screen locked | asleep or behind the keyguard: named before the check changes anything (no pref, no reverse rule, no start); `android-ui.sh unlock` clears it without a PIN, a PIN needs a person |
 | not debuggable | `run-as` refused: the pref cannot be set and a release build does not load JS from Metro |
 | no Metro is running / no Metro for this tree / WEDGED | nothing listens; or the listeners serve other trees (their cwd is printed); or this tree's node holds the port but `/status` is silent |
 | nothing listens on :N | `--port N` with no listener at all on the Mac (said before the start, without waiting) |
@@ -52,10 +53,20 @@ The driver needs nothing phone-specific: `ANDROID_SERIAL=<SERIAL>` (from `adb de
 - **Permissions cannot be reset from adb on some vendor builds.** `pm grant`, `pm revoke` and `pm clear` exit with a `SecurityException` (the shell lacks `REVOKE_RUNTIME_PERMISSIONS` / `CLEAR_APP_USER_DATA`) unless a vendor developer option allows it - a phone setting, so it stays as it is. The driver uses none of them, but a dialog cannot be brought back on demand: after Allow, or after a second Don't allow, the app gets no dialog until it is uninstalled and installed again (`install -r` keeps the answer; the uninstall also deletes its `debug_http_host` pref, which the rig check's cold start writes again). One Don't allow leaves the dialog askable once more. `alert`, `alert buttons`, `alert accept` and `alert dismiss` work on the Google permission controller, whose button ids keep the AOSP prefix.
 - **A dialog is in focus before it is in the tree.** On the phone the focused window named the permission dialog while `/source` still held none of its text; `alert wait` returns once a text or a button of the dialog is there.
 - **No `adb root`** on a `user` build: nothing in the driver needs it.
-- **Lock: `lock` works, `unlock` cannot pass a PIN** (exit 1, naming it). On a phone with a PIN, `lock` is a step only a person can undo: never lock an unattended phone before its last step.
+- **Lock: `lock` works, `unlock` cannot pass a PIN** (exit 1, naming it). On a phone with a PIN, `lock` is a step only a person can undo: never lock an unattended phone before its last step. `android-regress.sh` holds its lock cases back on a phone unless `LOCK_ON_DEVICE=1`; with it, a PIN keeps the phone locked and every later case of that run is skipped with that reason.
 - **Metro through `adb reverse tcp:<port> tcp:<port>`** and `debug_http_host = localhost:<port>`, both set by the rig check; the reverse rule is per device and lives until the cable or adb goes, and every adb call stays `-s <serial>`. Two devices on one Metro give `/json/list` one target per device, named by the device model: pick with `rn-devtools.mjs --device`.
 - **The screen is the owner's.** The launcher, notifications and other apps are private: `foreground` must name the app under test before a read, a tap or a screenshot, and a heads-up notification or a call in front is waited out, not touched. `button BACK` on a root screen sends the app to the launcher, and the driver then refuses (`the tree is a SYSTEM window`): return with the app's own back control.
-- **Installs on an unlocked phone** (the server's two packages, a debug APK) went through in 2-4 s with no consent dialog - at first. After several uninstall-and-install rounds of the same debug APK within half an hour, one more install brought up Play Protect's "Send app for a security check?": `adb install` then waits for a person (it was killed after 180 s with the package not installed), `foreground` and `alert` name the dialog, and nothing answers it. Observed twice: when another app came to the front over the dialog, the dialog went away and the install finished within seconds. Reinstall an app on a phone only when nothing else will do.
+- **Installs on an unlocked phone** (the server's two packages, a debug APK) went through in 2-4 s with no consent dialog - at first. After several uninstall-and-install rounds of the same debug APK within half an hour, one more install brought up Play Protect's "Send app for a security check?": `adb install` then waits for a person (it was killed after 180 s with the package not installed), `foreground` and `alert` name the dialog, and nothing answers it. Observed twice: when another app came to the front over the dialog, the dialog went away and the install finished within seconds. Reinstall an app on a phone only when nothing else will do. A NEW install of a debug APK on the LOCKED phone (asleep, PIN keyguard) went through in 3 s with no dialog: locking alone did not bring the consent up.
+
+### What only a person at the phone can do
+
+The tools name these and stop; none of them is waited out or answered by a script:
+
+| state | how it is named | what the person does |
+|---|---|---|
+| screen locked with a PIN, pattern or password | `locked` prints `true`; `unlock` exits 1 naming the PIN; `waitid` / `waitfor` stop after their first read (1 s on the phone, not at `--timeout`); the rig check says `RIG DEAD: the screen of <SERIAL> is locked` (3 s) | unlock the phone; keep it awake on the cable (Developer options, Stay awake) so it does not lock again mid-run |
+| Play Protect asking about an install | `foreground` / `alert` name the Play Protect dialog (`alert accept` refuses: no button it knows); `adb install` waits; the rig check names the install waiting for consent | answer the dialog on the phone; the install then finishes |
+| a permission dialog to show again | after Allow or two refusals it does not come back (above) | uninstall and install the app, when the vendor build refuses `pm revoke` |
 
 ## Commands: iOS vs Android
 
@@ -89,7 +100,7 @@ The JS-side tools need no Android variant: `rn-devtools.mjs` and `read-rn-logs-c
 
 Tested: API 34, 35 and 36 `google_apis` arm64-v8a emulators (Pixel 9 profile, 1080x2424, 420 dpi) on Apple Silicon; React Native 0.88.1 (RN CLI and Expo SDK 58 dev-client) and a real RN 0.81.1 app (read-only, its embedded-bundle and prefs checks); UiAutomator2 server 11.2.4. Other versions are not blocked - they are simply not measured.
 
-Phone: one Android 16 (API 36) retail phone, `user` build, 1080x2400 at 480 dpi, over USB - the driver and `android-regress.sh` groups core, read, input and app (lock cases and the adbd restart held back, see above). The rig check on that phone: RN CLI and the Expo dev-client through `adb reverse`, and its dead verdicts (no listener, embedded bundle, `--reload` without a rule, a rule leading elsewhere).
+Phone: one Android 16 (API 36) retail phone, `user` build, 1080x2400 at 480 dpi, over USB - the driver and `android-regress.sh` groups core, read, input, app and rig (the adbd restart held back; the lock cases once, as the last step, with a PIN). The rig check on that phone: RN CLI and the Expo dev-client through `adb reverse`, its dead verdicts (no listener, embedded bundle, `--reload` without a rule, a rule leading elsewhere) and the locked screen.
 
 ## Unverified
 
@@ -103,8 +114,7 @@ Implemented or documented, not proven on a device:
 - A real photo picker selection (only MediaStore indexing was checked).
 - Pixel tolerance of measurements at the non-integer scale 2.625 (two measurements only).
 - Process names of Maestro and agent-device in `ps` (the foreign-client check matches package names).
-- The consent-pending verdict (only happens on a phone), and the allow-all / allow-always permission buttons (their ids are from the AOSP source, not seen on a device).
-- On the phone: a PIN lock, and an install waiting for consent.
+- The rig check's consent-pending verdict: the Play Protect dialog was seen on the phone (named by `foreground` and `alert`) but not while the rig check ran, and a new install on the locked phone raised none. Also the allow-all / allow-always permission buttons (their ids are from the AOSP source, not seen on a device).
 
 Measured since the phase-2 report: double tap and drag (W3C actions, 10/10), type into the focused field, split installs (`base.apk` carries the bundle; no sha comparison is possible), a window without edge-to-edge (UiA2 rects are screen coordinates: 24 dp below `measureInWindow` without edge-to-edge, equal with it), longer transitions (a native-stack push shows no middle frame; 1.5 s and 4 s slides give `--settled` exit 3), the prefs merge on the real app (its keys survive), and where the local APK lives for the binary-age note (`android/app/build/outputs/apk`).
 
