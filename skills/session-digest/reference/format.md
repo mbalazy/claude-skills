@@ -5,9 +5,12 @@ produce it and none of them carries its own copy:
 
 | Who | When |
 |---|---|
-| `session-digest` | on demand, about this session or another one |
-| `solo` (Step Z) | closing a shift - the chat answer; the cockpit report file keeps its own contract (`solo/prompts/report.md`) |
-| `taking-over` | the final report when the user comes back |
+| `session-digest` | on demand, about this session or another one - a background agent |
+| `solo` (Step Z, `--digest`) | closing a shift - the chat answer, inline; the cockpit report file keeps its own contract (`solo/prompts/report.md`) |
+| `taking-over` (`digest`) | the final report when the user comes back, inline |
+
+`--digest` / `digest` is hardcoded ON in solo and taking-over for now; the
+flag exists so the user can make it selective later.
 
 Change this file and all three change. The user's own CLAUDE.md report rules
 apply on top and win on conflict (language, first line, dashes, naming).

@@ -53,8 +53,10 @@ declared for the project: one line in the report, nothing invented.
 
 Write two files in `~/.claude/pm/<slug>/.shift/`:
 `<YYYY-MM-DD>-<shift-id>-report.md` (sections 1-3 and the TL;DR) and
-`<YYYY-MM-DD>-<shift-id>-details.md` (section 4). The chat gets neither:
-it gets the end-of-work answer of section 4 below. In Polish (the user's language). Fixed order; the
+`<YYYY-MM-DD>-<shift-id>-details.md` (section 4). With `--digest` (always on
+for now, see SKILL.md) the chat gets neither: it gets the end-of-work answer
+of section 4 below. Without it, print the report in the chat, never the
+details. In Polish (the user's language). Fixed order; the
 reader launched this hours ago and does not remember what the tasks were
 about - they will read section 1 and the TL;DR, maybe section 2, and must be
 able to act on those alone. A queue of six tasks produced a 2700-word report
@@ -171,8 +173,10 @@ words - not footnoted.
 
 ## 4. The chat answer
 
-After the report and details files exist, run the `session-digest` skill
-on this session (`../../session-digest/SKILL.md`). It writes `digest.md` and
+`--digest` only (always on for now). After the report and details files
+exist, read `../../session-digest/SKILL.md` and follow it in this session,
+for this session (inline - never through the Skill tool, which runs it in the
+background). It writes `digest.md` and
 `phone-plan.md` next to the evidence and returns the chat answer in the
 shared format (`../../session-digest/reference/format.md`). Print that answer,
 then run `scripts/shift-close.sh` (section 1). The report file above stays as it is:

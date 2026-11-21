@@ -1,6 +1,9 @@
 ---
 name: session-digest
-description: Turns one Claude Code session - its transcript plus every markdown file it and the sessions and agents it drove wrote - into ONE answer organised by what the user does with it - the questions it was given and their current answers with a confidence label, what changed since the user was last told, decisions left to the user with their options, one merged plan of manual device checks, branches, cleanup. Prints it in chat and writes digest.md + phone-plan.md next to the evidence. Its format file is the single source of the end-of-work answer for solo and taking-over too. Use when the user says "/session-digest", "zbierz sesję", "podsumuj sesję X", "zrób digest", "uporządkuj wyniki sesji", "co wyszło z tej sesji", "ten raport to chaos", or a long orchestrator / solo session ends with results spread over many files. Never drafts messages to people - that is a separate step.
+description: Turns one Claude Code session - its transcript plus every markdown file it and the sessions and agents it drove wrote - into ONE answer organised by what the user does with it - questions given and their current answers with a confidence label, what changed since the user was last told, decisions left to the user, one merged plan of manual device checks, branches, cleanup. Writes digest.md + phone-plan.md next to the evidence. Runs as a background agent - ALWAYS pass the session to read as the argument (a /rename name or uuid; for the calling session its id from `pm session-id`), and when its notification arrives print its answer to the user in full, unabridged. Its format file is also the end-of-work answer of solo and taking-over, which run it inline. Use when the user says "/session-digest", "zbierz sesję", "podsumuj sesję X", "zrób digest", "uporządkuj wyniki sesji", "co wyszło z tej sesji", "ten raport to chaos". Never drafts messages to people.
+context: fork
+background: true
+model: opus
 ---
 
 # Session digest
@@ -11,11 +14,17 @@ answer as it stands NOW, in the shape `reference/format.md` defines.
 
 ## Input
 
-| Invocation | Session read |
-|---|---|
-| `/session-digest` | this session |
-| `/session-digest <name or uuid>` | that session (a `/rename` title or agent name) |
-| from `solo` Step Z or `taking-over`'s final report | this session, at its end |
+| Invocation | Session read | How it runs |
+|---|---|---|
+| `/session-digest <name or uuid>` | that session (a `/rename` title, an agent name or a uuid) | a background agent (frontmatter `context: fork`); the caller gets the answer as a notification and prints it in full |
+| `/session-digest` with no argument | the newest transcript of the cwd's project - normally the calling session; the inventory header names it, check it | same |
+| from `solo` Step Z or `taking-over`'s final report | the session that is ending | inline: they read this file and follow it in their own session, so the answer exists before they close |
+
+Running as a background agent, this file is the whole prompt: no
+conversation history comes with it. Every path below is relative to this
+skill's directory (`~/.claude/skills/session-digest/`, or the base directory
+the loader names). The final message IS the chat answer (format.md, "Chat
+answer") - nothing before or after it, because the caller prints it as is.
 
 ## Hard limits
 
@@ -51,8 +60,8 @@ answer as it stands NOW, in the shape `reference/format.md` defines.
 5. **Keep the work** - copy `inventory.md`, `asks.md`, `shown-messages.md`
    and `ledger/` into `<out-dir>/work/`, so the `S<n>` references and the
    sources survive the temp dir.
-6. **Answer** - print the chat answer (format.md, "Chat answer"); its last
-   line under `Na dole` names both files with full paths.
+6. **Answer** - the chat answer (format.md, "Chat answer") as the final
+   message; its last line under `Na dole` names both files with full paths.
 
 Before printing, read section 1 once as the user who was not there: a line
 that needs the session, a file or a question number to be understood is

@@ -45,7 +45,13 @@ When hitting a fork (design choice, ambiguous spec, failing approach):
 
 ## Final report (mandatory)
 
-When the work is done - or when stopping for any reason - produce the end-of-work answer with the `session-digest` skill on this session (`../session-digest/SKILL.md`) and print it. Its format, `../session-digest/reference/format.md`, is the one solo and session-digest use too: change the format there, never here.
+When the work is done - or when stopping for any reason - end with ONE of the two reports below, chosen by the `digest` flag (see "Arguments").
+
+**`digest` is hardcoded ON for now**: every handover behaves as if `digest` was given, with or without it - the user's decision (2026-11-21); the flag exists so it can become selective later. Never read its absence as off.
+
+### With `digest` (the current behaviour, always)
+
+Produce the end-of-work answer with the `session-digest` procedure and print it: read `../session-digest/SKILL.md` and follow it in THIS session, for this session - never through the Skill tool, which would run it in the background and end the handover before the answer exists. Its format, `../session-digest/reference/format.md`, is the one solo and session-digest use too: change the format there, never here.
 
 What this contract adds to it:
 
@@ -53,8 +59,41 @@ What this contract adds to it:
 - The user reviews the decisions and asks for corrections - so make them honest and specific, including the rejected alternatives. A vague record defeats the whole point of the handover.
 - Commits made under the handover go to `digest.md` (section 5, per branch); the chat answer's `## 5. Kod` names each branch and whether it is on origin.
 
+### Without `digest` (only once the user lifts the hardcoding)
+
+When the work is done - or when stopping for any reason - end with a report in exactly this structure:
+
+```
+## Takeover report
+
+**State:** [what is done / where I stopped and why]
+
+**Decisions made:**
+- [decision] - chose X, rejected Y, because [reason]
+- ...
+
+**Open questions:** [things that need your decision; "none" if nothing]
+
+**For your review:** [what deserves a human look - concrete files/commits/behaviors]
+
+**Commits:** [list of hashes + one-line descriptions, branch]
+
+**TL;DR:** [2-4 sentences: what got done, what did not and why, what YOU do next]
+```
+
+Write the report in Polish, headings included. The user reviews it and asks for corrections - so make the decisions section honest and specific, including the rejected alternatives. A vague report defeats the whole point of the handover.
+
+**Style rules for the report** - the user may come back to it hours later, cold:
+
+- Concise, zero filler - but conciseness comes from CUTTING low-value items, never from compressing sentences into fragments, abbreviations, or arrow chains (`A → B → fail`).
+- No jargon and no shorthand invented during the session (internal codenames, "variant B", "that hack from this morning") - the reader was not there. Spell things out: file paths, function names, error messages verbatim.
+- Each bullet must be understandable on its own, without scrolling up through the session. If a decision needs context to make sense, give one sentence of context in place.
+- A wall of text is as bad as telegraphic fragments: short complete sentences, one decision per bullet, and drop anything that doesn't change what the user would do next.
+- **TL;DR goes LAST, always.** It is the part the user reads first when skimming, so it must stand entirely on its own: what got done, what did not (and why), and the single next action expected from the user. 2-4 full sentences, no bullets, no references to the sections above ("see Decisions"). Never skip it, even when the report is short.
+
 ## Arguments
 
 Text after the invocation refines the contract for this session, e.g.:
 - `/taking-over push ok` or "możesz wypchnąć ten branch" ("you can push this branch") - lifts the push restriction for the current branch.
+- `/taking-over digest` - end with the `session-digest` answer (see "Final report"). Hardcoded ON for now: the same with or without the word.
 - Any other instruction ("focus only on the tests", "max 1h of work") - treat as a scope constraint layered on top of this contract.

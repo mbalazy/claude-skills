@@ -7,8 +7,11 @@ python3 -I <skill>/scripts/inventory.py --session <name|uuid|path> --out <work-d
 ```
 
 - `<work-dir>`: a fresh temp dir (`mktemp -d`), never the output dir.
-- No `--session`: the current session - its id from `pm session-id` when pm is
-  installed, else the script takes the newest transcript of the cwd's project.
+- `--session` = the argument the skill was given (`$ARGUMENTS`). None given:
+  inline (solo, taking-over) pass this session's id from `pm session-id`;
+  as a background agent, omit `--session` - the script takes the newest
+  transcript of the cwd's project - and name the session it picked in the
+  answer's `Na dole`, so a wrong pick is visible.
 - The script lists; it does not judge. It writes `inventory.md` (header,
   asks, sessions messaged, agents, skills, pm ids, md files with words and
   mtime, commits), `asks.md` (everything the user typed, in full) and
