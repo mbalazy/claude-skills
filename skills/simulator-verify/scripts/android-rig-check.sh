@@ -134,6 +134,14 @@ SERIAL="$(android_serial)" || exit $?
 IS_EMU=""
 android_is_emulator "$SERIAL" && IS_EMU=1
 note "device:  $SERIAL ($(android_name "$SERIAL"), $([ -n "$IS_EMU" ] && echo emulator || echo "physical device - Metro through adb reverse"))"
+# A locked screen (asleep, or the keyguard up) keeps the app from the front, and with a PIN
+# only a person clears it: read once here, named before anything on the device is changed.
+LOCKED="$(android_lock_state "$SERIAL" 2>/dev/null || true)"
+LOCK_TODO=""
+if [ "$LOCKED" = true ]; then
+  note "screen:  LOCKED (asleep or behind the keyguard)"
+  LOCK_TODO=", and unlock the screen"
+fi
 
 # --- Metro listeners -----------------------------------------------------------------------
 # Who listens where, and on which tree: a Metro serving another tree feeds the app someone
@@ -178,10 +186,10 @@ consent_pending() {
 }
 APKS="$(sh_dev pm path "$PKG" | sed -n 's/^package://p')"
 if [ -z "$APKS" ]; then
-  consent_pending && verdict DEAD "$PKG is waiting for consent on $SERIAL (Play Protect / an active install session) - a person at the device must approve the install"
+  consent_pending && verdict DEAD "$PKG is waiting for consent on $SERIAL (Play Protect / an active install session) - a person at the device must approve the install$LOCK_TODO"
   verdict DEAD "$PKG is not installed on $SERIAL"
 fi
-consent_pending && verdict DEAD "an install of $PKG is waiting for consent on $SERIAL (Play Protect / an active install session) - until a person approves it, the device runs the PREVIOUS APK"
+consent_pending && verdict DEAD "an install of $PKG is waiting for consent on $SERIAL (Play Protect / an active install session) - until a person approves it$LOCK_TODO, the device runs the PREVIOUS APK"
 BASE_APK="$(awk '/\/base\.apk$/ { print; exit }' <<< "$APKS")"
 [ -n "$BASE_APK" ] || BASE_APK="$(head -1 <<< "$APKS")"
 if [ "$(printf '%s\n' "$APKS" | grep -c .)" -gt 1 ]; then
@@ -244,6 +252,9 @@ if printf '%s\n' "$DUMP" | has 'pkgFlags=\[[^]]*DEBUGGABLE'; then
   EXPO_SCHEME="$(printf '%s\n' "$DUMP" | grep -oE 'exp\+[a-z0-9.+-]+' | head -1 || true)"
 fi
 [ -n "$EXPO_SCHEME" ] && note "expo:    dev-client ($EXPO_SCHEME) - started through its expo-development-client link"
+
+# --- locked screen ----------------------------------------------------------------------------
+[ "$LOCKED" = true ] && verdict DEAD "the screen of $SERIAL is locked (asleep or behind the keyguard) - the app cannot come to the front, so nothing was changed and no marker can be proved. \`android-ui.sh unlock\` wakes it and dismisses a keyguard without a PIN; a PIN, pattern or password needs a person at the device"
 
 # --- Metro port -------------------------------------------------------------------------------
 if [ -z "$PORT" ]; then
