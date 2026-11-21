@@ -499,7 +499,7 @@ if want_group rig; then
   case_ rig_no_package     2 'pass --package' -- "$RC" --repo "$_t"
   case_ rig_no_entry       2 'entry file not found' -- "$RC" --repo "$_t" --package "$PKG" --entry nope.js
   case_ rig_not_installed  1 'RIG DEAD: com.example.notinstalled is not installed' -- "$RC" --repo "$_t" --package com.example.notinstalled
-  case_ rig_no_metro       1 'RIG DEAD: no Metro is serving' -- "$RC" --repo "$_t" --package "$PKG"
+  case_ rig_no_metro       1 'RIG DEAD: no Metro (for this tree|is running at all)' -- "$RC" --repo "$_t" --package "$PKG"
   if [ "$(android_attached | grep -c .)" -gt 1 ]; then
     case_ rig_ambiguous    2 'refusing to guess' -- env -u ANDROID_SERIAL "$RC" --repo "$_t" --package "$PKG"
   else
@@ -515,7 +515,7 @@ if want_group rig; then
     printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" '<map>' '    <int name="regress_keep" value="7" />' \
       "    <string name=\"debug_http_host\">10.0.2.2:$RPORT</string>" '</map>' \
       | "$ADB" -s "$SERIAL" shell "run-as $PKG sh -c 'cat > shared_prefs/${PKG}_preferences.xml'"
-    case_ rig_dead_port    1 'no Metro for this tree on :8199' "debug_http_host: was 10.0.2.2:$RPORT, now 10.0.2.2:8199" -- "$RC" --repo "$RREPO" --package "$PKG" --port 8199 --timeout 8
+    case_ rig_dead_port    1 'nothing listens on :8199' "debug_http_host: was 10.0.2.2:$RPORT, now 10.0.2.2:8199" -- "$RC" --repo "$RREPO" --package "$PKG" --port 8199 --timeout 8
     case_ rig_prefs_kept   0 'regress_keep' -- "$ADB" -s "$SERIAL" shell "run-as $PKG cat shared_prefs/${PKG}_preferences.xml"
     case_ rig_back         0 '^RIG OK' "was 10.0.2.2:8199, now 10.0.2.2:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT"
     if [ -n "${OTHER_PKG:-}" ] && "$ADB" -s "$SERIAL" shell unzip -l "$("$ADB" -s "$SERIAL" shell pm path "$OTHER_PKG" </dev/null | sed -n 's/^package://p' | tr -d '\r')" </dev/null 2>/dev/null | grep 'assets/index.android.bundle' >/dev/null; then

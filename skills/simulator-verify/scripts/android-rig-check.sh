@@ -140,9 +140,10 @@ note "device:  $SERIAL ($(android_name "$SERIAL"))"
 # else's code. An emulator's connections all belong to one host process, so - unlike the
 # simulator - they do not say which emulator talks to which Metro; the device comes from
 # --serial, the port from the tree.
-METRO_FOR_REPO=""; REPO_PORTS=" "; WEDGED_METRO=""
+METRO_FOR_REPO=""; REPO_PORTS=" "; WEDGED_METRO=""; OTHER_METRO=""; LISTEN_PORTS=" "
 while read -r cmd pid port; do
   [ -n "$pid" ] || continue
+  LISTEN_PORTS="$LISTEN_PORTS$port "
   cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- || true)"
   if [ "$cwd" = "$REPO" ]; then
     if curl -s -m 2 "http://127.0.0.1:$port/status" 2>/dev/null | has 'packager-status:running'; then
@@ -156,6 +157,7 @@ while read -r cmd pid port; do
       note "listen:  :$port $cmd pid $pid  (this repo's cwd, but not a packager - ignored)"
     fi
   else
+    OTHER_METRO=1
     note "listen:  :$port $cmd pid $pid cwd ${cwd:-?}  (not this repo)"
   fi
 done < <(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null \
@@ -236,7 +238,9 @@ fi
 if [ -z "$PORT" ]; then
   if [ -z "$METRO_FOR_REPO" ]; then
     [ -n "$WEDGED_METRO" ] && verdict DEAD "Metro on :$WEDGED_METRO is WEDGED - it holds the port for $REPO but does not answer packager-status:running, so the app finds no packager. Restart it."
-    verdict DEAD "no Metro is serving $REPO. Start one (or pass --port if the app talks to another tree's Metro on purpose)."
+    [ -n "$EMBEDDED" ] && verdict DEAD "no Metro is serving $REPO, and the APK carries an EMBEDDED bundle (assets/index.android.bundle): started now, the app would run that frozen JS, not your code. Start this tree's Metro."
+    [ -n "$OTHER_METRO" ] && verdict DEAD "no Metro for this tree - the Metro(s) listening serve other trees (listeners and their cwd above). Start one in $REPO (or pass --port if the app talks to another tree's Metro on purpose)."
+    verdict DEAD "no Metro is running at all (nothing listens on 8080-8199). Start one in $REPO."
   fi
   PORT="$METRO_FOR_REPO"
 fi
@@ -411,7 +415,10 @@ fi
 # tree's bundle, which often throws in this app) is not your code - that is the cause.
 if [ -z "$PORT_OURS" ]; then
   [ -n "$WEDGED_METRO" ] && verdict DEAD "the app never ran your code - Metro on :$WEDGED_METRO is WEDGED. Restart that Metro."
-  verdict DEAD "the app never ran your code - no Metro for this tree on :$PORT (it serves another tree or nothing; the listeners and their cwd are listed above)."
+  case "$LISTEN_PORTS" in
+    *" $PORT "*) verdict DEAD "the app never ran your code - no Metro for this tree on :$PORT: what listens there serves another tree (the listeners and their cwd are listed above)." ;;
+  esac
+  verdict DEAD "the app never ran your code - nothing listens on :$PORT, no Metro at all there."
 fi
 JS_ERR="$(log_since "$T0" -s ReactNativeJS:E | grep -m1 'runtime not ready' | sed -E 's/.*ReactNativeJS: //; s/^\[runtime not ready\]: //' || true)"
 if [ -n "$JS_ERR" ]; then
