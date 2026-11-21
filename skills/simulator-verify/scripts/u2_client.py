@@ -195,7 +195,8 @@ class U2:
     def error_of(resp):
         v = resp.get("value") if isinstance(resp, dict) else None
         if isinstance(v, dict) and v.get("error"):
-            return "%s: %s" % (v.get("error"), str(v.get("message", "")).splitlines()[0][:300])
+            lines = str(v.get("message") or "").splitlines()
+            return "%s: %s" % (v.get("error"), lines[0][:300] if lines else "(no message)")
         return None
 
     def existing_session(self):

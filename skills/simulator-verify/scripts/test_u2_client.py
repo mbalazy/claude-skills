@@ -223,6 +223,10 @@ class Session(unittest.TestCase):
             c.source()
         self.assertIn("root AccessibilityNodeInfo", str(e.exception))
 
+    def test_an_error_without_a_message_is_still_named(self):
+        self.assertEqual(u2.U2.error_of({"value": {"error": "unknown error", "message": ""}}),
+                         "unknown error: (no message)")
+
     def test_no_server_is_a_server_error(self):
         dead = u2.U2(1)
         with self.assertRaises(u2.ServerError):
