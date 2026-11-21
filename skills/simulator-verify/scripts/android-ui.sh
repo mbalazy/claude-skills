@@ -214,7 +214,7 @@ am_start() {
   for x in "$@"; do c="$c $(shq "$x")"; done
   o="$("$ADB" -s "$_MEMO_SERIAL" shell "$c" 2>&1 </dev/null)" || rc=$?
   o="$(printf '%s\n' "$o" | tr -d '\r')"
-  if [ "$rc" != 0 ] || printf '%s\n' "$o" | grep -qE '^(Error|Exception|java\.)|not found'; then
+  if [ "$rc" != 0 ] || grep -qE '^(Error|Exception|java\.)|not found' <<< "$o"; then
     echo "ERROR: am start failed (exit $rc):" >&2
     printf '%s\n' "$o" | grep -vE '^\s*$' | sed 's/^/  /' >&2
     return 1
@@ -231,7 +231,7 @@ app_pid() { "$ADB" -s "$_MEMO_SERIAL" shell pidof "$1" 2>/dev/null </dev/null | 
 expo_scheme() {
   local d
   d="$("$ADB" -s "$_MEMO_SERIAL" shell dumpsys package "$1" 2>/dev/null </dev/null | tr -d '\r' || true)"
-  printf '%s\n' "$d" | grep -qE 'pkgFlags=\[[^]]*DEBUGGABLE' || return 0
+  grep -qE 'pkgFlags=\[[^]]*DEBUGGABLE' <<< "$d" || return 0
   printf '%s\n' "$d" | grep -oE 'exp\+[a-z0-9.+-]+' | head -1 || true
 }
 
