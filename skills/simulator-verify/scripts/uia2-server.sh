@@ -146,6 +146,10 @@ prove() {
     esac
     not_ready "$s"; }
   echo "session ${s}"
+  case "$s" in
+    *" waitForIdleTimeout=0 disableIdLocatorAutocompletion=true") ;;
+    *) not_ready "the server did not keep the settings the driver depends on (read back: ${s#* * })" ;;
+  esac
   h="$(python3 "$HERE/u2_client.py" health --port "$PORT" --timeout 3 2>&1)" \
     || not_ready "/status may say ready, but a real /source did not come back in 3 s: $h"
   echo "READY $SERIAL ($(android_name "$SERIAL")) :$PORT - /source $h bytes"
