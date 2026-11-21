@@ -53,7 +53,7 @@ The driver needs nothing phone-specific: `ANDROID_SERIAL=<SERIAL>` (from `adb de
 - **Lock: `lock` works, `unlock` cannot pass a PIN** (exit 1, naming it). On a phone with a PIN, `lock` is a step only a person can undo: never lock an unattended phone before its last step.
 - **Metro through `adb reverse tcp:<port> tcp:<port>`** and `debug_http_host = localhost:<port>`; the reverse rule is per device and lives until the cable or adb goes, and every adb call stays `-s <serial>`. Two devices on one Metro give `/json/list` one target per device, named by the device model: pick with `rn-devtools.mjs --device`.
 - **The screen is the owner's.** The launcher, notifications and other apps are private: `foreground` must name the app under test before a read, a tap or a screenshot, and a heads-up notification or a call in front is waited out, not touched. `button BACK` on a root screen sends the app to the launcher, and the driver then refuses (`the tree is a SYSTEM window`): return with the app's own back control.
-- **Installs on an unlocked phone** (the server's two packages, a debug APK) went through in 2-4 s with no consent dialog.
+- **Installs on an unlocked phone** (the server's two packages, a debug APK) went through in 2-4 s with no consent dialog - at first. After several uninstall-and-install rounds of the same debug APK within half an hour, one more install brought up Play Protect's "Send app for a security check?": `adb install` then waits for a person (it was killed after 180 s with the package not installed), `foreground` and `alert` name the dialog, and nothing answers it. Reinstall an app on a phone only when nothing else will do.
 
 ## Commands: iOS vs Android
 

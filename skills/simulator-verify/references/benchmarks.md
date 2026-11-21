@@ -72,7 +72,9 @@ The same Mac and server, one Android 16 (API 36) retail phone on USB, `user` bui
 - **Scale**: 17 testIDs of one screen, driver rect vs JS layout: 0 dp apart at 3.0; the
   same pixels at 2.625 would be up to 108 dp off.
 - **Cold start into JS** over `adb reverse`: `launch` + `waitid Home-title` 3.0 s.
-- **Installs** on the unlocked phone: 2-4 s, no consent dialog.
+- **Installs** on the unlocked phone: 2-4 s, no consent dialog for the first ones; after
+  about five uninstall-and-install rounds of one debug APK in 25 minutes, Play Protect asked
+  to send it for a check and the install waited (killed after 180 s, not installed).
 
 ## Where the other dated numbers live
 
