@@ -213,7 +213,8 @@ print("%d %d" % ((r[0] + r[2] / 2) * s, (r[1] + r[3] / 2) * s))' "$DENSITY")" ||
 import json, sys
 e = json.load(sys.stdin)[0]; y = e[\"rect\"][1]
 print((\"on screen\" if e[\"on_screen\"] and y < float(sys.argv[1]) else \"NOT on screen\") + \" y=%s\" % y)" "$2"' \
-    _ "$A" "$(awk -v d="$DENSITY" 'BEGIN { print 2424 * 160 / d }')"
+    _ "$A" "$("$ADB" -s "$SERIAL" shell wm size </dev/null | tr -d '\r' \
+             | awk -v d="$DENSITY" -F'[ x]' '/size/ { h = $NF } END { print h * 160 / d }')"
   "$ADB" -s "$SERIAL" shell input keyevent 4 </dev/null; sleep 1
 
   # A fresh start empties the inputs; the placeholder must not read as a value.
@@ -230,7 +231,7 @@ print((\"on screen\" if e[\"on_screen\"] and y < float(sys.argv[1]) else \"NOT o
   "$ADB" -s "$SERIAL" shell pm clear-permission-flags "$PKG" android.permission.POST_NOTIFICATIONS user-set user-fixed >/dev/null 2>&1 </dev/null
   open_screen perm Perm-title
   tap_id Perm-notif; sleep 1.5
-  case_ foreground_dialog 0 'permissioncontroller' -- "$A" foreground
+  case_ foreground_dialog 0 "^$PKG pid" '^focus: .*permissioncontroller' -- "$A" foreground
   case_ elements_dialog   0 'SYSTEM window' 'permission_deny_button' -- "$A" elements --names
   case_ waitid_under_dialog 1 'SYSTEM window' -- "$A" waitid Perm-title --timeout 1
   tap_id com.android.permissioncontroller:id/permission_deny_button; sleep 1
@@ -242,7 +243,13 @@ print((\"on screen\" if e[\"on_screen\"] and y < float(sys.argv[1]) else \"NOT o
     open_screen home Home-title
     "$ADB" -s "$SERIAL" shell am force-stop "$OTHER_PKG" </dev/null
     _act="$("$ADB" -s "$SERIAL" shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$OTHER_PKG" </dev/null | tr -d '\r' | tail -1)"
+    # waitid starts once focus has left this app (else a hit on it would be correct): the
+    # tree still shows this app's window for a few tens of ms after that.
     "$ADB" -s "$SERIAL" shell am start -n "$_act" >/dev/null 2>&1 </dev/null &
+    for _i in $(seq 1 50); do
+      _f="$("$ADB" -s "$SERIAL" shell dumpsys window </dev/null 2>/dev/null | grep -m1 mCurrentFocus || true)"
+      case "$_f" in *" $PKG/"*) ;; *) break ;; esac
+    done
     case_ waitid_new_window 0 "\"package\":\"$OTHER_PKG\"" -- "$A" waitid Home-title --timeout 10
     wait
     "$ADB" -s "$SERIAL" shell am force-stop "$OTHER_PKG" </dev/null
