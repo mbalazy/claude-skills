@@ -553,11 +553,17 @@ def dialog_now(dev):
 
 def dialog_drawn(d):
     """A known dialog whose window holds focus can still be off the tree for a moment (it
-    animates in; on a phone this was seen as a focus line with an empty /source): it is
-    drawn once its text or a button is in the tree. Any other system window has nothing
-    to wait for."""
-    (_name, _acc, _dis, known), texts, buttons = d
-    return bool(texts or buttons) or not known
+    animates in; on a phone this was seen as a focus line with an empty /source), and
+    focus and /source are read separately, so the tree may still be the app's: a dialog
+    with button ids is drawn once one of its buttons is in the tree, a chooser once any
+    text is. Any other system window has nothing to wait for."""
+    (_name, acc, dis, known), texts, buttons = d
+    if not known:
+        return True
+    ids = [i for group in (acc, dis) if group and group != "BACK" for i in group]
+    if ids:
+        return any(b[1].endswith(":id/" + i) for i in ids for b in buttons)
+    return bool(texts or buttons)
 
 
 def dialog_text(d):

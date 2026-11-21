@@ -130,11 +130,15 @@ class Element(unittest.TestCase):
         self.assertFalse(u2_el.in_focus("com.example.app.other", f))
         self.assertFalse(u2_el.in_focus(PKG, ("", None)))
 
-    def test_a_known_dialog_is_drawn_once_its_text_or_a_button_is_in_the_tree(self):
+    def test_a_known_dialog_is_drawn_once_one_of_its_buttons_is_in_the_tree(self):
         kind = ("permission dialog", ("permission_allow_button",), ("permission_deny_button",), True)
         self.assertFalse(u2_el.dialog_drawn((kind, [], [])))
-        self.assertTrue(u2_el.dialog_drawn((kind, ["Allow?"], [])))
-        self.assertTrue(u2_el.dialog_drawn((kind, [], [("Allow", "x:id/permission_allow_button", (1, 2))])))
+        # The app's own window still in /source: text and a button, none of the dialog's.
+        self.assertFalse(u2_el.dialog_drawn((kind, ["Fixture Home"], [("Back", "Back-button", (1, 2))])))
+        self.assertTrue(u2_el.dialog_drawn((kind, ["Allow?"], [("Allow", "x:id/permission_allow_button", (1, 2))])))
+        chooser = ("app chooser", None, "BACK", True)
+        self.assertFalse(u2_el.dialog_drawn((chooser, [], [])))
+        self.assertTrue(u2_el.dialog_drawn((chooser, ["Open with"], [])))
         other = ("system window of android (Window{1 u0 X})", None, None, False)
         self.assertTrue(u2_el.dialog_drawn((other, [], [])))
 
