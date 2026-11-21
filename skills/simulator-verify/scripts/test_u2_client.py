@@ -233,5 +233,77 @@ class Session(unittest.TestCase):
             dead.session()
 
 
+
+class LockState(unittest.TestCase):
+    AWAKE = "Power Manager State:\n  mWakefulness=Awake\n  mWakefulnessChanging=false\n"
+    ASLEEP = "Power Manager State:\n  mWakefulness=Asleep\n"
+    DOZING = "  mWakefulness=Dozing\n"
+
+    def test_awake_without_keyguard_is_unlocked(self):
+        self.assertFalse(u2.lock_state(self.AWAKE + "    isKeyguardShowing=false\n"))
+
+    def test_the_keyguard_up_on_an_awake_screen_is_locked(self):
+        self.assertTrue(u2.lock_state(self.AWAKE + "    isKeyguardShowing=true\n"))
+
+    def test_an_asleep_or_dozing_screen_is_locked_whatever_the_keyguard_says(self):
+        self.assertTrue(u2.lock_state(self.ASLEEP + "    isKeyguardShowing=false\n"))
+        self.assertTrue(u2.lock_state(self.DOZING + "    isKeyguardShowing=false\n"))
+
+    def test_the_line_mid_text_or_a_longer_name_does_not_count(self):
+        # mWakefulnessChanging=... and a wakefulness quoted inside another line are not it.
+        self.assertIsNone(u2.lock_state("  mWakefulnessChanging=false\n    isKeyguardShowing=false\n"))
+        self.assertIsNone(u2.lock_state("  last: mWakefulness=Awake\n    isKeyguardShowing=false\n"))
+
+    def test_dumps_without_either_line_say_nothing(self):
+        self.assertIsNone(u2.lock_state(self.AWAKE))
+        self.assertIsNone(u2.lock_state("    isKeyguardShowing=true\n"))
+        self.assertIsNone(u2.lock_state(""))
+
+    def test_cli_prints_true_false_and_exits_1_when_unknown(self):
+        import io
+        from unittest import mock
+        for text, want, rc in ((self.AWAKE + "isKeyguardShowing=true", "true", 0),
+                               (self.AWAKE + "isKeyguardShowing=false", "false", 0), ("", "", 1)):
+            with mock.patch("sys.stdin", io.StringIO(text)), mock.patch("sys.stdout", new=io.StringIO()) as o, \
+                    mock.patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(u2.main(["locked"]), rc)
+            self.assertEqual(o.getvalue().strip(), want)
+
+    def test_device_locked_is_none_when_adb_cannot_run(self):
+        self.assertIsNone(u2.device_locked("/nonexistent/adb", "emulator-5554"))
+
+
+class UnlessLocked(unittest.TestCase):
+    def test_a_hit_returns_without_waiting_for_the_lock_check(self):
+        import threading as th
+        gate = th.Event()
+        t = __import__("time").time()
+        self.assertEqual(u2.unless_locked(lambda: "hit", lambda v: True, lambda: gate.wait(5)), "hit")
+        self.assertLess(__import__("time").time() - t, 1)
+        gate.set()
+
+    def test_a_locked_screen_wins_over_a_read_that_hangs(self):
+        import threading as th
+        hang = th.Event()
+        t = __import__("time").time()
+        with self.assertRaises(u2.ScreenLocked):
+            u2.unless_locked(lambda: hang.wait(5), lambda v: False, lambda: True)
+        self.assertLess(__import__("time").time() - t, 1)
+        hang.set()
+
+    def test_a_miss_on_an_unlocked_screen_returns_the_read(self):
+        self.assertEqual(u2.unless_locked(lambda: [], lambda v: bool(v), lambda: False), [])
+        self.assertEqual(u2.unless_locked(lambda: [], lambda v: bool(v), lambda: None), [])
+
+    def test_a_locked_screen_wins_over_a_miss(self):
+        with self.assertRaises(u2.ScreenLocked):
+            u2.unless_locked(lambda: [], lambda v: bool(v), lambda: True)
+
+    def test_a_read_error_on_an_unlocked_screen_is_raised(self):
+        def boom():
+            raise u2.ServerError("down")
+        with self.assertRaises(u2.ServerError):
+            u2.unless_locked(boom, lambda v: True, lambda: False)
+
 if __name__ == "__main__":
     unittest.main()

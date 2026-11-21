@@ -7,6 +7,7 @@ every command reuses.
   u2_client.py foreign                                      < `adb shell ps -A -o PID,NAME,ARGS`
   u2_client.py session --port P [--new]
   u2_client.py health  --port P [--timeout S]
+  u2_client.py locked                                       < `adb shell dumpsys power; dumpsys window`
 
 `port` prints the host port and exits 0; exit 2 with the reason on stderr when the port is
 refused (forwarded to another device), exit 3 when (without --allocate) no forward exists.
@@ -14,6 +15,8 @@ refused (forwarded to another device), exit 3 when (without --allocate) no forwa
 when there is one, 0 when the device is clear.
 `session` prints `<session id> reused|new` after re-applying the two settings.
 `health` prints `<bytes>` of a real /source; exit 1 with the cause when it does not come.
+`locked` prints true (the screen is not awake, or the keyguard is up) or false; exit 1 when
+the two dumps do not say.
 
 Why every part exists (measured on API 34/35/36 emulators, UiAutomator2 server 11.2.4):
   - The server's port on the device is always 6790; the host side is an `adb forward`
@@ -32,8 +35,11 @@ Why every part exists (measured on API 34/35/36 emulators, UiAutomator2 server 1
 import argparse
 import json
 import re
+import queue
 import socket
+import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
 
@@ -253,6 +259,68 @@ def session_from_list(resp):
 
 # --- command line -------------------------------------------------------------------
 
+def lock_state(dumps):
+    """True / False / None from `dumpsys power` + `dumpsys window` text: locked = the
+    screen is not Awake (asleep, dozing) or the keyguard is showing - behind it nothing
+    of an app can appear, and with a PIN only a person can take it away."""
+    wake = re.search(r"^\s*mWakefulness=([A-Za-z]+)", dumps, re.M)
+    kg = re.search(r"isKeyguardShowing=(true|false)", dumps)
+    if not wake or not kg:
+        return None
+    return wake.group(1) != "Awake" or kg.group(1) == "true"
+
+
+def device_locked(adb, serial):
+    """lock_state of a device read over adb, None when it cannot be read."""
+    try:
+        r = subprocess.run([adb, "-s", serial, "shell", "dumpsys power; dumpsys window"], capture_output=True,
+                           text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return lock_state(r.stdout)
+
+
+class ScreenLocked(Exception):
+    pass
+
+
+def unless_locked(read, is_hit, locked):
+    """read() raced against locked(): a read on an asleep screen hangs until its own
+    timeout (10 s measured), the lock check takes a few tenths of a second. A hit returns at
+    once; a miss or a failed read waits for the check. Raises ScreenLocked when the screen
+    is locked, else returns read()'s value or raises its error."""
+    q = queue.Queue()
+
+    def run_read():
+        try:
+            q.put(("read", read(), None))
+        except Exception as e:  # noqa: BLE001 - handed back to the caller below
+            q.put(("read", None, e))
+
+    for target in (run_read, lambda: q.put(("lock", locked(), None))):
+        threading.Thread(target=target, daemon=True).start()
+    got = {}
+    while True:
+        kind, value, err = q.get()
+        got[kind] = (value, err)
+        if kind == "lock" and value:
+            raise ScreenLocked()
+        if "read" in got:
+            value, err = got["read"]
+            if err is None and is_hit(value):
+                return value
+            if "lock" in got:
+                if err is not None:
+                    raise err
+                return value
+
+
+def locked_hint(serial):
+    return ("the screen of %s is LOCKED (asleep or behind the keyguard) - nothing of the app can appear. "
+            "`android-ui.sh unlock` wakes it and dismisses a keyguard without a PIN; a PIN, pattern or "
+            "password needs a person at the device." % serial)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -267,6 +335,7 @@ def main(argv=None):
     h = sub.add_parser("health")
     h.add_argument("--port", type=int, required=True)
     h.add_argument("--timeout", type=float, default=3)
+    sub.add_parser("locked")
     a = ap.parse_args(argv)
 
     if a.cmd == "port":
@@ -275,6 +344,13 @@ def main(argv=None):
         except PortRefused as e:
             print(str(e), file=sys.stderr)
             return 3 if e.missing else 2
+        return 0
+    if a.cmd == "locked":
+        st = lock_state(sys.stdin.read())
+        if st is None:
+            print("no mWakefulness / isKeyguardShowing in the dumps", file=sys.stderr)
+            return 1
+        print("true" if st else "false")
         return 0
     if a.cmd == "foreign":
         found = foreign_clients(sys.stdin.read())

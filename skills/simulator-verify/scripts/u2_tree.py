@@ -235,6 +235,8 @@ def main(argv=None):
     ap.add_argument("--match")
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument("--interval", type=float, default=0.2)
+    ap.add_argument("--adb")       # with --serial: waitfor stops at once on a locked screen
+    ap.add_argument("--serial")
     a = ap.parse_args(argv)
     if a.grep is not None:
         regex("--grep", a.grep)
@@ -296,11 +298,21 @@ def main(argv=None):
     polls, last = 0, []
     while True:
         polls += 1
+        def hits_of(els):
+            return [e for e in els if pat.search(" ".join(str(e.get(k, "")) for k in FIELDS))]
         try:
-            last = elements(read(), a.scale, a.all)
+            if polls == 1 and a.adb and a.serial:
+                # A locked screen will not show the match however long this waits.
+                last = u2_client.unless_locked(lambda: elements(read(), a.scale, a.all), hits_of,
+                                               lambda: u2_client.device_locked(a.adb, a.serial))
+            else:
+                last = elements(read(), a.scale, a.all)
+        except u2_client.ScreenLocked:
+            print("waitfor: %s" % u2_client.locked_hint(a.serial), file=sys.stderr)
+            return 1
         except u2_client.ServerError:
             last = []
-        hits = [e for e in last if pat.search(" ".join(str(e.get(k, "")) for k in FIELDS))]
+        hits = hits_of(last)
         if hits:
             print(json.dumps(hits, separators=(",", ":"), ensure_ascii=False))
             print("matched /%s/ after %d poll(s), %.1fs" % (a.match, polls, time.time() - started), file=sys.stderr)

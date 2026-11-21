@@ -131,6 +131,12 @@ class Device:
     def focus(self):
         return focus_of(self.a.adb, self.a.serial)
 
+    def locked(self):
+        return u2_client.device_locked(self.a.adb, self.a.serial)
+
+    def serial(self):
+        return self.a.serial
+
 
 def hits_now(dev, ident, scale, exists):
     """(hits, all matches, focus line or None, the source) from one snapshot."""
@@ -152,8 +158,17 @@ def cmd_wait(dev, a):
     while True:
         polls += 1
         try:
-            hits, found, focus, src = hits_now(dev, a.id, a.scale, a.exists)
+            if polls == 1:
+                # A locked screen will not show the element however long this waits.
+                hits, found, focus, src = u2_client.unless_locked(
+                    lambda: hits_now(dev, a.id, a.scale, a.exists), lambda r: bool(r[0]),
+                    dev.locked)
+            else:
+                hits, found, focus, src = hits_now(dev, a.id, a.scale, a.exists)
             err = None
+        except u2_client.ScreenLocked:
+            print("waitid: %s" % u2_client.locked_hint(dev.serial()), file=sys.stderr)
+            return 1
         except u2_client.ServerError as e:
             hits, found, err = [], [], str(e)
         if hits:

@@ -171,18 +171,7 @@ adb_input() {
 }
 
 # The lock state as `locked` reports it: the screen is asleep, or the keyguard is up.
-lock_state() {
-  local wake kg
-  wake="$("$ADB" -s "$_MEMO_SERIAL" shell dumpsys power 2>/dev/null </dev/null | tr -d '\r' \
-          | sed -nE 's/^ *mWakefulness=([A-Za-z]+).*/\1/p' | head -1 || true)"
-  kg="$("$ADB" -s "$_MEMO_SERIAL" shell dumpsys window 2>/dev/null </dev/null | tr -d '\r' \
-        | grep -m1 -oE 'isKeyguardShowing=(true|false)' || true)"
-  if [ -z "$wake" ] || [ -z "$kg" ]; then
-    echo "ERROR: could not read the lock state of $_MEMO_SERIAL (dumpsys power: '${wake}', dumpsys window: '${kg}')" >&2
-    exit 1
-  fi
-  if [ "$wake" != Awake ] || [ "$kg" = isKeyguardShowing=true ]; then echo true; else echo false; fi
-}
+lock_state() { android_lock_state "$_MEMO_SERIAL" || exit 1; }
 
 # The package is installed: `pm path` prints a `package:` line for every APK of it.
 need_pkg() {
@@ -527,7 +516,8 @@ case "$cmd" in
       esac
     done
     ensure_u2; scale
-    run_child python3 "$HERE/u2_tree.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --match "$_pat" "${_wf_args[@]+"${_wf_args[@]}"}"
+    run_child python3 "$HERE/u2_tree.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --match "$_pat" \
+      --adb "$ADB" --serial "$_MEMO_SERIAL" "${_wf_args[@]+"${_wf_args[@]}"}"
     ;;
 
   # The app in front is the top resumed activity - or, when that is a system activity

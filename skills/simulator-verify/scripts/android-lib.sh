@@ -87,6 +87,16 @@ android_host_for() {   # SERIAL PORT
   if android_is_emulator "$1"; then echo "10.0.2.2:$2"; else echo "localhost:$2"; fi
 }
 
+# true / false: the screen is asleep or the keyguard is up (u2_client.py lock_state). Return
+# 1 with the cause on stderr when the dumps do not say.
+android_lock_state() {
+  local st
+  st="$("$ADB" -s "$1" shell 'dumpsys power; dumpsys window' 2>/dev/null </dev/null | tr -d '\r' \
+        | python3 "$ANDROID_LIB_HERE/u2_client.py" locked 2>/dev/null)" \
+    || { echo "ERROR: could not read the lock state of $1 (dumpsys power / dumpsys window)" >&2; return 1; }
+  echo "$st"
+}
+
 # The device must be online and booted; prints nothing, exits 1 with the cause.
 android_assert_ready() {
   local st boot
