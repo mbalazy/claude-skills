@@ -539,6 +539,10 @@ if want_group rig; then
   RV_BEFORE=""
   [ "$IS_EMULATOR" = 1 ] || RV_BEFORE="$("$ADB" -s "$SERIAL" reverse --list </dev/null | tr -d '\r' | awk '{ print $2 }')"
   rv_ours() { [ "$IS_EMULATOR" = 0 ] && ! grep -qx "tcp:$1" <<< "$RV_BEFORE"; }
+  # The run's own Metro port: a rule tcp:N -> tcp:N for it is the one the rig check adds
+  # and keeps (an earlier run left it), so removing it and letting the check add it again
+  # leaves it as it was.
+  rv_same() { [ "$IS_EMULATOR" = 0 ] && "$ADB" -s "$SERIAL" reverse --list </dev/null | tr -d '\r' | awk -v p="tcp:$1" '$2 == p && $3 == p { f = 1 } END { exit !f }'; }
   _t="$(mktemp -d)"; echo "console.log('x');" > "$_t/index.js"
   case_ rig_usage          2 'unknown option: --frob' -- "$RC" --frob
   case_ rig_timeout_bad    2 'must be whole seconds' -- "$RC" --timeout x
@@ -566,13 +570,13 @@ if want_group rig; then
     case_ rig_back         0 '^RIG OK' "was $RH:8199, now $RH:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT"
     # A phone reaches Metro through adb reverse: the check adds a missing rule, --reload
     # (which writes nothing) names it, and a rule that leads elsewhere is left alone.
-    if rv_ours "$RPORT"; then
+    if rv_ours "$RPORT" || rv_same "$RPORT"; then
       "$ADB" -s "$SERIAL" reverse --remove "tcp:$RPORT" </dev/null >/dev/null 2>&1
       case_ rig_reload_no_rule 1 "no adb reverse rule for tcp:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT" --reload
       case_ rig_rule_added   0 '^RIG OK' "reverse: was none, now tcp:$RPORT -> Mac tcp:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT"
     else
       for c in rig_reload_no_rule rig_rule_added; do
-        skip "$c" "$([ "$IS_EMULATOR" = 1 ] && echo "an emulator needs no reverse rule" || echo "tcp:$RPORT was reversed before the run - not this run's to remove")"
+        skip "$c" "$([ "$IS_EMULATOR" = 1 ] && echo "an emulator needs no reverse rule" || echo "tcp:$RPORT was reversed elsewhere before the run - not this run's to remove")"
       done
     fi
     if rv_ours 8198; then
