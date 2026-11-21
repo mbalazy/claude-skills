@@ -94,6 +94,9 @@ install_pinned() {
       continue
     fi
     [ "$MODE" = ensure ] || not_ready "$pkg is not the pinned $UIA2_VERSION build (run: $(basename "$0") ensure $SERIAL)"
+    # The cache is needed only for an install: a running pinned server is proven without
+    # it (no npm, no network).
+    verify_cache || { [ $? -eq 3 ] && fetch && verify_cache; }
     echo "$pkg: installing the pinned $UIA2_VERSION build"
     out="$("$ADB" -s "$SERIAL" install -r -g "$CACHE/$f" 2>&1)" || true
     case "$out" in
@@ -114,6 +117,14 @@ foreign_now() {
   sleep 0.3
   ps2="$("$ADB" -s "$SERIAL" shell ps -A -o PID,NAME,ARGS 2>/dev/null | tr -d '\r')"
   printf '%s\n%s\n' "$ps1" "$ps2" | sort -u -n | python3 "$HERE/u2_client.py" foreign
+}
+
+# Before any start: another UiAutomation client means the start would lose silently or
+# after 10-19 s, so it is refused now, naming the holder.
+assert_no_foreign() {
+  local f rc
+  f="$(foreign_now)" && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || not_ready "UiAutomation is held by another client - stop it first, this driver will not fight over it: $(printf '%s' "$f" | tr '\n' ';')"
 }
 
 server_pid() { "$ADB" -s "$SERIAL" shell pidof "$U2_SERVER_PKG" 2>/dev/null | tr -d '\r' || true; }
@@ -188,14 +199,7 @@ gate() {
   fi
 
   pid="$(server_pid)"
-  if [ -z "$pid" ]; then
-    f="$(foreign_now)" && rc=0 || rc=$?
-    [ "$rc" -eq 0 ] || not_ready "UiAutomation is held by another client - stop it first, this driver will not fight over it: $(printf '%s' "$f" | tr '\n' ';')"
-  fi
-
-  if [ "$MODE" = ensure ]; then
-    verify_cache || { [ $? -eq 3 ] && fetch && verify_cache; }
-  fi
+  [ -n "$pid" ] || assert_no_foreign
   install_pinned
 
   if [ -n "$pid" ]; then
@@ -210,6 +214,7 @@ gate() {
     echo "the server process lives but /source does not answer - restarting it"
     server_stop_device
     sleep 0.5
+    assert_no_foreign
   else
     [ "$MODE" = ensure ] || not_ready "the server is not running on $SERIAL (run: $(basename "$0") ensure $SERIAL)"
   fi

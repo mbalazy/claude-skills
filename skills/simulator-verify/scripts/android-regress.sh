@@ -112,13 +112,19 @@ if want_group core; then
   cp -R "${UIA2_SERVER_HOME:-$HOME/.cache/uia2-server}/." "$BAD/" 2>/dev/null
   if [ -f "$BAD/11.2.4/appium-uiautomator2-server-v11.2.4.apk" ]; then
     printf 'X' | dd of="$BAD/11.2.4/appium-uiautomator2-server-v11.2.4.apk" bs=1 seek=1000 count=1 conv=notrunc 2>/dev/null
+    # The cache is read only when something must be installed, so the server goes first.
+    "$U" stop "$SERIAL" >/dev/null
+    "$ADB" -s "$SERIAL" uninstall "$U2_TEST_PKG" >/dev/null 2>&1
+    "$ADB" -s "$SERIAL" uninstall "$U2_SERVER_PKG" >/dev/null 2>&1
     case_ sha_mismatch  1 'sha256 mismatch' -- env UIA2_SERVER_HOME="$BAD" "$U" ensure "$SERIAL"
+    case_ running_without_cache_setup 0 "READY $SERIAL " -- "$U" ensure "$SERIAL"
+    case_ running_without_cache 0 'server already running' "READY $SERIAL " -- env UIA2_SERVER_HOME="$BAD/none" "$U" ensure "$SERIAL"
   else
     skip sha_mismatch "no cached APK to corrupt (run uia2-server.sh fetch)"
   fi
   rm -rf "$BAD"
 
-  case_ ensure_after    0 "READY $SERIAL " -- "$U" ensure "$SERIAL"
+  case_ ensure_after    0 "READY $SERIAL " '!installing' -- "$U" ensure "$SERIAL"
 
   if [ "${ADBD_RESTART:-}" = 1 ]; then
     "$ADB" -s "$SERIAL" root >/dev/null 2>&1; sleep 3; "$ADB" -s "$SERIAL" wait-for-device
