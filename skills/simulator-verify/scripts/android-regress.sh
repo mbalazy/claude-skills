@@ -403,6 +403,11 @@ if want_group app; then
   case_ openurl_pkg        0 "opened $SCHEME://screen/inputs in $PKG" -- "$A" openurl "$SCHEME://screen/inputs" --package "$PKG"
   case_ openurl_landed     0 '"name":"Input-title"' -- "$A" waitid Input-title --timeout 5
   case_ openurl_env_pkg    0 "in $PKG" -- env ANDROID_PACKAGE="$PKG" "$A" openurl "$SCHEME://screen/home"
+  # The URL reaches the app whole: `&`, a quote and a space survive the device's shell.
+  case_ openurl_quoting    0 "deep link $SCHEME://screen/home\\?a=1&b=it's x\$" -- bash -c '
+    t="$("$1" -s "$2" shell "date \"+%m-%d %H:%M:%S.000\"" </dev/null | tr -d "\r")"
+    "$3" openurl "$4://screen/home?a=1&b=it'"'"'s x" --package "$5" >/dev/null || exit 1
+    sleep 1; "$1" -s "$2" logcat -d -T "$t" -s ReactNativeJS:V </dev/null | grep -o "deep link .*"' _ "$ADB" "$SERIAL" "$A" "$SCHEME" "$PKG"
   case_ openurl_bad_intent 1 'unable to resolve Intent' -- "$A" openurl 'nosuchscheme://x' --package "$PKG"
   case_ terminate_running  0 "^terminated $PKG$" -- "$A" terminate "$PKG"
   case_ terminate_dead     0 '^dead$' -- bash -c '[ -z "$("$1" -s "$2" shell pidof "$3" </dev/null | tr -d "\r")" ] && echo dead' _ "$ADB" "$SERIAL" "$PKG"
