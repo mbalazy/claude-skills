@@ -288,5 +288,49 @@ class Input(unittest.TestCase):
         self.assertEqual(drag[-2], {"type": "pointerMove", "duration": 300, "x": 300, "y": 40})
 
 
+PERM_FOCUS = ("Window{3d u0 com.google.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity}",
+              "com.google.android.permissioncontroller")
+DIALOG = ('<?xml version="1.0"?><hierarchy rotation="0" width="1080" height="2424">'
+          + node("android.widget.TextView", "[134,1058][948,1192]", rid="com.android.permissioncontroller:id/permission_message",
+                 text="Allow SvCli to send you notifications?", pkg="com.google.android.permissioncontroller")
+          + node("android.widget.Button", "[134,1257][948,1404]", rid="com.android.permissioncontroller:id/permission_allow_button",
+                 text="Allow", clickable="true", pkg="com.google.android.permissioncontroller")
+          + node("android.widget.Button", "[134,1415][948,1562]", rid="com.android.permissioncontroller:id/permission_deny_button",
+                 text="Don\u2019t allow", clickable="true", pkg="com.google.android.permissioncontroller")
+          + "</hierarchy>")
+
+
+class Alert(unittest.TestCase):
+    APP = (PKG, ".MainActivity")
+
+    def test_known_dialogs_by_their_activity(self):
+        self.assertEqual(u2_el.dialog_kind(PERM_FOCUS, ("com.google.android.permissioncontroller", "x"), self.APP)[0],
+                         "permission dialog")
+        chooser = ("Window{9 u0 android/com.android.internal.app.ResolverActivity}", "android")
+        kind = u2_el.dialog_kind(chooser, ("android", "x"), ("android", "x"))
+        self.assertEqual((kind[0], kind[2]), ("app chooser", "BACK"))
+
+    def test_the_app_and_the_launcher_are_not_dialogs(self):
+        app = ("Window{1 u0 %s/%s.MainActivity}" % (PKG, PKG), PKG)
+        self.assertIsNone(u2_el.dialog_kind(app, self.APP, self.APP))
+        home = ("Window{2 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity}",
+                "com.google.android.apps.nexuslauncher")
+        launcher = ("com.google.android.apps.nexuslauncher", ".NexusLauncherActivity")
+        self.assertIsNone(u2_el.dialog_kind(home, launcher, launcher))
+        self.assertIsNone(u2_el.dialog_kind(("", None), None, None))
+
+    def test_an_unknown_system_window_over_the_app_is_named(self):
+        anr = ("Window{5 u0 Application Not Responding: %s}" % PKG, "android")
+        name, acc, dis = u2_el.dialog_kind(anr, self.APP, self.APP)
+        self.assertIn("system window of android", name)
+        self.assertEqual((acc, dis), (None, None))
+
+    def test_dialog_text_and_buttons(self):
+        texts, buttons = u2_el.dialog_parts(DIALOG)
+        self.assertEqual(texts, ["Allow SvCli to send you notifications?"])
+        self.assertEqual([b[0] for b in buttons], ["Allow", "Don\u2019t allow"])
+        self.assertEqual(buttons[0][2], (541, 1330))
+
+
 if __name__ == "__main__":
     unittest.main()

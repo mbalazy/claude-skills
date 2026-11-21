@@ -4,6 +4,7 @@ the counterpart of wda_el.py.
 
   u2_el.py --port P --scale S --adb ADB --serial SER wait ID [--timeout S] [--exists]
   u2_el.py --port P --scale S --adb ADB --serial SER info ID
+  u2_el.py --port P --scale S --adb ADB --serial SER alert text|buttons|wait|accept|dismiss [--seconds N] [--all]
   u2_el.py --adb ADB --serial SER foreground
 
 Every poll is ONE /source snapshot (5-20 ms over HTTP; ~100 ms on a 250-node screen),
@@ -485,6 +486,122 @@ def cmd_foreground(a):
     return 0
 
 
+# System dialogs `alert` knows by the focused window's activity. Buttons are matched by
+# the END of their resource-id, so the AOSP (com.android.permissioncontroller) and the
+# Google build (com.google.android.permissioncontroller, whose ids keep the AOSP prefix)
+# both match. A chooser has nothing to accept: the choice is the package openurl takes.
+# Play Protect is named but never answered: installing past it is a person's decision.
+DIALOGS = (
+    ("GrantPermissionsActivity", "permission dialog",
+     ("permission_allow_button", "permission_allow_foreground_only_button", "permission_allow_one_time_button"),
+     ("permission_deny_button", "permission_deny_and_dont_ask_again_button")),
+    ("ResolverActivity", "app chooser", None, "BACK"),
+    ("ChooserActivity", "app chooser", None, "BACK"),
+    ("PlayProtectDialogsActivity", "Play Protect dialog", None, None),
+)
+
+
+def dialog_kind(focus, top, root):
+    """The dialog in front as (name, accept ids, dismiss ids | "BACK") or None. Known
+    ones by the focused window's activity; any other SYSTEM window counts when it sits
+    over an app (the task under it is an app's, or the window is not an activity at all,
+    as an ANR dialog): the launcher or a system app opened on purpose is not a dialog."""
+    line, fpkg = focus
+    if not line:
+        return None
+    for act, name, acc, dis in DIALOGS:
+        if act in line:
+            return name, acc, dis
+    pkg = fpkg or (line.split()[-1].split("/")[0].rstrip("}") if line.startswith("Window{") else "")
+    if not pkg or not is_system(pkg):
+        return None
+    over_app = root is not None and not is_system(root[0])
+    not_activity = "/" not in line
+    if over_app or not_activity:
+        return "system window of %s (%s)" % (pkg, line), None, None
+    return None
+
+
+def dialog_parts(xml_text):
+    """(text lines, [(label, resource-id, (cx, cy) px)] of the buttons) of the window in
+    the tree - the dialog, since only the active window is read."""
+    root, _ = u2_tree.parse(xml_text)
+    texts, buttons = [], []
+    for n in root.iter():
+        a = n.attrib
+        label = a.get("text") or a.get("content-desc") or ""
+        b = u2_tree.parse_bounds(a.get("bounds"))
+        if not label or not b or a.get("displayed", "true") != "true":
+            continue
+        if a.get("class", "").endswith("Button") or (a.get("clickable") == "true" and "TextView" not in a.get("class", "")):
+            buttons.append((label, a.get("resource-id", ""), ((b[0] + b[2]) // 2, (b[1] + b[3]) // 2)))
+        elif a.get("class", "").endswith("TextView"):
+            texts.append(label)
+    return texts, buttons
+
+
+def dialog_now(dev):
+    """(kind, texts, buttons) of the dialog in front, or None."""
+    a = dev.a
+    top, root = front(adb_shell(a.adb, a.serial, "dumpsys", "activity", "activities"))
+    kind = dialog_kind(dev.focus(), top, root)
+    if not kind:
+        return None
+    texts, buttons = dialog_parts(dev.source())
+    return kind, texts, buttons
+
+
+def cmd_alert(dev, a):
+    if a.sub == "wait":
+        deadline = time.time() + a.seconds
+        while True:
+            d = dialog_now(dev)
+            if d:
+                print("\n".join(d[1]) or d[0][0])
+                return 0
+            if time.time() >= deadline:
+                print("no system dialog appeared within %ds" % a.seconds, file=sys.stderr)
+                return 1
+            time.sleep(0.5)
+    d = dialog_now(dev)
+    if not d:
+        print("no system dialog on screen (an app's own Alert.alert is part of its window: "
+              "`elements` reads it, `tapid`/`tap` answers it)", file=sys.stderr)
+        return 1
+    if a.sub == "text":
+        print("\n".join(d[1]) or d[0][0])
+        return 0
+    if a.sub == "buttons":
+        out([b[0] for b in d[2]])
+        return 0
+    n = 0
+    while d:
+        (name, acc, dis), texts, buttons = d
+        ids = acc if a.sub == "accept" else dis
+        shown = " / ".join(texts) or name
+        if ids == "BACK":
+            adb_shell(a.adb, a.serial, "input", "keyevent", "4")
+        else:
+            hit = [b for want in (ids or ()) for b in buttons if b[1].endswith(":id/" + want)][:1]
+            if not hit:
+                print("alert %s: the %s has no %s button this driver knows%s - nothing was tapped. "
+                      "Buttons: %s" % (a.sub, name, "allow" if a.sub == "accept" else "deny",
+                                       "" if ids else " (it is answered by a person, or with tap/tapid)",
+                                       json.dumps([b[0] for b in buttons], ensure_ascii=False)),
+                      file=sys.stderr)
+                return 1
+            adb_shell(a.adb, a.serial, "input", "tap", str(hit[0][2][0]), str(hit[0][2][1]))
+        n += 1
+        print("%sed: %s" % (a.sub, shown))
+        if not a.all:
+            break
+        time.sleep(1)
+        d = dialog_now(dev)
+    if a.all:
+        print("%d dialog(s) drained" % n)
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if "foreground" in argv and "--port" not in argv:
@@ -518,11 +635,15 @@ def main(argv=None):
     p.add_argument("kind", choices=("doubletap", "drag"))
     p.add_argument("px", type=int, nargs="+")
     p.add_argument("--hold", type=float, default=0.5)
+    p = sub.add_parser("alert", add_help=False)
+    p.add_argument("sub", choices=("text", "buttons", "wait", "accept", "dismiss"))
+    p.add_argument("--seconds", type=int, default=15)
+    p.add_argument("--all", action="store_true")
     a = ap.parse_args(argv)
     run = {"wait": cmd_wait, "info": cmd_info, "tap": cmd_tap, "type": cmd_type,
-           "typefocused": cmd_type_focused, "gesture": cmd_gesture}[a.cmd]
+           "typefocused": cmd_type_focused, "gesture": cmd_gesture, "alert": cmd_alert}[a.cmd]
     label = {"wait": "waitid", "info": "el", "tap": "tapid", "type": "typeid",
-             "typefocused": "type", "gesture": getattr(a, "kind", "")}[a.cmd]
+             "typefocused": "type", "gesture": getattr(a, "kind", ""), "alert": "alert"}[a.cmd]
     try:
         dev = Device(a)
         return run(dev, a)

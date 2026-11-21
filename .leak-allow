@@ -20,6 +20,8 @@ com.android.launcher3
 com.android.systemui
 com.android.permissioncontroller.permission.ui.GrantPermissionsActivity
 com.google.android
+com.android.internal.app.ResolverActivity
+com.google.android.apps.nexuslauncher
 # Open-source driver servers and helpers (Appium UiAutomator2, Maestro, mobilecli, agent-device)
 io.appium.uiautomator2
 io.appium.uiautomator2.server
