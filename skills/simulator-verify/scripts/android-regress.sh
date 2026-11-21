@@ -56,8 +56,8 @@ case_() {
   [ "$rc" = "$rc_want" ] || { ok=0; why="rc $rc, want $rc_want"; }
   for p in ${pats[@]+"${pats[@]}"}; do
     case "$p" in
-      !*) printf '%s\n' "$out" | grep -qE -- "${p#!}" && { ok=0; why="${why:+$why; }matched '${p#!}'"; } ;;
-      *)  printf '%s\n' "$out" | grep -qE -- "$p" || { ok=0; why="${why:+$why; }no '$p'"; } ;;
+      !*) grep -qE -- "${p#!}" <<< "$out" && { ok=0; why="${why:+$why; }matched '${p#!}'"; } ;;
+      *)  grep -qE -- "$p" <<< "$out" || { ok=0; why="${why:+$why; }no '$p'"; } ;;
     esac
   done
   if [ "$ok" = 1 ]; then PASS=$((PASS + 1)); echo "PASS $name"
