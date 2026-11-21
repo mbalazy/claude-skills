@@ -226,6 +226,7 @@ function InputsScreen({ onBack }: { onBack: () => void }) {
   const [c, setC] = useState('');
   const [u, setU] = useState('');
   const [p, setP] = useState('');
+  const [n, setN] = useState(''); // a field without a placeholder
   const [changes, setChanges] = useState(0);
   const [submits, setSubmits] = useState(0);
   return (
@@ -242,6 +243,9 @@ function InputsScreen({ onBack }: { onBack: () => void }) {
       <TextInput testID="Input-phone" placeholder="Phone" value={p} keyboardType="phone-pad"
         onChangeText={(t) => setP(maskPhone(t))} style={styles.input} />
       <Text testID="Input-phone-mirror" style={styles.small}>[{p}]</Text>
+      <TextInput testID="Input-plain" defaultValue="" onChangeText={setN} style={styles.input}
+        onSubmitEditing={() => setSubmits((x) => x + 1)} autoCorrect={false} autoCapitalize="none" />
+      <Text testID="Input-plain-mirror" style={styles.small}>[{n}]</Text>
       <Text testID="Input-counts" style={styles.small}>changes {changes} submits {submits}</Text>
     </ScrollView>
   );
