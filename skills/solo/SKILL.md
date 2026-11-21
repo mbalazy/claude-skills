@@ -227,12 +227,15 @@ makes this mode cheaper than a batch.
 Read `prompts/report.md` and follow it: leave the runtime and the checkout in
 a known state, journal every incident of the shift (`solo` journal:
 what went wrong without a human, with its cost), write the report file next
-to the state file, append the closing lines to the tracker's Log, print the
-same report in the chat, and LAST run `scripts/shift-close.sh <shift-id>` (the guard
+to the state file, append the closing lines to the tracker's Log, produce
+the end-of-work answer with the `session-digest` skill (`../session-digest/SKILL.md`,
+this session) and print THAT in the chat, and LAST run `scripts/shift-close.sh <shift-id>` (the guard
 stays armed until then, so a forgotten close blocks the user's own next
-push - the report must say the shift is closed). The
-report is written for someone who launched this hours ago and remembers
-nothing - section 1 in plain words, TL;DR last.
+push - the answer must say the shift is closed). The
+report file is written for someone who launched this hours ago and remembers
+nothing - section 1 in plain words, TL;DR last; the chat answer follows
+`../session-digest/reference/format.md`, the one format solo, taking-over and
+session-digest share.
 
 ## Resume
 
