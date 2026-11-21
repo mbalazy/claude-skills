@@ -7,11 +7,14 @@
 #
 # GROUP: core (device selection, server lifecycle, session), read (elements, el, waitid,
 # waitfor, foreground, --settled on the fixture app), input (tapid, typeid, coordinates,
-# type, button, lock) - default: every group.
-# read and input need the fixture (tests/android-fixture) installed and running its JS, and the
+# type, button, lock), app (launch, relaunch, terminate, activate, openurl, screenshot,
+# orientation, alert, wait, do) - default: every group.
+# read, input and app need the fixture (tests/android-fixture) installed and running its JS, and the
 # server READY (core leaves it running). FIXTURE_PKG / FIXTURE_SCHEME default to
 # com.example.svcli / svp2cli; OTHER_PKG names a second app with the same testIDs (the
-# fixture's embedded-bundle flavor) for the case where it starts over the first.
+# fixture's embedded-bundle flavor) for the case where it starts over the first, and for
+# the app chooser (two apps with one scheme). EXPO_PKG (com.example.svp2expo) is the Expo
+# dev-client fixture, its dev server on EXPO_PORT (8120); absent or down = SKIPPED.
 # OTHER_SERIAL: a second attached device for the cases that need two (ambiguity, a port
 # forwarded to the other device); without it those cases are SKIPPED, not passed.
 # ADBD_RESTART=1 adds the case that restarts adbd on ANDROID_SERIAL (`adb root` + `unroot`)
@@ -20,7 +23,8 @@
 # The cases change the device: they stop and start the UiAutomator2 server and run a
 # `uiautomator dump` loop for a few seconds. They leave the server RUNNING on
 # ANDROID_SERIAL. read revokes the fixture's notification permission to show the dialog;
-# input locks and unlocks the screen and leaves the fixture app on its home screen.
+# input locks and unlocks the screen and leaves the fixture app on its home screen; app
+# grants and revokes the notification permission (revoked at the end) and restarts the apps.
 # Animation scales are read before and after: a change is a FAIL.
 # Exit 0 = every case passed, 1 = at least one FAIL.
 
@@ -33,7 +37,7 @@ U="$HERE/uia2-server.sh"
 . "$HERE/android-lib.sh"
 SERIAL="${ANDROID_SERIAL:?set ANDROID_SERIAL to the emulator the cases run on}"
 OTHER="${OTHER_SERIAL:-}"
-GROUPS_WANTED="${*:-core read input}"
+GROUPS_WANTED="${*:-core read input app}"
 mkdir -p "$OUT"
 PASS=0; FAIL=0; SKIP=0
 
@@ -364,6 +368,117 @@ if want_group input; then
   case_ lock_again       0 '^true$' -- bash -c '"$1" lock >/dev/null && sleep 0.5 && "$1" locked' _ "$A"
   case_ unlock           0 '^unlocked$' -- "$A" unlock
   case_ locked_unlocked  0 '^false$' -- "$A" locked
+  open_screen home Home-title
+fi
+
+if want_group app; then
+  export ANDROID_SERIAL="$SERIAL"
+  OTHERP="${OTHER_PKG:-}"
+  EXPO="${EXPO_PKG:-com.example.svp2expo}"
+  EXPO_PORT="${EXPO_PORT:-8120}"
+  case_ app_usage_launch   2 'usage: launch PACKAGE' -- "$A" launch
+  case_ app_launch_args    2 'no launch arguments on Android' -- "$A" relaunch "$PKG" -RCT_jsLocation localhost:1
+  case_ app_not_installed  1 'is not installed' -- "$A" launch com.example.notinstalled
+  case_ app_openurl_nopkg  2 'needs the target package' -- env -u ANDROID_PACKAGE "$A" openurl "$SCHEME://screen/home"
+  case_ app_openurl_flag   2 'unknown flag for openurl' -- "$A" openurl "$SCHEME://x" --frob
+  case_ app_alert_sub      2 'unknown: alert frob' -- "$A" alert frob
+  case_ app_shot_width     2 'must be a non-negative whole number' -- "$A" screenshot --width x
+
+  "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+  case_ terminate_stopped  1 'is not running' -- "$A" terminate "$PKG"
+  case_ launch_cold        0 "^launched $PKG pid [0-9]+$" -- "$A" launch "$PKG"
+  "$A" waitid Home-title --timeout 15 >/dev/null 2>&1
+  pid_cmp() {   # CMD -> "same"/"new" pid of the fixture across CMD
+    local b a
+    b="$("$ADB" -s "$SERIAL" shell pidof "$PKG" </dev/null | tr -d '\r')"
+    "$A" "$1" "$PKG" >/dev/null || return 1
+    a="$("$ADB" -s "$SERIAL" shell pidof "$PKG" </dev/null | tr -d '\r')"
+    [ -n "$a" ] || { echo "no pid after $1"; return 1; }
+    if [ "$a" = "$b" ]; then echo "same pid $a"; else echo "new pid $b -> $a"; fi
+  }
+  case_ activate_same_pid  0 '^same pid' -- pid_cmp activate
+  case_ launch_running     0 '^same pid' -- pid_cmp launch
+  case_ relaunch_new_pid   0 '^new pid' -- pid_cmp relaunch
+  "$A" waitid Home-title --timeout 15 >/dev/null 2>&1
+  case_ openurl_pkg        0 "opened $SCHEME://screen/inputs in $PKG" -- "$A" openurl "$SCHEME://screen/inputs" --package "$PKG"
+  case_ openurl_landed     0 '"name":"Input-title"' -- "$A" waitid Input-title --timeout 5
+  case_ openurl_env_pkg    0 "in $PKG" -- env ANDROID_PACKAGE="$PKG" "$A" openurl "$SCHEME://screen/home"
+  case_ openurl_bad_intent 1 'unable to resolve Intent' -- "$A" openurl 'nosuchscheme://x' --package "$PKG"
+  case_ terminate_running  0 "^terminated $PKG$" -- "$A" terminate "$PKG"
+  case_ terminate_dead     0 '^dead$' -- bash -c '[ -z "$("$1" -s "$2" shell pidof "$3" </dev/null | tr -d "\r")" ] && echo dead' _ "$ADB" "$SERIAL" "$PKG"
+
+  # Screen geometry: 1 px of the default screenshot is 1 dp; --width 0 is the device's pixels.
+  _pxw="$("$ADB" -s "$SERIAL" shell dumpsys window displays </dev/null | tr -d '\r' | grep -m1 -oE 'cur=[0-9]+' | cut -d= -f2)"
+  _dpw="$(awk -v v="$_pxw" -v d="$DENSITY" 'BEGIN { printf "%d", v / (d / 160) + 0.5 }')"
+  _shot="$OUT/shot.png"
+  case_ orientation        0 '^PORTRAIT$' -- "$A" orientation
+  case_ screenshot_dp      0 "pixelWidth: $_dpw\$" -- bash -c '"$1" screenshot "$2" >/dev/null && sips -g pixelWidth "$2"' _ "$A" "$_shot"
+  case_ screenshot_full    0 "pixelWidth: $_pxw\$" -- bash -c '"$1" screenshot "$2" --width 0 >/dev/null && sips -g pixelWidth "$2"' _ "$A" "$_shot"
+  case_ screenshot_width   0 'pixelWidth: 200$' -- bash -c '"$1" screenshot "$2" --width 200 >/dev/null && sips -g pixelWidth "$2"' _ "$A" "$_shot"
+  case_ wait_note          0 'fixed pause 2.5s' -- "$A" wait 2.5
+
+  # The notification permission dialog: pm revoke kills the app, so it comes after.
+  perm_reset() {
+    "$ADB" -s "$SERIAL" shell pm revoke "$PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 </dev/null
+    "$ADB" -s "$SERIAL" shell pm clear-permission-flags "$PKG" android.permission.POST_NOTIFICATIONS user-set user-fixed >/dev/null 2>&1 </dev/null
+  }
+  perm_reset
+  open_screen perm Perm-title
+  case_ alert_none         1 'no system dialog on screen' -- "$A" alert
+  case_ alert_dismiss_none 1 'no system dialog on screen' -- "$A" alert dismiss
+  case_ alert_wait_none    1 'no system dialog appeared within 1s' -- "$A" alert wait 1
+  tap_id Perm-notif
+  case_ alert_wait         0 'send you notifications' -- "$A" alert wait 5
+  case_ alert_text         0 'send you notifications' -- "$A" alert
+  case_ alert_buttons      0 '^\["Allow","Don.t allow"\]$' -- "$A" alert buttons
+  case_ alert_accept       0 '^accepted: .*notifications' -- "$A" alert accept
+  case_ alert_granted      0 'POST_NOTIFICATIONS: granted=true' -- bash -c '"$1" -s "$2" shell dumpsys package "$3" </dev/null | grep -m1 "POST_NOTIFICATIONS: granted"' _ "$ADB" "$SERIAL" "$PKG"
+  case_ alert_result       0 '^notif: granted$' -- bash -c 'sleep 0.5; "$1" el Perm-result | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  perm_reset
+  open_screen perm Perm-title
+  tap_id Perm-notif
+  "$A" alert wait 5 >/dev/null 2>&1
+  case_ alert_dismiss      0 '^dismissed: ' -- "$A" alert dismiss
+  case_ alert_denied       0 '^notif: denied' -- bash -c 'sleep 0.5; "$1" el Perm-result | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  perm_reset
+
+  # The system chooser: two installed apps with one scheme and no package on the intent.
+  if [ -n "$OTHERP" ] && "$ADB" -s "$SERIAL" shell pm path "$OTHERP" </dev/null 2>/dev/null | grep -q package:; then
+    "$A" launch "$PKG" >/dev/null 2>&1; "$A" waitid Home-title --timeout 15 >/dev/null 2>&1
+    "$ADB" -s "$SERIAL" shell am start -a android.intent.action.VIEW -d "$SCHEME://screen/home" >/dev/null 2>&1 </dev/null
+    case_ chooser_alert    0 'Open with' -- bash -c 'sleep 1; "$1" alert' _ "$A"
+    case_ chooser_accept   1 'has no allow button' -- "$A" alert accept
+    case_ chooser_dismiss  0 '^dismissed: ' -- "$A" alert dismiss
+    case_ chooser_gone     0 "^$PKG pid" '!ResolverActivity' -- bash -c 'sleep 0.5; "$1" foreground' _ "$A"
+  else
+    for c in chooser_alert chooser_accept chooser_dismiss chooser_gone; do skip "$c" "no OTHER_PKG installed"; done
+  fi
+
+  # An Expo dev-client: relaunch lands in the app; a plain start lands on its launcher.
+  if "$ADB" -s "$SERIAL" shell pm path "$EXPO" </dev/null 2>/dev/null | grep -q package: \
+     && curl -s -m 2 "http://127.0.0.1:$EXPO_PORT/status" | grep -q running; then
+    case_ expo_relaunch    0 "^relaunched $EXPO pid [0-9]+$" -- "$A" relaunch "$EXPO"
+    case_ expo_in_app      0 '"name":"Home-title"' "\"package\":\"$EXPO\"" -- "$A" waitid Home-title --timeout 20
+    case_ expo_metro       0 'node' -- bash -c 'lsof -nP -iTCP:'"$EXPO_PORT"' -sTCP:ESTABLISHED | awk "NR > 1 { print \$1 }" | sort -u'
+    "$ADB" -s "$SERIAL" shell am force-stop "$EXPO" </dev/null
+    case_ expo_launch_cold 0 '"name":"Home-title"' -- bash -c '"$1" launch "$2" >/dev/null && "$1" waitid Home-title --timeout 20' _ "$A" "$EXPO"
+    "$ADB" -s "$SERIAL" shell am force-stop "$EXPO" </dev/null
+    case_ expo_plain_start 0 'DevLauncherActivity' -- bash -c '"$1" -s "$2" shell am start -W -n "$3/.MainActivity" </dev/null >/dev/null; sleep 1; "$4" foreground' _ "$ADB" "$SERIAL" "$EXPO" "$A"
+    "$ADB" -s "$SERIAL" shell am force-stop "$EXPO" </dev/null
+  else
+    for c in expo_relaunch expo_in_app expo_metro expo_launch_cold expo_plain_start; do skip "$c" "$EXPO not installed or no dev server on :$EXPO_PORT"; done
+  fi
+
+  # A whole route in one call; a failing step names itself and prints the screen.
+  case_ do_route           0 'typed into id Input-controlled' '^\[O.Brien x\]|\[O.Brien x\]' '!step failed$' -- "$A" do \
+    "relaunch $PKG" 'waitid Home-title --timeout 15' "openurl $SCHEME://screen/inputs --package $PKG" \
+    'waitid Input-title --timeout 5' 'tapid Input-uncontrolled' 'typeid Input-controlled "O'"'"'Brien x"' \
+    '# a comment' '?tapid Nope-id' 'waitid Input-controlled-mirror'
+  case_ do_tolerated       0 'step failed - tolerated' -- "$A" do '?tapid Nope-id' 'orientation'
+  case_ do_stops           1 'the batch stopped at: tapid Nope-id' "front app: $PKG pid" 'Input-title' '!PORTRAIT' -- "$A" do 'tapid Nope-id' 'orientation'
+  case_ do_stdin           0 '^PORTRAIT$' -- bash -c 'printf "orientation\n# c\n" | "$1" do' _ "$A"
+  case_ do_usage           2 'usage: tapid ID' '!the batch stopped' -- "$A" do 'tapid'
+  "$ADB" -s "$SERIAL" shell input keyevent 4 </dev/null
   open_screen home Home-title
 fi
 
