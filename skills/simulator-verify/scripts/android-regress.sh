@@ -117,7 +117,7 @@ perm_reset() {
   st="$("$ADB" -s "$SERIAL" shell dumpsys package "$PKG" </dev/null | tr -d '\r' | grep -m1 'POST_NOTIFICATIONS: granted')"
   case "$st" in *granted=false*) case "$st" in *USER_FIXED*) ;; *) return 0 ;; esac ;; esac
   case "$o" in
-    *SecurityException*) echo "the device refuses pm revoke from the shell and the permission stays ${st#*: } - reinstall the fixture" ;;
+    *SecurityException*) echo "the device refuses pm revoke from the shell and the permission stays ${st#*: } - uninstall and install the fixture (install -r keeps it)" ;;
     *) echo "the permission is ${st#*: } after pm revoke" ;;
   esac
   return 1
