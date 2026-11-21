@@ -395,7 +395,7 @@ function BigScreen({ onBack }: { onBack: () => void }) {
 
 // Gestures: a pad that tells a tap, a double tap (two presses within 300 ms) and a long
 // press apart; a box that reports how far it was dragged and how long the finger rested
-// before moving; a scroll view that reports its offset.
+// before moving; a scroll view that reports its offset; one testID on two buttons.
 function GestScreen({ onBack }: { onBack: () => void }) {
   const [c, setC] = useState({ taps: 0, doubles: 0, longs: 0 });
   const last = useRef(0);
@@ -435,6 +435,10 @@ function GestScreen({ onBack }: { onBack: () => void }) {
         {Array.from({ length: 30 }, (_, i) => <Text key={i} style={styles.body}>{`row ${i}`}</Text>)}
       </ScrollView>
       <Text testID="Gest-scroll-y" style={styles.small}>{`scroll y ${sy}`}</Text>
+      <View style={styles.row}>
+        <Pressable testID="Gest-dup" accessibilityRole="button" style={styles.chip}><Text style={styles.small}>dup A</Text></Pressable>
+        <Pressable testID="Gest-dup" accessibilityRole="button" style={styles.chip}><Text style={styles.small}>dup B</Text></Pressable>
+      </View>
     </View>
   );
 }
