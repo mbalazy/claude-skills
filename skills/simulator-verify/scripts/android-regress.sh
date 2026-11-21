@@ -8,7 +8,8 @@
 # GROUP: core (device selection, server lifecycle, session), read (elements, el, waitid,
 # waitfor, foreground, --settled on the fixture app), input (tapid, typeid, coordinates,
 # type, button, lock), app (launch, relaunch, terminate, activate, openurl, screenshot,
-# orientation, alert, wait, do) - default: every group.
+# orientation, alert, wait, do), rig (android-rig-check.sh verdicts; needs FIXTURE_REPO,
+# the fixture's tree, served by a Metro on RIG_PORT, default 8121) - default: every group.
 # read, input and app need the fixture (tests/android-fixture) installed and running its JS, and the
 # server READY (core leaves it running). FIXTURE_PKG / FIXTURE_SCHEME default to
 # com.example.svcli / svp2cli; OTHER_PKG names a second app with the same testIDs (the
@@ -37,7 +38,7 @@ U="$HERE/uia2-server.sh"
 . "$HERE/android-lib.sh"
 SERIAL="${ANDROID_SERIAL:?set ANDROID_SERIAL to the emulator the cases run on}"
 OTHER="${OTHER_SERIAL:-}"
-GROUPS_WANTED="${*:-core read input app}"
+GROUPS_WANTED="${*:-core read input app rig}"
 mkdir -p "$OUT"
 PASS=0; FAIL=0; SKIP=0
 
@@ -485,6 +486,56 @@ if want_group app; then
   case_ do_usage           2 'usage: tapid ID' '!the batch stopped' -- "$A" do 'tapid'
   "$ADB" -s "$SERIAL" shell input keyevent 4 </dev/null
   open_screen home Home-title
+fi
+
+if want_group rig; then
+  export ANDROID_SERIAL="$SERIAL"
+  RC="$HERE/android-rig-check.sh"
+  RREPO="${FIXTURE_REPO:-}"
+  RPORT="${RIG_PORT:-8121}"
+  _t="$(mktemp -d)"; echo "console.log('x');" > "$_t/index.js"
+  case_ rig_usage          2 'unknown option: --frob' -- "$RC" --frob
+  case_ rig_timeout_bad    2 'must be whole seconds' -- "$RC" --timeout x
+  case_ rig_no_package     2 'pass --package' -- "$RC" --repo "$_t"
+  case_ rig_no_entry       2 'entry file not found' -- "$RC" --repo "$_t" --package "$PKG" --entry nope.js
+  case_ rig_not_installed  1 'RIG DEAD: com.example.notinstalled is not installed' -- "$RC" --repo "$_t" --package com.example.notinstalled
+  case_ rig_no_metro       1 'RIG DEAD: no Metro is serving' -- "$RC" --repo "$_t" --package "$PKG"
+  if [ "$(android_attached | grep -c .)" -gt 1 ]; then
+    case_ rig_ambiguous    2 'refusing to guess' -- env -u ANDROID_SERIAL "$RC" --repo "$_t" --package "$PKG"
+  else
+    skip rig_ambiguous "only one device attached"
+  fi
+  rm -rf "$_t"
+  if [ -n "$RREPO" ] && [ -f "$RREPO/index.js" ]; then
+    _sum="$(shasum "$RREPO/index.js" | cut -d' ' -f1)"
+    case_ rig_ok           0 '^RIG OK' 'marker: +RIGCHECK_[0-9_]+ seen' 'came up clean' -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT"
+    case_ rig_marker_gone  0 '^restored$' -- bash -c '[ "$(shasum "$1" | cut -d" " -f1)" = "$2" ] && echo restored' _ "$RREPO/index.js" "$_sum"
+    # The redirect keeps every other key of the prefs file.
+    "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+    printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" '<map>' '    <int name="regress_keep" value="7" />' \
+      "    <string name=\"debug_http_host\">10.0.2.2:$RPORT</string>" '</map>' \
+      | "$ADB" -s "$SERIAL" shell "run-as $PKG sh -c 'cat > shared_prefs/${PKG}_preferences.xml'"
+    case_ rig_dead_port    1 'no Metro for this tree on :8199' "debug_http_host: was 10.0.2.2:$RPORT, now 10.0.2.2:8199" -- "$RC" --repo "$RREPO" --package "$PKG" --port 8199 --timeout 8
+    case_ rig_prefs_kept   0 'regress_keep' -- "$ADB" -s "$SERIAL" shell "run-as $PKG cat shared_prefs/${PKG}_preferences.xml"
+    case_ rig_back         0 '^RIG OK' "was 10.0.2.2:8199, now 10.0.2.2:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT"
+    if [ -n "${OTHER_PKG:-}" ] && "$ADB" -s "$SERIAL" shell unzip -l "$("$ADB" -s "$SERIAL" shell pm path "$OTHER_PKG" </dev/null | sed -n 's/^package://p' | tr -d '\r')" </dev/null 2>/dev/null | grep 'assets/index.android.bundle' >/dev/null; then
+      case_ rig_embedded   1 'runs its EMBEDDED bundle' 'SUSPECT' -- "$RC" --repo "$RREPO" --package "$OTHER_PKG" --port 8199 --timeout 20
+      case_ rig_embedded_ok 0 '^RIG OK' 'was NOT used this time' -- "$RC" --repo "$RREPO" --package "$OTHER_PKG" --port "$RPORT"
+    else
+      for c in rig_embedded rig_embedded_ok; do skip "$c" "no OTHER_PKG with an embedded bundle"; done
+    fi
+    _ep="${EXPO_PORT:-8120}"
+    if curl -s -m 2 "http://127.0.0.1:$_ep/status" | grep running >/dev/null; then
+      case_ rig_other_tree 1 "no Metro for this tree on :$_ep" "listen: +:$_ep .*not this repo" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$_ep" --timeout 10
+      "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT" >/dev/null 2>&1
+    else
+      skip rig_other_tree "no other tree's Metro on :$_ep"
+    fi
+  else
+    for c in rig_ok rig_marker_gone rig_dead_port rig_prefs_kept rig_back rig_embedded rig_embedded_ok rig_other_tree; do
+      skip "$c" "FIXTURE_REPO not set"
+    done
+  fi
 fi
 
 SCALES_AFTER="$(scales)"
