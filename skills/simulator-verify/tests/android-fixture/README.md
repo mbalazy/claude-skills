@@ -1,7 +1,7 @@
 # Android test fixture
 
 The screen source the Android driver (`scripts/android-ui.sh`) and the Android rig check
-were measured and tested against. Only the two source files live here; the app around
+were measured and tested against. Only the source files live here; the app around
 them is generated, because a generated RN project is ~1 GB of `node_modules`, Gradle
 output and native folders that would be stale the day after it was committed.
 
@@ -10,6 +10,8 @@ output and native folders that would be stale the day after it was committed.
   buttons or a deep link `<scheme>://screen/<name>`.
 - `rigswitch.ts` - switches for rig experiments (throw at load, a missing TurboModule,
   the network probe port). Imported FIRST by the entry file.
+- `navstack.tsx` - an optional react-navigation variant (one native-stack push), used
+  only by the variant build described under the RN CLI app.
 
 The same two files serve both apps below. The versions are the tested ones; the project
 generator commands are the standard ones for those versions (the original runs did not
@@ -60,6 +62,20 @@ Build (from `f-cli/android`):
 ```
 
 Metro: `npx react-native start --port 8121 --no-interactive` in `f-cli`.
+
+Variants of the same app, built from a copy of `f-cli` (`cp -cR f-cli f-nav` on APFS is
+instant) so the main fixture stays as it is:
+
+- Without edge-to-edge (status bar outside the app's window, to compare the tree's
+  screen coordinates with `measureInWindow`): `./gradlew assembleDebug
+  -PreactNativeDevServerPort=8121 -PedgeToEdgeEnabled=false`, run on API 34 (API 35+
+  enforces edge-to-edge for apps targeting it).
+- react-navigation (one native-stack push, `navstack.tsx`): `npm install
+  @react-navigation/native @react-navigation/native-stack react-native-screens`, copy
+  `navstack.tsx`, and in `index.js` import `./navstack` in place of `./App`. Build the
+  embedded-bundle variant (`assembleDevDebug -PsvFlavors`) and, before its first start,
+  point its `debug_http_host` at a port nothing listens on - a debug build that finds
+  the Metro on 8121 loads that Metro's bundle (the main App) instead of its own.
 
 ## Expo dev-client app (`com.example.svp2expo`, scheme `svp2expo`, Metro :8120)
 

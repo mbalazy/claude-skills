@@ -289,6 +289,19 @@ function AnimScreen({ onBack }: { onBack: () => void }) {
   const [smodal, setSmodal] = useState(false);
   const doSlide = () => { const to = slid ? 0 : 1; setSlid(!slid); Animated.timing(slide, { toValue: to, duration: 1500, easing: Easing.linear, useNativeDriver: true }).start(); };
   const sx = slide.interpolate({ inputRange: [0, 1], outputRange: [0, 200] });
+  // transitions longer than the 2 s --settled gap: a steady 4 s slide, and a slide that
+  // holds still for 2.5 s halfway (two reads 2 s apart can both land in the hold)
+  const slow = useRef(new Animated.Value(0)).current;
+  const doSlow = () => { slow.setValue(0); Animated.timing(slow, { toValue: 1, duration: 4000, easing: Easing.linear, useNativeDriver: true }).start(); };
+  const doHold = () => {
+    slow.setValue(0);
+    Animated.sequence([
+      Animated.timing(slow, { toValue: 0.5, duration: 300, easing: Easing.linear, useNativeDriver: true }),
+      Animated.delay(2500),
+      Animated.timing(slow, { toValue: 1, duration: 300, easing: Easing.linear, useNativeDriver: true }),
+    ]).start();
+  };
+  const slowX = slow.interpolate({ inputRange: [0, 1], outputRange: [0, 200] });
   return (
     <View style={styles.screen}>
       <Header title="Anim" id="Anim-title" onBack={onBack} />
@@ -301,6 +314,9 @@ function AnimScreen({ onBack }: { onBack: () => void }) {
       <RA.View testID="Anim-rea" style={[styles.box3, reaStyle]} />
       <NavButton id="Anim-slide" label={`slide ${slid ? 'right' : 'left'}`} onPress={doSlide} />
       <Animated.View testID="Anim-slide-box" style={[styles.box, { transform: [{ translateX: sx }] }]} />
+      <NavButton id="Anim-slow" label="slide 4 s" onPress={doSlow} />
+      <NavButton id="Anim-hold" label="slide, hold 2.5 s, slide" onPress={doHold} />
+      <Animated.View testID="Anim-slow-box" style={[styles.box, { transform: [{ translateX: slowX }] }]} />
       <NavButton id="Anim-modal-open" label="Slide modal" onPress={() => setSmodal(true)} />
       <Modal testID="Anim-modal" visible={smodal} animationType="slide" onRequestClose={() => setSmodal(false)}>
         <View style={styles.screen}><Text testID="Anim-modal-text" style={styles.body}>Slid in</Text>
