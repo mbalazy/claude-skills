@@ -6,8 +6,9 @@
 #   ANDROID_SERIAL=<serial> [OTHER_SERIAL=<serial>] android-regress.sh <outdir> [GROUP ...]
 #
 # GROUP: core (device selection, server lifecycle, session), read (elements, el, waitid,
-# waitfor, foreground, --settled on the fixture app) - default: every group.
-# read needs the fixture (tests/android-fixture) installed and running its JS, and the
+# waitfor, foreground, --settled on the fixture app), input (tapid, typeid, coordinates,
+# type, button, lock) - default: every group.
+# read and input need the fixture (tests/android-fixture) installed and running its JS, and the
 # server READY (core leaves it running). FIXTURE_PKG / FIXTURE_SCHEME default to
 # com.example.svcli / svp2cli; OTHER_PKG names a second app with the same testIDs (the
 # fixture's embedded-bundle flavor) for the case where it starts over the first.
@@ -18,7 +19,8 @@
 #
 # The cases change the device: they stop and start the UiAutomator2 server and run a
 # `uiautomator dump` loop for a few seconds. They leave the server RUNNING on
-# ANDROID_SERIAL. read revokes the fixture's notification permission to show the dialog.
+# ANDROID_SERIAL. read revokes the fixture's notification permission to show the dialog;
+# input locks and unlocks the screen and leaves the fixture app on its home screen.
 # Animation scales are read before and after: a change is a FAIL.
 # Exit 0 = every case passed, 1 = at least one FAIL.
 
@@ -31,7 +33,7 @@ U="$HERE/uia2-server.sh"
 . "$HERE/android-lib.sh"
 SERIAL="${ANDROID_SERIAL:?set ANDROID_SERIAL to the emulator the cases run on}"
 OTHER="${OTHER_SERIAL:-}"
-GROUPS_WANTED="${*:-core read}"
+GROUPS_WANTED="${*:-core read input}"
 mkdir -p "$OUT"
 PASS=0; FAIL=0; SKIP=0
 
@@ -64,6 +66,29 @@ scales() {
 
 SCALES_BEFORE="$(scales)"
 echo "target $SERIAL, other ${OTHER:-none}, groups: $GROUPS_WANTED, animation scales: $SCALES_BEFORE"
+
+# The fixture app (tests/android-fixture) the read and input groups drive.
+PKG="${FIXTURE_PKG:-com.example.svcli}"
+SCHEME="${FIXTURE_SCHEME:-svp2cli}"
+DENSITY="$("$ADB" -s "$SERIAL" shell wm density </dev/null | tr -d '\r' \
+  | awk -F': *' '/Physical density/ { p = $2 } /Override density/ { o = $2 } END { print (o != "" ? o : p) }')"
+open_screen() {   # NAME TITLE-ID
+  "$ADB" -s "$SERIAL" shell am start -W -a android.intent.action.VIEW -d "$SCHEME://screen/$1" "$PKG" >/dev/null 2>&1 </dev/null
+  "$A" waitid "$2" --timeout 15 >/dev/null 2>&1 || echo "WARN: $2 did not appear"
+}
+tap_id() {
+  local xy
+  xy="$("$A" el "$1" 2>/dev/null | python3 -c '
+import json, sys
+r = json.load(sys.stdin)[0]["rect"]; s = float(sys.argv[1]) / 160
+print("%d %d" % ((r[0] + r[2] / 2) * s, (r[1] + r[3] / 2) * s))' "$DENSITY")" || { echo "WARN: cannot tap $1"; return 1; }
+  # shellcheck disable=SC2086
+  "$ADB" -s "$SERIAL" shell input tap $xy </dev/null
+}
+lbl() {   # the label (else value) of the first element with that id
+  "$A" el "$1" 2>/dev/null | python3 -c 'import json, sys
+e = json.load(sys.stdin)[0]; print(e.get("label", e.get("value", "")))'
+}
 
 if want_group core; then
   export ANDROID_SERIAL="$SERIAL"
@@ -149,24 +174,6 @@ if want_group read; then
   # and showing its JS (Metro running): screens are opened by deep link, controls tapped
   # with `adb input` at the centre `el` reports - the driver's own tap comes later.
   export ANDROID_SERIAL="$SERIAL"
-  PKG="${FIXTURE_PKG:-com.example.svcli}"
-  SCHEME="${FIXTURE_SCHEME:-svp2cli}"
-  DENSITY="$("$ADB" -s "$SERIAL" shell wm density </dev/null | tr -d '\r' \
-    | awk -F': *' '/Physical density/ { p = $2 } /Override density/ { o = $2 } END { print (o != "" ? o : p) }')"
-  open_screen() {   # NAME TITLE-ID
-    "$ADB" -s "$SERIAL" shell am start -W -a android.intent.action.VIEW -d "$SCHEME://screen/$1" "$PKG" >/dev/null 2>&1 </dev/null
-    "$A" waitid "$2" --timeout 15 >/dev/null 2>&1 || echo "WARN: $2 did not appear"
-  }
-  tap_id() {
-    local xy
-    xy="$("$A" el "$1" 2>/dev/null | python3 -c '
-import json, sys
-r = json.load(sys.stdin)[0]["rect"]; s = float(sys.argv[1]) / 160
-print("%d %d" % ((r[0] + r[2] / 2) * s, (r[1] + r[3] / 2) * s))' "$DENSITY")" || { echo "WARN: cannot tap $1"; return 1; }
-    # shellcheck disable=SC2086
-    "$ADB" -s "$SERIAL" shell input tap $xy </dev/null
-  }
-
   case_ read_usage_waitid 2 'usage: waitid ID' -- "$A" waitid
   case_ read_usage_waitfor 2 'usage: waitfor REGEX' -- "$A" waitfor
   case_ read_bad_flag    2 'unknown flag for elements' -- "$A" elements --frob
@@ -256,6 +263,102 @@ print((\"on screen\" if e[\"on_screen\"] and y < float(sys.argv[1]) else \"NOT o
   else
     skip waitid_new_window "no OTHER_PKG (an app with the same testIDs, e.g. the fixture's embedded-bundle flavor)"
   fi
+fi
+
+if want_group input; then
+  export ANDROID_SERIAL="$SERIAL"
+  case_ in_usage_tapid   2 'usage: tapid ID' -- "$A" tapid
+  case_ in_usage_typeid  2 'usage: typeid ID TEXT' -- "$A" typeid X
+  case_ in_typeid_flag   2 'unknown flag for typeid' -- "$A" typeid X y --frob
+  case_ in_usage_type    2 'usage: type' -- "$A" type
+  case_ in_usage_button  2 'usage: button' -- "$A" button
+  case_ in_bad_button    1 'unsupported button: FOO' -- "$A" button FOO
+  case_ in_tap_fraction  2 'whole dp' -- "$A" tap 1.5 3
+  case_ in_tap_offscreen 2 'is off-screen' -- "$A" tap 5000 100
+  case_ in_longpress_bad 2 'DURATION_MS must be' -- "$A" longpress 10 10 abc
+  case_ in_drag_bad      2 'SECONDS must be' -- "$A" drag 10 10 20 20 x
+
+  "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+  open_screen components Comp-title
+  case_ tapid_hit        0 'tapped id Comp-pressable-text' -- "$A" tapid Comp-pressable-text
+  case_ tapid_effect     0 '^taps 1$' -- lbl Comp-taps
+  case_ tapid_absent     1 "no element with id 'Nope-id'" -- "$A" tapid Nope-id
+  case_ tapid_switch     0 '"checked":true' -- bash -c '"$1" tapid Comp-switch >/dev/null && sleep 0.3 && "$1" el Comp-switch' _ "$A"
+  case_ tap_dp_centre    0 '^taps 2$' -- bash -c '
+    c="$("$1" el Comp-pressable-text | python3 -c "import json,sys; r=json.load(sys.stdin)[0][\"rect\"]; print(r[0]+r[2]//2, r[1]+r[3]//2)")" || exit 1
+    "$1" tap $c >/dev/null && sleep 0.4 && "$1" el Comp-taps | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+
+  # A button sliding in from below the screen is not tapped mid-flight, and the screen
+  # it belongs to is left as it was (the modal stays open).
+  open_screen anim Anim-title
+  tap_id Anim-modal-open
+  case_ tapid_offscreen  1 'outside the screen' -- "$A" tapid Anim-modal-close
+  case_ tapid_offscreen_untouched 0 '"name":"Anim-modal-close"' -- "$A" waitid Anim-modal-close --timeout 3
+  "$ADB" -s "$SERIAL" shell input keyevent 4 </dev/null; sleep 1
+
+  "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+  open_screen gest Gest-title
+  case_ tapid_twice      1 '2 DISPLAYED elements' -- "$A" tapid Gest-dup
+  case_ gestures         0 '^taps 3 doubles 1 longs 1$' -- bash -c '
+    c="$("$1" el Gest-pad | python3 -c "import json,sys; r=json.load(sys.stdin)[0][\"rect\"]; print(r[0]+r[2]//2, r[1]+r[3]//2)")" || exit 1
+    "$1" tap $c >/dev/null && "$1" doubletap $c >/dev/null && "$1" longpress $c >/dev/null || exit 1
+    sleep 0.6; "$1" el Gest-counts | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  case_ drag_hold        0 '^drag dx (9[5-9]|10[0-5]) dy 0 held (1[12][0-9][0-9])$' -- bash -c '
+    r="$("$1" el Gest-drag | python3 -c "import json,sys; r=json.load(sys.stdin)[0][\"rect\"]; print(r[0]+20, r[1]+r[3]//2)")" || exit 1
+    set -- "$1" $r; "$1" drag "$2" "$3" $(( $2 + 100 )) "$3" 1.2 >/dev/null || exit 1
+    sleep 0.4; "$1" el Gest-drag-out | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  case_ swipe_scrolls    0 '^scroll y [1-9][0-9]+$' -- bash -c '
+    r="$("$1" el Gest-scroll | python3 -c "import json,sys; r=json.load(sys.stdin)[0][\"rect\"]; print(r[0]+r[2]//2, r[1]+r[3]-20, r[1]+20)")" || exit 1
+    set -- "$1" $r; "$1" swipe "$2" "$3" "$2" "$4" >/dev/null || exit 1
+    sleep 0.8; "$1" el Gest-scroll-y | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+
+  # Text: the server sets it whole, so nothing is lost and Unicode arrives intact.
+  "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+  open_screen inputs Input-title
+  _word="$(python3 -c 'print("word" * 25)')"
+  for _f in controlled uncontrolled; do
+    case_ "typeid_${_f}_100"   0 "typed into id Input-$_f: '$_word' \(read back\)" -- "$A" typeid "Input-$_f" "$_word"
+    case_ "typeid_${_f}_pl"    0 "'zażółć' \(read back\)" -- "$A" typeid "Input-$_f" 'zażółć'
+    case_ "typeid_${_f}_emoji" 0 "'😀 emoji' \(read back\)" -- "$A" typeid "Input-$_f" '😀 emoji'
+    case_ "typeid_${_f}_quote" 0 'O.{1,2}Brien "x"' -- "$A" typeid "Input-$_f" "O'Brien \"x\""
+    case_ "typeid_${_f}_mirror" 0 '^\[O.Brien "x"\]$' -- lbl "Input-$_f-mirror"
+  done
+  case_ typeid_append    0 'O.{1,2}Brien "x" tail. \(read back\)' -- "$A" typeid Input-controlled ' tail' --append
+  case_ typeid_mask      1 "holds '\(512\) 555-0199', expected '5125550199'" -- "$A" typeid Input-phone 5125550199
+  case_ typeid_expect    0 "'\(512\) 555-0199' \(read back\)" -- "$A" typeid Input-phone 5125550199 --expect '(512) 555-0199'
+  case_ typeid_empty     0 "Input-controlled: '' \(read back\)" -- "$A" typeid Input-controlled ''
+  case_ typeid_empty_el  0 '"value":"","hint":"Controlled"' -- "$A" el Input-controlled
+  case_ typeid_append_placeholder 0 "Input-controlled: 'abc' \(read back\)" -- "$A" typeid Input-controlled abc --append
+  case_ typeid_return    0 'then Return' -- "$A" typeid Input-controlled $'go\n'
+  case_ typeid_not_field 1 'not a text field' -- "$A" typeid Input-counts x
+  # A fresh start: no field has focus and no keyboard is up (a BACK with no keyboard
+  # would send the app away instead).
+  "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+  open_screen inputs Input-title
+  case_ type_no_focus    1 'no text field has keyboard focus' -- "$A" type zz
+  tap_id Input-uncontrolled; sleep 0.6
+  "$A" typeid Input-uncontrolled '' >/dev/null 2>&1
+  case_ type_focused     0 'appended at its end' -- "$A" type 'ab ża'
+  case_ type_focused_back 0 '^\[ab ża\]$' -- lbl Input-uncontrolled-mirror
+  "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+
+  # BACK: the app's BackHandler, a Modal's onRequestClose, and on the home screen the
+  # app goes to the background with its process alive.
+  open_screen back Back-title
+  case_ back_handler     0 '^back presses 1$' -- bash -c '"$1" button BACK >/dev/null && sleep 0.5 && "$1" el Back-count | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  tap_id Back-open-modal; "$A" waitid Back-modal-text --timeout 5 >/dev/null 2>&1
+  case_ back_modal       0 '^modal closes 1$' -- bash -c '"$1" button BACK >/dev/null && sleep 0.8 && "$1" el Back-modal-closes | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  open_screen home Home-title
+  case_ back_home        0 '^alive [0-9]+' '!'"^$PKG pid" -- bash -c '"$1" button BACK >/dev/null && sleep 1 && "$1" foreground && echo "alive $("$2" -s "$3" shell pidof "$4" </dev/null)"' _ "$A" "$ADB" "$SERIAL" "$PKG"
+
+  case_ locked_before    0 '^false$' -- "$A" locked
+  case_ lock             0 '^locked$' -- "$A" lock
+  sleep 1
+  case_ locked_after     0 '^true$' -- "$A" locked
+  case_ lock_again       0 '^true$' -- bash -c '"$1" lock >/dev/null && sleep 0.5 && "$1" locked' _ "$A"
+  case_ unlock           0 '^unlocked$' -- "$A" unlock
+  case_ locked_unlocked  0 '^false$' -- "$A" locked
+  open_screen home Home-title
 fi
 
 SCALES_AFTER="$(scales)"
