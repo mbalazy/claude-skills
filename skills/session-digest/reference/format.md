@@ -40,6 +40,8 @@ Both files go to ONE directory next to the evidence:
 project `~/.claude/pm/<slug>/.shift/evidence/`; without one
 `$CLAUDE_CONFIG_DIR/digests/` (`scripts/inventory.py` prints the suggestion).
 A re-run overwrites both files; the previous pair is moved to `previous/`.
+The inventory and the ledger the digest was built from stay in `work/` next
+to them (`S<n>` in the digest = message n of `work/shown-messages.md`).
 
 ## Chat answer - sections, in this order
 

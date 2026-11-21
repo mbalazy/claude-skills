@@ -12,6 +12,8 @@ Read-only. Do not edit, move or create any file except <ledger-path>.
 
 Question (asked by <who>): "<the question in their words>"
 Ticket: <key and summary, or none>
+The question's own source (pinned ticket copy with criteria and comments,
+the pasted message): <paths> - criteria become the rows of the table.
 
 Files that answer it, newest first:
 <current files, full paths>
@@ -21,6 +23,9 @@ Superseded versions (read only to see what changed):
 <superseded files>
 What the session showed the user earlier, numbered S1..Sn:
 <work-dir>/shown-messages.md
+(Optional) Backstage that records a decision handed to the user, and
+read-only git in <repo> (`git show --stat`, `git log`, `git branch -a
+--contains`; never checkout/switch/stash/reset) for the commits it names.
 
 Write ONE ledger entry to <ledger-path> in the format below. Every claim
 carries the path and heading it came from. State only what the files say;

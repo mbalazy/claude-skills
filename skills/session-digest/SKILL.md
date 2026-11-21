@@ -37,11 +37,17 @@ answer as it stands NOW, in the shape `reference/format.md` defines.
    `phone-plan.md` into the output directory the inventory suggests (move an
    existing pair to `previous/` first). For `phone-plan.md`, read the device
    sections the ledger entries located and merge them: setup once, blocks by
-   topic, every step self-contained.
+   topic (ordered to avoid rebuilds), every step self-contained. More than
+   about three sections or 60 steps: give the merge to one fresh agent - its
+   brief is format.md's `phone-plan.md` section plus the located sections
+   (path + heading, newest only) - and write `digest.md` meanwhile.
 4. **Verify** - one fresh agent checks both files against their sources;
    apply what its evidence supports.
    -> `prompts/verify.md`
-5. **Answer** - print the chat answer (format.md, "Chat answer"); its last
+5. **Keep the work** - copy `inventory.md`, `asks.md`, `shown-messages.md`
+   and `ledger/` into `<out-dir>/work/`, so the `S<n>` references and the
+   sources survive the temp dir.
+6. **Answer** - print the chat answer (format.md, "Chat answer"); its last
    line under `Na dole` names both files with full paths.
 
 Before printing, read section 1 once as the user who was not there: a line
@@ -57,3 +63,4 @@ rewritten, not footnoted.
 | `prompts/extract.md` | the ledger entry and the extraction agent's brief |
 | `prompts/verify.md` | the fresh verifier's brief |
 | `scripts/inventory.py` | transcript -> `inventory.md`, `asks.md`, `shown-messages.md` |
+| `reference/benchmarks.md` | cost and time of a real run, and what it caught |
