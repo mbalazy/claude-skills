@@ -9,7 +9,8 @@
 # waitfor, foreground, --settled on the fixture app), input (tapid, typeid, coordinates,
 # type, button, lock), app (launch, relaunch, terminate, activate, openurl, screenshot,
 # orientation, alert, wait, do), rig (android-rig-check.sh verdicts; needs FIXTURE_REPO,
-# the fixture's tree, served by a Metro on RIG_PORT, default 8121) - default: every group.
+# the fixture's tree, served by a Metro on RIG_PORT, default 8121; on a phone also the
+# adb reverse cases, which touch only rules the run itself added) - default: every group.
 # read, input and app need the fixture (tests/android-fixture) installed and running its JS, and the
 # server READY (core leaves it running). FIXTURE_PKG / FIXTURE_SCHEME default to
 # com.example.svcli / svp2cli; OTHER_PKG names a second app with the same testIDs (the
@@ -73,10 +74,8 @@ scales() {
   "$ADB" -s "$SERIAL" shell 'settings get global window_animation_scale; settings get global transition_animation_scale; settings get global animator_duration_scale' | tr -d '\r' | tr '\n' ' '
 }
 
-# An emulator by its serial or by the property every emulator image sets.
 IS_EMULATOR=0
-case "$SERIAL" in emulator-*) IS_EMULATOR=1 ;; esac
-[ "$IS_EMULATOR" = 1 ] || [ "$("$ADB" -s "$SERIAL" shell getprop ro.kernel.qemu </dev/null | tr -d '\r')" != 1 ] || IS_EMULATOR=1
+android_is_emulator "$SERIAL" && IS_EMULATOR=1
 BUILD_TYPE="$("$ADB" -s "$SERIAL" shell getprop ro.build.type </dev/null | tr -d '\r')"
 
 SCALES_BEFORE="$(scales)"
@@ -535,6 +534,11 @@ if want_group rig; then
   RC="$HERE/android-rig-check.sh"
   RREPO="${FIXTURE_REPO:-}"
   RPORT="${RIG_PORT:-8121}"
+  RH="$(android_host_for "$SERIAL" 0)"; RH="${RH%:0}"   # the Mac as the device sees it
+  # A phone: the reverse rules there now are not this run's to remove.
+  RV_BEFORE=""
+  [ "$IS_EMULATOR" = 1 ] || RV_BEFORE="$("$ADB" -s "$SERIAL" reverse --list </dev/null | tr -d '\r' | awk '{ print $2 }')"
+  rv_ours() { [ "$IS_EMULATOR" = 0 ] && ! grep -qx "tcp:$1" <<< "$RV_BEFORE"; }
   _t="$(mktemp -d)"; echo "console.log('x');" > "$_t/index.js"
   case_ rig_usage          2 'unknown option: --frob' -- "$RC" --frob
   case_ rig_timeout_bad    2 'must be whole seconds' -- "$RC" --timeout x
@@ -555,11 +559,30 @@ if want_group rig; then
     # The redirect keeps every other key of the prefs file.
     "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
     printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" '<map>' '    <int name="regress_keep" value="7" />' \
-      "    <string name=\"debug_http_host\">10.0.2.2:$RPORT</string>" '</map>' \
+      "    <string name=\"debug_http_host\">$RH:$RPORT</string>" '</map>' \
       | "$ADB" -s "$SERIAL" shell "run-as $PKG sh -c 'cat > shared_prefs/${PKG}_preferences.xml'"
-    case_ rig_dead_port    1 'nothing listens on :8199' "debug_http_host: was 10.0.2.2:$RPORT, now 10.0.2.2:8199" -- "$RC" --repo "$RREPO" --package "$PKG" --port 8199 --timeout 8
+    case_ rig_dead_port    1 'nothing listens on :8199' "debug_http_host: was $RH:$RPORT, now $RH:8199" -- "$RC" --repo "$RREPO" --package "$PKG" --port 8199 --timeout 8
     case_ rig_prefs_kept   0 'regress_keep' -- "$ADB" -s "$SERIAL" shell "run-as $PKG cat shared_prefs/${PKG}_preferences.xml"
-    case_ rig_back         0 '^RIG OK' "was 10.0.2.2:8199, now 10.0.2.2:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT"
+    case_ rig_back         0 '^RIG OK' "was $RH:8199, now $RH:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT"
+    # A phone reaches Metro through adb reverse: the check adds a missing rule, --reload
+    # (which writes nothing) names it, and a rule that leads elsewhere is left alone.
+    if rv_ours "$RPORT"; then
+      "$ADB" -s "$SERIAL" reverse --remove "tcp:$RPORT" </dev/null >/dev/null 2>&1
+      case_ rig_reload_no_rule 1 "no adb reverse rule for tcp:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT" --reload
+      case_ rig_rule_added   0 '^RIG OK' "reverse: was none, now tcp:$RPORT -> Mac tcp:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port "$RPORT"
+    else
+      for c in rig_reload_no_rule rig_rule_added; do
+        skip "$c" "$([ "$IS_EMULATOR" = 1 ] && echo "an emulator needs no reverse rule" || echo "tcp:$RPORT was reversed before the run - not this run's to remove")"
+      done
+    fi
+    if rv_ours 8198; then
+      "$ADB" -s "$SERIAL" reverse tcp:8198 "tcp:$RPORT" </dev/null >/dev/null 2>&1
+      case_ rig_rule_elsewhere 1 "tcp:8198 is reversed to the Mac's tcp:$RPORT" -- "$RC" --repo "$RREPO" --package "$PKG" --port 8198
+      case_ rig_rule_kept    0 "^tcp:$RPORT\$" -- bash -c '"$1" -s "$2" reverse --list </dev/null | awk "\$2 == \"tcp:8198\" { print \$3 }"' _ "$ADB" "$SERIAL"
+      "$ADB" -s "$SERIAL" reverse --remove tcp:8198 </dev/null >/dev/null 2>&1
+    else
+      for c in rig_rule_elsewhere rig_rule_kept; do skip "$c" "$([ "$IS_EMULATOR" = 1 ] && echo "an emulator needs no reverse rule" || echo "tcp:8198 was reversed before the run")"; done
+    fi
     if [ -n "${OTHER_PKG:-}" ] && "$ADB" -s "$SERIAL" shell unzip -l "$("$ADB" -s "$SERIAL" shell pm path "$OTHER_PKG" </dev/null | sed -n 's/^package://p' | tr -d '\r')" </dev/null 2>/dev/null | grep 'assets/index.android.bundle' >/dev/null; then
       case_ rig_embedded   1 'runs its EMBEDDED bundle' 'SUSPECT' -- "$RC" --repo "$RREPO" --package "$OTHER_PKG" --port 8199 --timeout 20
       case_ rig_embedded_ok 0 '^RIG OK' 'was NOT used this time' -- "$RC" --repo "$RREPO" --package "$OTHER_PKG" --port "$RPORT"
@@ -574,10 +597,15 @@ if want_group rig; then
       skip rig_other_tree "no other tree's Metro on :$_ep"
     fi
   else
-    for c in rig_ok rig_marker_gone rig_dead_port rig_prefs_kept rig_back rig_embedded rig_embedded_ok rig_other_tree; do
+    for c in rig_ok rig_marker_gone rig_dead_port rig_prefs_kept rig_back rig_reload_no_rule rig_rule_added \
+             rig_rule_elsewhere rig_rule_kept rig_embedded rig_embedded_ok rig_other_tree; do
       skip "$c" "FIXTURE_REPO not set"
     done
   fi
+  # The reverse rules the checks above added for ports nothing should keep using.
+  for _p in 8199 "${EXPO_PORT:-8120}"; do
+    rv_ours "$_p" && "$ADB" -s "$SERIAL" reverse --remove "tcp:$_p" </dev/null >/dev/null 2>&1
+  done
 fi
 
 SCALES_AFTER="$(scales)"
