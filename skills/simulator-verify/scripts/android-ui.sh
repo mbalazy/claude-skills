@@ -37,7 +37,7 @@
 #                                           #  An Expo dev-client (an exp+<slug> scheme) is started with its
 #                                           #  exp+<slug>://expo-development-client/?url=... link, so it lands in the app
 #                                           #  and not on the launcher's server list; the server is the app's own
-#                                           #  debug_http_host, else 10.0.2.2:$METRO_PORT. Its FIRST start after an install
+#                                           #  debug_http_host, else $METRO_PORT on the Mac. Its FIRST start after an install
 #                                           #  covers the app with the dev menu's intro sheet: tap its Continue once.
 #   android-ui.sh openurl URL [--package PACKAGE]   # deep link INTO that package ($ANDROID_PACKAGE when no flag):
 #                                           #  without one, two apps with the scheme bring up the system chooser. A link
@@ -236,13 +236,14 @@ expo_scheme() {
 }
 
 # The dev server a dev-client should load: its own debug_http_host pref (the launcher
-# writes it on every start through its link), else 10.0.2.2:$METRO_PORT (the emulator's
-# address of the host). Called in $(...): pass the exit on.
+# writes it on every start through its link), else $METRO_PORT on the Mac as the device
+# sees it (10.0.2.2 from an emulator, localhost through adb reverse from a phone). Called
+# in $(...): pass the exit on.
 dev_server() {
   local h
   h="$("$ADB" -s "$_MEMO_SERIAL" shell "run-as $1 cat shared_prefs/$1_preferences.xml" 2>/dev/null </dev/null \
        | tr -d '\r' | sed -nE 's/.*<string name="debug_http_host">([^<]+)<.*/\1/p' | head -1 || true)"
-  if [ -z "$h" ] && [ -n "${METRO_PORT:-}" ]; then h="10.0.2.2:$METRO_PORT"; fi
+  if [ -z "$h" ] && [ -n "${METRO_PORT:-}" ]; then h="$(android_host_for "$_MEMO_SERIAL" "$METRO_PORT")"; fi
   if [ -z "$h" ]; then
     echo "ERROR: $1 is an Expo dev-client with no debug_http_host pref yet and \$METRO_PORT is unset -" >&2
     echo "  it would start on the launcher's server list, not in the app. Set METRO_PORT to its dev server's port." >&2

@@ -1,5 +1,5 @@
 #!/bin/bash
-# android-rig-check.sh - prove the Android emulator is running YOUR code before you trust
+# android-rig-check.sh - prove the Android emulator or phone is running YOUR code before you trust
 # any reading. The Android counterpart of rig-check.sh, with the same contract: it does not
 # check causes, it checks the EFFECT. A unique marker goes in as the first line of the
 # entry file, the app is cold-started, and the marker is read back out of logcat
@@ -14,8 +14,8 @@
 #                       without the config reads the main worktree's)
 #     --entry FILE      entry file to mark, relative to repo (default: the file `main` names in
 #                       package.json when it exists - index.ts in an Expo app - else index.js)
-#     --serial SERIAL   emulator (default: $ANDROID_SERIAL, else the only attached device;
-#                       several and none named = exit 2 with the list - never a guess)
+#     --serial SERIAL   emulator or phone on USB (default: $ANDROID_SERIAL, else the only
+#                       attached device; several and none named = exit 2 with the list)
 #     --port N          Metro port (default: the Metro whose cwd is <repo>, else refused)
 #     --reload          trigger with the app's reload broadcast instead of a cold start - only
 #                       on an app that is already up: a reload during startup left a lasting
@@ -24,11 +24,13 @@
 #
 # Where the app loads JS from: a debug build reads the Metro host from the
 # `debug_http_host` string in its shared_prefs (there are no launch arguments on Android).
-# This check sets it to 10.0.2.2:<port> (the emulator's address of this Mac) by merging that
-# one key into the file - every other key survives - and LEAVES it set, so the next plain
-# start comes back on the same Metro. The output says what it was before. An Expo
-# dev-client (an exp+<slug> scheme) is started through its exp+<slug>://expo-development-client
-# link instead, which writes the same pref itself.
+# This check sets it to 10.0.2.2:<port> on an emulator (its address of this Mac), and to
+# localhost:<port> on a phone, which reaches the Mac through an `adb reverse tcp:<port>
+# tcp:<port>` rule: the check adds that rule when it is missing, never replaces one that
+# leads elsewhere, and leaves it in place. The pref is merged as one key - every other key
+# survives - and LEFT set, so the next plain start comes back on the same Metro. The output
+# says what both were before. An Expo dev-client (an exp+<slug> scheme) is started through
+# its exp+<slug>://expo-development-client link instead, which writes the same pref itself.
 #
 # Exit: 0 = RIG OK, 1 = RIG DEAD, 2 = bad usage or an ambiguous device.
 # The marker is always removed again, including on Ctrl-C or an error mid-run.
@@ -54,7 +56,7 @@ while [ "$#" -gt 0 ]; do
     --port)    PORT="${2:-}"; PORT_EXPLICIT=1; shift 2 ;;
     --reload)  TRIGGER="reload"; shift ;;
     --timeout) TIMEOUT="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -129,11 +131,9 @@ note "package: $PKG"
 
 # --- device ---------------------------------------------------------------------------------
 SERIAL="$(android_serial)" || exit $?
-case "$SERIAL" in
-  emulator-*) ;;
-  *) verdict DEAD "$SERIAL is not an emulator - this check drives emulators only (a phone reaches the Mac's Metro through adb reverse, which it does not set up)" ;;
-esac
-note "device:  $SERIAL ($(android_name "$SERIAL"))"
+IS_EMU=""
+android_is_emulator "$SERIAL" && IS_EMU=1
+note "device:  $SERIAL ($(android_name "$SERIAL"), $([ -n "$IS_EMU" ] && echo emulator || echo "physical device - Metro through adb reverse"))"
 
 # --- Metro listeners -----------------------------------------------------------------------
 # Who listens where, and on which tree: a Metro serving another tree feeds the app someone
@@ -258,7 +258,30 @@ fi
 PORT_OURS=""
 case "$REPO_PORTS" in *" $PORT "*) PORT_OURS=1 ;; esac
 [ -n "$PORT_OURS" ] || note "WARN:    no Metro of this repo on :$PORT; using it as told - it may belong to another tree or session"
-HOST="10.0.2.2:$PORT"
+HOST="$(android_host_for "$SERIAL" "$PORT")"
+
+# --- adb reverse (a physical device) ---------------------------------------------------------
+# A phone reaches the Mac's port only through a reverse rule on its own adb transport. The
+# check adds the rule for this port when it is missing and leaves it (every later load of
+# the app needs it), and never touches another rule: one for this device port that leads to
+# another Mac port is refused, not replaced. --reload writes nothing, so there a missing
+# rule is the verdict.
+reverse_of() { "$ADB" -s "$SERIAL" reverse --list </dev/null 2>/dev/null | tr -d '\r' | awk -v d="tcp:$1" '$2 == d { print $3; exit }'; }
+if [ -z "$IS_EMU" ]; then
+  RULE="$(reverse_of "$PORT")"
+  if [ -n "$RULE" ] && [ "$RULE" != "tcp:$PORT" ]; then
+    verdict DEAD "the phone's tcp:$PORT is reversed to the Mac's $RULE, not to :$PORT - a rule this check leaves alone. Remove it (adb -s $SERIAL reverse --remove tcp:$PORT) or pass --port ${RULE#tcp:}."
+  elif [ -n "$RULE" ]; then
+    note "reverse: tcp:$PORT -> Mac tcp:$PORT (was there, kept)"
+  elif [ "$TRIGGER" = reload ]; then
+    verdict DEAD "no adb reverse rule for tcp:$PORT on $SERIAL - the app cannot reach the Mac's Metro, and --reload changes nothing. Run the check without --reload (it adds the rule), or: adb -s $SERIAL reverse tcp:$PORT tcp:$PORT"
+  else
+    "$ADB" -s "$SERIAL" reverse "tcp:$PORT" "tcp:$PORT" </dev/null >/dev/null 2>&1 || true
+    [ "$(reverse_of "$PORT")" = "tcp:$PORT" ] \
+      || verdict DEAD "could not add the adb reverse rule tcp:$PORT on $SERIAL - the phone cannot reach the Mac's Metro"
+    note "reverse: was none, now tcp:$PORT -> Mac tcp:$PORT (left set; remove: adb -s $SERIAL reverse --remove tcp:$PORT)"
+  fi
+fi
 
 # --- the host pref --------------------------------------------------------------------------
 PREFS_FILE="shared_prefs/${PKG}_preferences.xml"
@@ -287,6 +310,12 @@ if [ -z "$EXPO_SCHEME" ] && [ "$TRIGGER" = cold ]; then
   NOW="$(read_prefs | python3 "$PREFS" get debug_http_host || true)"
   [ "$NOW" = "$HOST" ] || verdict DEAD "could not set debug_http_host of $PKG to $HOST (it reads '${NOW:-nothing}')"
   note "debug_http_host: was ${WAS:-none}, now $NOW (left set)"
+fi
+
+# Nothing at all listens on the port and the APK has no bundle of its own: the start can only
+# end on an error screen, so the cause is known now - waiting out --timeout would add nothing.
+if [ -z "$EMBEDDED" ] && [ -z "$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null)" ]; then
+  verdict DEAD "nothing listens on :$PORT on this Mac, no Metro at all there - the app has nothing to load. Start this tree's Metro on :$PORT (or pass the port it runs on)."
 fi
 
 # --- marker -----------------------------------------------------------------------------------
@@ -364,6 +393,8 @@ while [ -z "$APP_DIED" ] && [ "$WAITED" -lt "$TIMEOUT" ]; do
   if log_since "$T0" -b crash | has 'FATAL EXCEPTION|Fatal signal'; then APP_DIED=1; break; fi
   # A thrown bundle never logs the marker; once the error is in, waiting longer adds nothing.
   if log_since "$T0" -s ReactNativeJS:E | has 'runtime not ready'; then sleep 1; break; fi
+  # Nor does an app that found no Metro and fell back to its embedded bundle.
+  if [ -n "$EMBEDDED" ] && log_since "$T0" | has 'isMetroRunning\(\): Async result = false|packager does not seem to be running'; then break; fi
 done
 
 restore

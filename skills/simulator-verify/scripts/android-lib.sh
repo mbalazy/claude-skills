@@ -74,6 +74,19 @@ android_serial() {
   echo "${all%% *}"
 }
 
+# Exit 0 for an emulator: its serial (emulator-NNNN) or the property every emulator image
+# sets. Anything else is a physical device, which reaches the Mac only through `adb reverse`.
+android_is_emulator() {
+  case "$1" in emulator-*) return 0 ;; esac
+  [ "$("$ADB" -s "$1" shell getprop ro.kernel.qemu 2>/dev/null </dev/null | tr -d '\r' || true)" = 1 ]
+}
+
+# The address of the Mac's port N as the device sees it: 10.0.2.2 from an emulator,
+# localhost (through an `adb reverse tcp:N tcp:N` rule) from a physical device.
+android_host_for() {   # SERIAL PORT
+  if android_is_emulator "$1"; then echo "10.0.2.2:$2"; else echo "localhost:$2"; fi
+}
+
 # The device must be online and booted; prints nothing, exits 1 with the cause.
 android_assert_ready() {
   local st boot
