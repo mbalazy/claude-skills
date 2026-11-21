@@ -47,7 +47,7 @@ What it does, in order: lists every listener on 8080-8199 with its working direc
 
 ## A phone on the USB cable
 
-The driver needs nothing phone-specific: `ANDROID_SERIAL=<SERIAL>` (from `adb devices`), `uia2-server.sh ensure`, then the same commands. Measured on one retail phone (dates and versions in `benchmarks.md`); what differs from an emulator:
+The driver needs nothing phone-specific beyond USB debugging switched on in the phone's Developer options and this Mac accepted at the phone's prompt: `ANDROID_SERIAL=<SERIAL>` (from `adb devices`), `uia2-server.sh ensure`, then the same commands. Measured on one retail phone (dates and versions in `benchmarks.md`); what differs from an emulator:
 
 - **Scale comes from the device.** `wm density` 480 = scale 3.0 (the emulator profile: 2.625). Every rect the driver printed equalled the JS layout (`rn-devtools.mjs tree --json`) to the dp; the emulator's scale would have put them off by up to 108 dp.
 - **Permissions cannot be reset from adb on some vendor builds.** `pm grant`, `pm revoke` and `pm clear` exit with a `SecurityException` (the shell lacks `REVOKE_RUNTIME_PERMISSIONS` / `CLEAR_APP_USER_DATA`) unless a vendor developer option allows it - a phone setting, so it stays as it is. The driver uses none of them, but a dialog cannot be brought back on demand: after Allow, or after a second Don't allow, the app gets no dialog until it is uninstalled and installed again (`install -r` keeps the answer; the uninstall also deletes its `debug_http_host` pref, which the rig check's cold start writes again). One Don't allow leaves the dialog askable once more. `alert`, `alert buttons`, `alert accept` and `alert dismiss` work on the Google permission controller, whose button ids keep the AOSP prefix.

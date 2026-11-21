@@ -1,6 +1,6 @@
 ---
 name: simulator-verify
-description: Verify a view or feature on the live iOS simulator - or on a physical iPhone over USB, driven by the same scripts - or on an Android emulator, of a React Native / Expo app. Launches the dev build, navigates to the target screen, inspects the accessibility element tree + screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "sprawdź na symulatorze", "sprawdź na telefonie", "zweryfikuj ekran X", "sprawdź na emulatorze", "czy to działa na symulatorze". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
+description: Verify a view or feature on the live iOS simulator - or on a physical iPhone over USB, driven by the same scripts - or on an Android emulator or phone, of a React Native / Expo app. Launches the dev build, navigates to the target screen, inspects the accessibility element tree + screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "sprawdź na symulatorze", "sprawdź na telefonie", "zweryfikuj ekran X", "sprawdź na emulatorze", "czy to działa na symulatorze". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
 ---
 
 # simulator-verify
@@ -153,7 +153,7 @@ If WebDriverAgent will not come up, read the driver's diagnostics first - they a
 | `references/rig-check.md` | a rig check is not `RIG OK`, or you need its flags (`--launch-arg`, `--no-jslocation`, `--host`) |
 | `references/driver.md` | before your first batch in a session; a command surprised you; `rn-devtools.mjs` |
 | `references/device.md` | the target is a physical iPhone |
-| `references/android.md` | the target is an Android emulator: setup, rig check verdicts, iOS vs Android command differences, tested versions, what is unverified, pitfalls |
+| `references/android.md` | the target is an Android emulator or phone: setup, the phone on USB and what only a person there can do, rig check verdicts, iOS vs Android command differences, tested versions, what is unverified, pitfalls |
 | `references/wda.md` | WebDriverAgent will not start, a new simulator, the pinned WDA version, updating WDA |
 | `references/measurement.md` | pixel-level alignment, overlap / collapse, anchored overlays, reading logs and layout numbers out of the app |
 | `references/gotchas.md` | a result surprised you; wrong Metro, stale binary, persisted store, deep links, typing traps, side effects, simulator limits |
