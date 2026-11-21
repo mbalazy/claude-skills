@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests of u2_tree.py and u2_el.py on a synthetic /source (no device)."""
+import argparse
+import io
 import os
 import sys
 import unittest
@@ -170,6 +172,95 @@ class Foreground(unittest.TestCase):
         acts = "    topResumedActivity=ActivityRecord{9 u0 %s/.MainActivity t5}\n    * Hist  #0: ActivityRecord{9 u0 %s/.MainActivity t5}\n" % (PKG, PKG)
         self.assertEqual(u2_el.front(acts), ((PKG, ".MainActivity"), (PKG, ".MainActivity")))
         self.assertEqual(u2_el.front("nothing resumed"), (None, None))
+
+
+class FakeDev:
+    """A device whose tree and focus are given; any server call is a test failure unless
+    `calls` is a list, which then records them."""
+    def __init__(self, sources, focus=("Window{1 u0 %s/x}" % PKG, PKG), calls=None):
+        self.sources = list(sources) if isinstance(sources, list) else [sources]
+        self._focus = focus
+        self.calls = calls
+        self.u = self
+
+    def source(self):
+        return self.sources.pop(0) if len(self.sources) > 1 else self.sources[0]
+
+    def focus(self):
+        return self._focus
+
+    sid = "s1"
+
+    def call(self, method, path, body=None):
+        if self.calls is None:
+            raise AssertionError("unexpected server call %s %s" % (method, path))
+        self.calls.append((method, path, body))
+        return {"value": None}
+
+    @staticmethod
+    def error_of(resp):
+        return None
+
+
+class Input(unittest.TestCase):
+    def setUp(self):
+        self.err = io.StringIO()
+        self._stderr, sys.stderr = sys.stderr, self.err
+        self._stdout, sys.stdout = sys.stdout, io.StringIO()
+
+    def tearDown(self):
+        sys.stderr, sys.stdout = self._stderr, self._stdout
+
+    def test_the_one_hit_is_picked(self):
+        hit = u2_el.pick_hit(FakeDev(SCREEN), "Comp-text", 2.625, "tapid", "tapped", "")
+        self.assertEqual(hit["name"], "Comp-text")
+
+    def test_absent_offscreen_and_other_window_are_refused(self):
+        self.assertIsNone(u2_el.pick_hit(FakeDev(SCREEN), "Nope", 2.625, "tapid", "tapped", ""))
+        self.assertIn("no element with id 'Nope'", self.err.getvalue())
+        self.assertIsNone(u2_el.pick_hit(FakeDev(SCREEN), "Modal-close", 2.625, "tapid", "tapped", ""))
+        self.assertIn("outside the screen", self.err.getvalue())
+        other = ("Window{2 u0 com.example.other/x}", "com.example.other")
+        self.assertIsNone(u2_el.pick_hit(FakeDev(SCREEN, focus=other), "Comp-text", 2.625, "tapid", "tapped", ""))
+        self.assertIn("focused window", self.err.getvalue())
+
+    def test_two_places_are_refused_one_place_twice_is_one(self):
+        two = source(node("android.widget.Button", "[0,100][500,200]", rid="Dup"),
+                     node("android.widget.Button", "[0,300][500,400]", rid="Dup"))
+        self.assertIsNone(u2_el.pick_hit(FakeDev(two), "Dup", 2.625, "tapid", "tapped", ""))
+        self.assertIn("2 DISPLAYED elements", self.err.getvalue())
+        same = source(node("android.view.ViewGroup", "[0,100][500,200]", rid="Dup"),
+                      node("android.widget.Button", "[0,100][500,200]", rid="Dup"))
+        self.assertIsNotNone(u2_el.pick_hit(FakeDev(same), "Dup", 2.625, "tapid", "tapped", ""))
+
+    def test_typeid_refuses_a_non_field_before_any_server_call(self):
+        a = argparse.Namespace(id="Comp-text", text="x", append=False, expect=None, settle=0.1, scale=2.625)
+        self.assertEqual(u2_el.cmd_type(FakeDev(SCREEN), a), 1)
+        self.assertIn("not a text field", self.err.getvalue())
+
+    def test_read_back_waits_for_the_masked_value(self):
+        def field(v):
+            return source(node("android.widget.EditText", "[0,100][500,200]", rid="Phone", text=v))
+        dev = FakeDev([field("5125550199"), field("(512) 555-0199"), field("(512) 555-0199")])
+        self.assertEqual(u2_el.read_back(dev, "Phone", 2.625, settle=2, gap=0.01), "(512) 555-0199")
+
+    def test_typing_at_focus_needs_a_focused_field(self):
+        a = argparse.Namespace(text="ab", scale=2.625)
+        self.assertEqual(u2_el.cmd_type_focused(FakeDev(SCREEN), a), 1)
+        self.assertIn("no text field has keyboard focus", self.err.getvalue())
+
+    def test_focused_field_is_an_edittext_with_focus(self):
+        self.assertTrue(u2_el.is_focused_field({"focused": "true", "class": "android.widget.EditText"}))
+        self.assertFalse(u2_el.is_focused_field({"focused": "true", "class": "android.widget.Button"}))
+        self.assertFalse(u2_el.is_focused_field({"focused": "false", "class": "android.widget.EditText"}))
+
+    def test_gestures_carry_their_timing(self):
+        dbl = u2_el.gesture_body("doubletap", [538, 428])["actions"][0]["actions"]
+        self.assertEqual([x["type"] for x in dbl].count("pointerDown"), 2)
+        self.assertIn({"type": "pause", "duration": 100}, dbl)
+        drag = u2_el.gesture_body("drag", [10, 20, 300, 40], hold_ms=1200)["actions"][0]["actions"]
+        self.assertIn({"type": "pause", "duration": 1200}, drag)
+        self.assertEqual(drag[-2], {"type": "pointerMove", "duration": 300, "x": 300, "y": 40})
 
 
 if __name__ == "__main__":

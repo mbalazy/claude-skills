@@ -14,6 +14,18 @@
 #                                           #  in the focused app's window (--exists: anywhere in the tree - cannot tell
 #                                           #  "scrolled out of a list" from "absent": off-screen rows have no node)
 #   android-ui.sh el ID                     # type/label/value/checked/hint/rect/displayed/package of every element with that testID
+#   android-ui.sh tapid ID                  # tap the one element with that testID that waitid would accept (refused: none, or two apart)
+#   android-ui.sh typeid ID TEXT [--append] [--expect VALUE]   # set a field's text by testID, then read it back (exit 1 if it differs);
+#                                           #  a trailing newline is Return, pressed after the read-back
+#   android-ui.sh tap X Y                   # coordinates in dp (whole numbers, as `elements` prints them)
+#   android-ui.sh doubletap X Y
+#   android-ui.sh longpress X Y [DURATION_MS]
+#   android-ui.sh swipe X1 Y1 X2 Y2 [DURATION_MS]
+#   android-ui.sh drag X1 Y1 X2 Y2 [SECONDS]    # press, hold SECONDS (default 0.5), drag (reordering, sliders)
+#   android-ui.sh type "text"               # into the field with keyboard focus, APPENDED at its end (not at the cursor);
+#                                           #  exit 1 when no field has focus - prefer typeid when the field has a testID
+#   android-ui.sh button HOME|ENTER|VOLUME_UP|VOLUME_DOWN|BACK   # BACK is Android's system back (no iOS twin)
+#   android-ui.sh lock | unlock | locked    # screen off / on + keyguard dismissed (no PIN); `locked` prints true/false
 #   android-ui.sh waitfor REGEX [--timeout S] [--all]   # poll the tree until it matches (beats a fixed sleep)
 #   android-ui.sh foreground                # package + pid + activity of the app in front; a system window holding focus is named
 #   android-ui.sh devices                   # attached devices: serial, AVD name (emulator) or model, state
@@ -94,6 +106,54 @@ scale() {
     [[ "$d" =~ ^[0-9]+$ ]] && [ "$d" -gt 0 ] || { echo "ERROR: could not read the screen density of $_MEMO_SERIAL (wm density)" >&2; exit 1; }
     _MEMO_SCALE="$(awk -v d="$d" 'BEGIN { printf "%.4f", d / 160 }')"
   fi
+}
+
+# dp -> px for `input`: the scale is the one every rect was divided by.
+px() { awk -v v="$1" -v s="$_MEMO_SCALE" 'BEGIN { printf "%d", v * s + 0.5 }'; }
+
+# Coordinates are whole dp inside the screen as it is NOW (`cur=` follows the rotation).
+# An unreadable size warns and lets the call through, as sim-ui.sh does.
+assert_in_bounds() {
+  local cur w h x y
+  cur="$("$ADB" -s "$_MEMO_SERIAL" shell dumpsys window displays 2>/dev/null </dev/null | tr -d '\r' \
+         | grep -m1 -oE 'cur=[0-9]+x[0-9]+' || true)"
+  while [ "$#" -ge 2 ]; do
+    x="$1"; y="$2"; shift 2
+    case "$x,$y" in
+      ,*|*,|*[!0-9,]*) echo "ERROR: coordinates must be non-negative whole dp, got '$x','$y'" >&2; exit 2 ;;
+    esac
+    [ -n "$cur" ] || continue
+    cur="${cur#cur=}"
+    w="$(awk -v v="${cur%x*}" -v s="$_MEMO_SCALE" 'BEGIN { printf "%d", v / s }')"
+    h="$(awk -v v="${cur#*x}" -v s="$_MEMO_SCALE" 'BEGIN { printf "%d", v / s }')"
+    if [ "$x" -ge "$w" ] || [ "$y" -ge "$h" ]; then
+      echo "ERROR: $x,$y is off-screen - this device is ${w}x${h} dp now." >&2
+      echo "  Screenshots of it are ${cur} PIXELS: divide by $_MEMO_SCALE to get dp." >&2
+      exit 2
+    fi
+    cur="cur=$cur"
+  done
+  [ -n "$cur" ] || echo "WARN: could not read the screen size - coordinates not range-checked." >&2
+}
+
+# `input` without a session: taps and swipes go through the system's input injection,
+# which needs no UiAutomation and works while the server is busy.
+adb_input() {
+  "$ADB" -s "$_MEMO_SERIAL" shell input "$@" </dev/null
+}
+
+# The lock state as `locked` reports it: the screen is asleep, or the keyguard is up.
+lock_state() {
+  local wake kg
+  wake="$("$ADB" -s "$_MEMO_SERIAL" shell dumpsys power 2>/dev/null </dev/null | tr -d '\r' \
+          | sed -nE 's/^ *mWakefulness=([A-Za-z]+).*/\1/p' | head -1 || true)"
+  kg="$("$ADB" -s "$_MEMO_SERIAL" shell dumpsys window 2>/dev/null </dev/null | tr -d '\r' \
+        | grep -m1 -oE 'isKeyguardShowing=(true|false)' || true)"
+  if [ -z "$wake" ] || [ -z "$kg" ]; then
+    echo "ERROR: could not read the lock state of $_MEMO_SERIAL (dumpsys power: '${wake}', dumpsys window: '${kg}')" >&2
+    exit 1
+  fi
+  if [ "$wake" != Awake ] || [ "$kg" = isKeyguardShowing=true ]; then echo true; else echo false; fi
 }
 
 # Validates a number of seconds given on the command line (as sim-ui.sh does).
@@ -185,6 +245,130 @@ case "$cmd" in
     case "$cmd" in waitid) _sub=wait ;; *) _sub=info ;; esac
     run_child python3 "$HERE/u2_el.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --adb "$ADB" \
       --serial "$_MEMO_SERIAL" "$_sub" "$_id" "${_el_args[@]+"${_el_args[@]}"}"
+    ;;
+
+  tapid)
+    if [ -z "${1:-}" ]; then echo "usage: tapid ID" >&2; exit 2; fi
+    [ "$#" -eq 1 ] || { echo "unknown flag for tapid: $2" >&2; exit 2; }
+    ensure_u2; scale
+    run_child python3 "$HERE/u2_el.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --adb "$ADB" \
+      --serial "$_MEMO_SERIAL" tap "$1"
+    ;;
+
+  typeid)
+    if [ "$#" -lt 2 ]; then echo "usage: typeid ID TEXT [--append] [--expect VALUE]" >&2; exit 2; fi
+    _id="$1"; _text="$2"; shift 2
+    _ty_args=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --append) _ty_args+=(--append); shift ;;
+        --expect) [ "$#" -ge 2 ] || { echo "usage: typeid ID TEXT [--append] [--expect VALUE]" >&2; exit 2; }
+                  _ty_args+=("--expect=$2"); shift 2 ;;
+        *) echo "unknown flag for typeid: $1" >&2; exit 2 ;;
+      esac
+    done
+    ensure_u2; scale
+    run_child python3 "$HERE/u2_el.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --adb "$ADB" \
+      --serial "$_MEMO_SERIAL" type "$_id" "--text=$_text" "${_ty_args[@]+"${_ty_args[@]}"}"
+    ;;
+
+  # --- coordinates (dp) --------------------------------------------------------
+  tap)
+    _MEMO_SERIAL="$(serial)" || exit $?; scale
+    assert_in_bounds "${1:-}" "${2:-}"
+    adb_input tap "$(px "$1")" "$(px "$2")"
+    echo "tapped $1,$2"
+    ;;
+
+  longpress)
+    _MEMO_SERIAL="$(serial)" || exit $?; scale
+    assert_in_bounds "${1:-}" "${2:-}"
+    dur="${3:-800}"; need_num "DURATION_MS" "$dur" int
+    adb_input swipe "$(px "$1")" "$(px "$2")" "$(px "$1")" "$(px "$2")" "$dur"
+    echo "long-pressed $1,$2 (${dur}ms)"
+    ;;
+
+  swipe)
+    _MEMO_SERIAL="$(serial)" || exit $?; scale
+    assert_in_bounds "${1:-}" "${2:-}" "${3:-}" "${4:-}"
+    dur="${5:-300}"; need_num "DURATION_MS" "$dur" int
+    adb_input swipe "$(px "$1")" "$(px "$2")" "$(px "$3")" "$(px "$4")" "$dur"
+    echo "swiped $1,$2 -> $3,$4"
+    ;;
+
+  # Two taps 100 ms apart and a press held before moving: the timing has to be the
+  # device's own (W3C pointer actions through the server) - two `input` calls are only
+  # as close together as the shell manages to start them.
+  doubletap)
+    ensure_u2; scale
+    assert_in_bounds "${1:-}" "${2:-}"
+    run_child python3 "$HERE/u2_el.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --adb "$ADB" \
+      --serial "$_MEMO_SERIAL" gesture doubletap "$(px "$1")" "$(px "$2")"
+    echo "double-tapped $1,$2"
+    ;;
+
+  drag)
+    ensure_u2; scale
+    assert_in_bounds "${1:-}" "${2:-}" "${3:-}" "${4:-}"
+    _hold="${5:-0.5}"; need_num "SECONDS" "$_hold"
+    run_child python3 "$HERE/u2_el.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --adb "$ADB" \
+      --serial "$_MEMO_SERIAL" gesture drag "$(px "$1")" "$(px "$2")" "$(px "$3")" "$(px "$4")" --hold "$_hold"
+    echo "dragged $1,$2 -> $3,$4 (${_hold}s hold)"
+    ;;
+
+  type)
+    if [ "$#" -eq 0 ]; then echo 'usage: type "text"' >&2; exit 2; fi
+    ensure_u2; scale
+    run_child python3 "$HERE/u2_el.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --adb "$ADB" \
+      --serial "$_MEMO_SERIAL" typefocused "--text=$1"
+    ;;
+
+  button)
+    if [ -z "${1:-}" ]; then echo "usage: button HOME|ENTER|VOLUME_UP|VOLUME_DOWN|BACK" >&2; exit 2; fi
+    case "$1" in
+      HOME) _code=3 ;;
+      ENTER) _code=66 ;;
+      VOLUME_UP) _code=24 ;;
+      VOLUME_DOWN) _code=25 ;;
+      BACK) _code=4 ;;
+      *) echo "unsupported button: $1" >&2; exit 1 ;;
+    esac
+    _MEMO_SERIAL="$(serial)" || exit $?
+    adb_input keyevent "$_code"
+    echo "pressed $1"
+    ;;
+
+  # KEYCODE_SLEEP / KEYCODE_WAKEUP, never KEYCODE_POWER: that one is a toggle, so a
+  # `lock` on a screen that is already off would turn it ON.
+  lock)
+    _MEMO_SERIAL="$(serial)" || exit $?
+    adb_input keyevent KEYCODE_SLEEP
+    echo "locked"
+    ;;
+
+  unlock)
+    _MEMO_SERIAL="$(serial)" || exit $?
+    adb_input keyevent KEYCODE_WAKEUP
+    "$ADB" -s "$_MEMO_SERIAL" shell wm dismiss-keyguard </dev/null >/dev/null 2>&1 || true
+    # The keyguard goes away asynchronously; a PIN, pattern or password keeps it up.
+    _st=true
+    for _i in 1 2 3 4 5 6 7 8 9 10; do
+      _st="$(lock_state)" || exit $?
+      [ "$_st" = false ] && break
+      sleep 0.3
+    done
+    if [ "$_st" != false ]; then
+      echo "ERROR: the screen is on but the keyguard is still showing - a PIN, pattern or password" \
+           "lock needs a person at the device." >&2
+      exit 1
+    fi
+    echo "unlocked"
+    ;;
+
+  locked)
+    _MEMO_SERIAL="$(serial)" || exit $?
+    _st="$(lock_state)" || exit $?
+    echo "$_st"
     ;;
 
   waitfor)
