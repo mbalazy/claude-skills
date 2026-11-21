@@ -130,6 +130,14 @@ class Element(unittest.TestCase):
         self.assertFalse(u2_el.in_focus("com.example.app.other", f))
         self.assertFalse(u2_el.in_focus(PKG, ("", None)))
 
+    def test_a_known_dialog_is_drawn_once_its_text_or_a_button_is_in_the_tree(self):
+        kind = ("permission dialog", ("permission_allow_button",), ("permission_deny_button",), True)
+        self.assertFalse(u2_el.dialog_drawn((kind, [], [])))
+        self.assertTrue(u2_el.dialog_drawn((kind, ["Allow?"], [])))
+        self.assertTrue(u2_el.dialog_drawn((kind, [], [("Allow", "x:id/permission_allow_button", (1, 2))])))
+        other = ("system window of android (Window{1 u0 X})", None, None, False)
+        self.assertTrue(u2_el.dialog_drawn((other, [], [])))
+
     def test_a_titled_dialog_of_the_app_is_the_app(self):
         f = u2_el.focused_window(windows("Window{ab12 u0 Delete item?}", PKG))
         self.assertTrue(u2_el.in_focus(PKG, f))

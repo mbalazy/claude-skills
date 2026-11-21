@@ -551,6 +551,15 @@ def dialog_now(dev):
     return kind, texts, buttons
 
 
+def dialog_drawn(d):
+    """A known dialog whose window holds focus can still be off the tree for a moment (it
+    animates in; on a phone this was seen as a focus line with an empty /source): it is
+    drawn once its text or a button is in the tree. Any other system window has nothing
+    to wait for."""
+    (_name, _acc, _dis, known), texts, buttons = d
+    return bool(texts or buttons) or not known
+
+
 def dialog_text(d):
     """A known dialog prints its text; any other window names itself first."""
     (name, _acc, _dis, known), texts, _buttons = d
@@ -596,7 +605,7 @@ def cmd_alert(dev, a):
         deadline = time.time() + a.seconds
         while True:
             d = dialog_now(dev)
-            if d:
+            if d and (dialog_drawn(d) or time.time() >= deadline):
                 print(dialog_text(d))
                 return 0
             if time.time() >= deadline:
