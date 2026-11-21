@@ -64,7 +64,7 @@ What each verdict means: `references/rig-check.md`; the Metro, binary and store 
 
 **One driver at a time.** WebDriverAgent holds one session per simulator and Metro lets one debugger hold an app: two sessions on one simulator take turns, they do not overlap (nothing locks this - see `references/driver.md`).
 
-**Simulator, emulator or phone.** A physical iPhone on the USB cable is the same loop with the same scripts: put its udid in `SIM_UDID`. Read `references/device.md` before the first phone run. An Android emulator is the same loop with `android-ui.sh` and `android-rig-check.sh` (`references/android.md`); an Android phone is not tested yet.
+**Simulator, emulator or phone.** A physical iPhone on the USB cable is the same loop with the same scripts: put its udid in `SIM_UDID`. Read `references/device.md` before the first phone run. An Android emulator is the same loop with `android-ui.sh` and `android-rig-check.sh` (`references/android.md`); an Android phone on the USB cable runs the same driver (`references/android.md`, "A phone on the USB cable"); its rig check is not built yet.
 
 ## The loop
 

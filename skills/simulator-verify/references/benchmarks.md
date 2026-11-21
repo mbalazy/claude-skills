@@ -59,6 +59,21 @@ measurements behind the design are in `android-phase2-2026-11-20.md`.
   found by `unzip -l` on the device in 0.03 s; an `am crash` during the wait is reported as
   TERMINATED in 8-9 s.
 
+## Android driver on a phone (2026-11-21)
+
+The same Mac and server, one Android 16 (API 36) retail phone on USB, `user` build,
+1080x2400 at 480 dpi (scale 3.0), vendor launcher, Google permission controller; the RN
+0.88.1 RN CLI fixture loading JS from a Metro through `adb reverse`.
+
+- **`android-regress.sh` on the phone**: core 27 passed / 2 skipped in 20 s (the sha256
+  case uninstalls and reinstalls both server packages), read 32 in 49 s, input 56 / 5
+  skipped (lock) in 79 s, app 43 / 7 skipped in 71 s; no failure. The same four groups on
+  an API 36 emulator: 162 passed in 131 s.
+- **Scale**: 17 testIDs of one screen, driver rect vs JS layout: 0 dp apart at 3.0; the
+  same pixels at 2.625 would be up to 108 dp off.
+- **Cold start into JS** over `adb reverse`: `launch` + `waitid Home-title` 3.0 s.
+- **Installs** on the unlocked phone: 2-4 s, no consent dialog.
+
 ## Where the other dated numbers live
 
 Numbers that justify one specific rule stay next to that rule, with their date:

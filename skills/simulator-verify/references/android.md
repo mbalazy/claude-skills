@@ -1,4 +1,4 @@
-# Android - the emulator path
+# Android - emulators and a phone
 
 Read before the first Android run in a session, and whenever an Android command surprised you. The loop in SKILL.md is the same on both platforms: rig gate first, reach with `do`, observe text before a screenshot, assert, report. This file is what differs. The measurements behind it are in `android-phase2-2026-11-20.md` (and the phase-1 analysis `android-analysis-2026-11-20.md`); the dated numbers are collected in `benchmarks.md`.
 
@@ -42,6 +42,19 @@ What it does, in order: lists every listener on 8080-8199 with its working direc
 
 A phone serial is refused: a phone reaches the Mac's Metro through `adb reverse`, which the check does not set up.
 
+## A phone on the USB cable
+
+The driver needs nothing phone-specific: `ANDROID_SERIAL=<SERIAL>` (from `adb devices`), `uia2-server.sh ensure`, then the same commands. Measured on one retail phone (dates and versions in `benchmarks.md`); what differs from an emulator:
+
+- **Scale comes from the device.** `wm density` 480 = scale 3.0 (the emulator profile: 2.625). Every rect the driver printed equalled the JS layout (`rn-devtools.mjs tree --json`) to the dp; the emulator's scale would have put them off by up to 100 dp.
+- **Permissions cannot be reset from adb on some vendor builds.** `pm grant`, `pm revoke` and `pm clear` exit with a `SecurityException` (the shell lacks `REVOKE_RUNTIME_PERMISSIONS` / `CLEAR_APP_USER_DATA`) unless a vendor developer option allows it - a phone setting, so it stays as it is. The driver uses none of them, but a permission dialog answered once does not come back until the app is reinstalled (an uninstall also deletes its `debug_http_host` pref: the rig check's cold start writes it again). `alert`, `alert buttons`, `alert accept` and `alert dismiss` work on the Google permission controller, whose button ids keep the AOSP prefix.
+- **A dialog is in focus before it is in the tree.** On the phone the focused window named the permission dialog while `/source` still held none of its text; `alert wait` returns once a text or a button of the dialog is there.
+- **No `adb root`** on a `user` build: nothing in the driver needs it.
+- **Lock: `lock` works, `unlock` cannot pass a PIN** (exit 1, naming it). On a phone with a PIN, `lock` is a step only a person can undo: never lock an unattended phone before its last step.
+- **Metro through `adb reverse tcp:<port> tcp:<port>`** and `debug_http_host = localhost:<port>`; the reverse rule is per device and lives until the cable or adb goes, and every adb call stays `-s <serial>`. Two devices on one Metro give `/json/list` one target per device, named by the device model: pick with `rn-devtools.mjs --device`.
+- **The screen is the owner's.** The launcher, notifications and other apps are private: `foreground` must name the app under test before a read, a tap or a screenshot, and a heads-up notification or a call in front is waited out, not touched. `button BACK` on a root screen sends the app to the launcher, and the driver then refuses (`the tree is a SYSTEM window`): return with the app's own back control.
+- **Installs on an unlocked phone** (the server's two packages, a debug APK) went through in 2-4 s with no consent dialog.
+
 ## Commands: iOS vs Android
 
 Same names, flags and exit codes as `sim-ui.sh` (0 OK, 1 the step failed, 2 bad usage or ambiguous device, 3 `elements --settled` saw a change); `android-ui.sh` with no arguments prints the list.
@@ -74,7 +87,7 @@ The JS-side tools need no Android variant: `rn-devtools.mjs` and `read-rn-logs-c
 
 Tested: API 34, 35 and 36 `google_apis` arm64-v8a emulators (Pixel 9 profile, 1080x2424, 420 dpi) on Apple Silicon; React Native 0.88.1 (RN CLI and Expo SDK 58 dev-client) and a real RN 0.81.1 app (read-only, its embedded-bundle and prefs checks); UiAutomator2 server 11.2.4. Other versions are not blocked - they are simply not measured.
 
-**Physical phone: not tested yet.** The first install needs a human (Play Protect), so does an unlock with a PIN; the rig check refuses a non-emulator serial until the `adb reverse` path is built and measured.
+Phone: one Android 16 (API 36) retail phone, `user` build, 1080x2400 at 480 dpi, over USB - the driver and `android-regress.sh` groups core, read, input and app (lock cases and the adbd restart held back, see above). The rig check refuses a non-emulator serial until the `adb reverse` path is built and measured.
 
 ## Unverified
 
@@ -89,7 +102,7 @@ Implemented or documented, not proven on a device:
 - Pixel tolerance of measurements at the non-integer scale 2.625 (two measurements only).
 - Process names of Maestro and agent-device in `ps` (the foreign-client check matches package names).
 - The consent-pending verdict (only happens on a phone), and the allow-all / allow-always permission buttons (their ids are from the AOSP source, not seen on a device).
-- The phone as a whole: `adb reverse` JS loading, the Expo dev-client over `localhost`, the scale read from the device.
+- On the phone: the rig check, the Expo dev-client over `localhost`, a PIN lock, and an install waiting for consent.
 
 Measured since the phase-2 report: double tap and drag (W3C actions, 10/10), type into the focused field, split installs (`base.apk` carries the bundle; no sha comparison is possible), a window without edge-to-edge (UiA2 rects are screen coordinates: 24 dp below `measureInWindow` without edge-to-edge, equal with it), longer transitions (a native-stack push shows no middle frame; 1.5 s and 4 s slides give `--settled` exit 3), the prefs merge on the real app (its keys survive), and where the local APK lives for the binary-age note (`android/app/build/outputs/apk`).
 
