@@ -108,3 +108,4 @@ Measured since the phase-2 report: double tap and drag (W3C actions, 10/10), typ
 - An external browser, a Custom Tab or a document picker takes the foreground: `foreground` names it, `alert` does not treat it as a dialog.
 - The emulator's network process (`netsimd`) is shared, so `lsof` does not say which emulator talks to which Metro: the device comes from the serial, the port from the tree.
 - During the first ~0.4 s after a start the tree still belongs to the app underneath; `waitid` only hits in the focused app's window.
+- BACK on a screen that does not handle it sends the app to the background, and `waitid` hits in whichever app is now in front: another build of the same app (a flavor with the same testIDs) answers for it. Go back with the app's own back control, and end a route with `foreground` when two builds are installed.
