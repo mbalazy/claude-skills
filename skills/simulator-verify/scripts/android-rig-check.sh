@@ -43,6 +43,10 @@ REPO=""; PKG=""; ENTRY=""; PORT=""; PORT_EXPLICIT=""; TRIGGER="cold"; TIMEOUT=30
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --repo|--package|--entry|--serial|--port|--timeout)
+      [ "$#" -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; } ;;
+  esac
+  case "$1" in
     --repo)    REPO="${2:-}"; shift 2 ;;
     --package) PKG="${2:-}"; shift 2 ;;
     --entry)   ENTRY="${2:-}"; shift 2 ;;
