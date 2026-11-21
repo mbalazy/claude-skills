@@ -254,6 +254,31 @@ class Input(unittest.TestCase):
         self.assertFalse(u2_el.is_focused_field({"focused": "true", "class": "android.widget.Button"}))
         self.assertFalse(u2_el.is_focused_field({"focused": "false", "class": "android.widget.EditText"}))
 
+
+    def test_a_text_ending_in_backslash_n_is_refused(self):
+        self.assertTrue(u2_el.literal_newline("yoga\\n"))
+        self.assertIn("backslash followed by n", self.err.getvalue())
+        self.assertFalse(u2_el.literal_newline("yoga"))
+        a = argparse.Namespace(id="Comp-text", text="yoga\\n", append=False, expect=None, settle=0.1, scale=2.625)
+        self.assertEqual(u2_el.cmd_type(FakeDev(SCREEN), a), 1)
+
+    def test_typeid_takes_the_field_inside_a_wrapper_with_the_same_id(self):
+        same = source(node("android.view.ViewGroup", "[0,100][500,200]", rid="F"),
+                      node("android.widget.EditText", "[0,100][500,200]", rid="F"))
+        hit = u2_el.pick_hit(FakeDev(same), "F", 2.625, "typeid", "typed", "", prefer="EditText")
+        self.assertEqual(hit["type"], "EditText")
+
+    def test_read_back_reads_the_typed_node_not_a_hidden_twin(self):
+        two = source(node("android.widget.EditText", "[0,3000][500,3100]", rid="F", text="old"),
+                     node("android.widget.EditText", "[0,100][500,200]", rid="F", text="new"))
+        self.assertEqual(u2_el.field_value(FakeDev(two), "F", 2.625, "[0,100][500,200]")[0], "new")
+        self.assertEqual(u2_el.field_value(FakeDev(two), "F", 2.625)[0], "new")
+
+    def test_each_trailing_newline_is_one_return(self):
+        calls = []
+        self.assertIsNone(u2_el.press_enter(FakeDev(SCREEN, calls=calls), 2))
+        self.assertEqual([c[2] for c in calls], [{"keycode": 66}, {"keycode": 66}])
+
     def test_gestures_carry_their_timing(self):
         dbl = u2_el.gesture_body("doubletap", [538, 428])["actions"][0]["actions"]
         self.assertEqual([x["type"] for x in dbl].count("pointerDown"), 2)

@@ -193,7 +193,7 @@ def cmd_info(dev, a):
     return 0
 
 
-def pick_hit(dev, ident, scale, verb, done, hint):
+def pick_hit(dev, ident, scale, verb, done, hint, prefer=None):
     """The ONE element with that id that is a hit now (the waitid rule), from one
     snapshot, or None after saying on stderr why nothing was done. Several nodes at the
     same bounds are one target (React Native can expose a view twice); several at
@@ -221,6 +221,11 @@ def pick_hit(dev, ident, scale, verb, done, hint):
               "nothing was %s. %s" % (verb, len(hits), ident, done, hint), file=sys.stderr)
         out(public(hits[:8]))
         return None
+    # One place, several nodes (a wrapper and the view it wraps): the class the command
+    # needs wins - typeid wants the EditText, not the wrapper carrying the same testID.
+    for e in hits:
+        if prefer and e["type"] == prefer:
+            return e
     return hits[0]
 
 
@@ -248,9 +253,25 @@ def element_call(dev, method, eid, what, body=None):
     return u.error_of(resp)
 
 
-def press_enter(dev):
+def press_enter(dev, times=1):
     u = dev.u
-    return u.error_of(u.call("POST", "/session/%s/appium/device/press_keycode" % u.sid, {"keycode": 66}))
+    for _ in range(times):
+        err = u.error_of(u.call("POST", "/session/%s/appium/device/press_keycode" % u.sid, {"keycode": 66}))
+        if err:
+            return err
+    return None
+
+
+def literal_newline(body):
+    """The server reads a text ending in the two characters backslash + n as "set the
+    text, then press Enter" - before any read-back, and with those two characters cut.
+    Such a text is refused rather than sent; a real Return is a trailing newline."""
+    if body.endswith("\\n"):
+        print("typeid/type: the text ends with a backslash followed by n, which the UiAutomator2 "
+              "server turns into an Enter press - nothing was typed. For Return end the text with "
+              "a real newline ($'...\\n' in bash).", file=sys.stderr)
+        return True
+    return False
 
 
 def cmd_tap(dev, a):
@@ -266,26 +287,30 @@ def cmd_tap(dev, a):
     return 0
 
 
-def field_value(dev, ident, scale):
-    """(value, is_password) of the first node with that id now, or (None, False)."""
+def field_value(dev, ident, scale, bounds=None):
+    """(value, is_password) of the node with that id that was typed into: the one at
+    `bounds`, else the first one displayed on screen, else the first; (None, False) when
+    none is left. Another node with the same testID (hidden, off-screen) is not it."""
     found = matches(dev.source(), ident, scale, raw=True)
     if not found:
         return None, False
-    e = found[0]
+    at = [e for e in found if bounds and e["_a"].get("bounds") == bounds]
+    shown = [e for e in found if e["displayed"] and e["on_screen"]]
+    e = (at or shown or found)[0]
     return e.get("value", ""), e["_a"].get("password") == "true"
 
 
-def read_back(dev, ident, scale, settle, gap=0.25):
+def read_back(dev, ident, scale, settle, gap=0.25, bounds=None):
     """The field's value once it holds still. The text set by the server is in the field
     at once, and a controlled field re-renders with what its onChangeText made of it a
     frame later: a phone mask read '5125550199' first and '(512) 555-0199' after. So the
     value counts when two reads `gap` apart agree; `settle` caps the wait."""
     deadline = time.time() + settle
     time.sleep(gap)
-    value, _ = field_value(dev, ident, scale)
+    value, _ = field_value(dev, ident, scale, bounds)
     while time.time() < deadline:
         time.sleep(gap)
-        again, _ = field_value(dev, ident, scale)
+        again, _ = field_value(dev, ident, scale, bounds)
         if again == value:
             break
         value = again
@@ -297,8 +322,10 @@ def cmd_type(dev, a):
     # never runs for a cut word, and the field is never expected to hold the "\n".
     body = a.text.rstrip("\n")
     submit = a.text[len(body):]
+    if literal_newline(body):
+        return 1
     hit = pick_hit(dev, a.id, a.scale, "typeid", "typed",
-                   "Tap the one you mean by its rect, then `type` into it:")
+                   "Tap the one you mean by its rect, then `type` into it:", prefer="EditText")
     if not hit:
         return 1
     if hit["type"] != "EditText":
@@ -314,7 +341,7 @@ def cmd_type(dev, a):
     eid = server_element(dev, a.id, hit["_a"].get("bounds"))
     # The server sets the whole text at once (one onChangeText): Unicode arrives intact,
     # where `input text` cannot type a non-ASCII character at all.
-    err = element_call(dev, "POST", eid, "value", {"text": before + body})
+    err = element_call(dev, "POST", eid, "value", {"text": before + body, "replace": True})
     if err:
         print("typeid: the server refused to type into '%s': %s" % (a.id, err), file=sys.stderr)
         return 1
@@ -324,7 +351,7 @@ def cmd_type(dev, a):
               "checked here." % a.id, file=sys.stderr)
         shown = "password field, not read back"
     else:
-        value = read_back(dev, a.id, a.scale, a.settle)
+        value = read_back(dev, a.id, a.scale, a.settle, bounds=hit["_a"].get("bounds"))
         if value != expected:
             print("typeid: the field '%s' holds %r, expected %r%s. If the field formats its input "
                   "(a mask), pass the formatted value with --expect."
@@ -335,7 +362,7 @@ def cmd_type(dev, a):
         # Setting the text does not focus the field, and a Return with nothing focused
         # goes nowhere (onSubmitEditing did not fire): the field is clicked first.
         err = element_call(dev, "POST", server_element(dev, a.id, hit["_a"].get("bounds")), "click", {}) \
-            or press_enter(dev)
+            or press_enter(dev, len(submit))
         if err:
             print("typeid: the text was typed and read back, but the server refused the Return: %s"
                   % err, file=sys.stderr)
@@ -353,6 +380,8 @@ def cmd_type_focused(dev, a):
     appended to what the field holds (placeholder excluded) - at its end, not at the cursor."""
     body = a.text.rstrip("\n")
     submit = a.text[len(body):]
+    if literal_newline(body):
+        return 1
     fields = matches(dev.source(), None, a.scale, raw=True, pick=is_focused_field)
     if not fields:
         print("type: no text field has keyboard focus - nothing was typed. Tap the field first "
@@ -369,12 +398,12 @@ def cmd_type_focused(dev, a):
         return 1
     if body:
         before = "" if f["_a"].get("password") == "true" else f.get("value", "")
-        err = element_call(dev, "POST", eid, "value", {"text": before + body})
+        err = element_call(dev, "POST", eid, "value", {"text": before + body, "replace": True})
         if err:
             print("type: the server refused to type into the focused field: %s" % err, file=sys.stderr)
             return 1
     if submit:
-        err = press_enter(dev)
+        err = press_enter(dev, len(submit))
         if err:
             print("type: the server refused the Return: %s" % err, file=sys.stderr)
             return 1
