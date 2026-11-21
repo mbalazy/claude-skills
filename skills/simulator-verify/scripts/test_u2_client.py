@@ -58,9 +58,15 @@ class PickPort(unittest.TestCase):
             u2.pick_port("emulator-5562", self.fw, want=8121)
         self.assertIn("tcp:8121", str(c.exception))
 
-    def test_no_forward_without_allocate_is_refused(self):
-        with self.assertRaises(u2.PortRefused):
+    def test_no_forward_without_allocate_is_refused_as_missing(self):
+        with self.assertRaises(u2.PortRefused) as c:
             u2.pick_port("emulator-5570", self.fw)
+        self.assertTrue(c.exception.missing)
+
+    def test_a_conflict_is_not_missing(self):
+        with self.assertRaises(u2.PortRefused) as c:
+            u2.pick_port("emulator-5560", self.fw, want=8211)
+        self.assertFalse(c.exception.missing)
 
     def test_allocate_skips_forwarded_and_busy_ports(self):
         busy = {8212}

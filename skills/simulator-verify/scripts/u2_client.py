@@ -9,7 +9,7 @@ every command reuses.
   u2_client.py health  --port P [--timeout S]
 
 `port` prints the host port and exits 0; exit 2 with the reason on stderr when the port is
-refused (forwarded to another device) or, without --allocate, when no forward exists.
+refused (forwarded to another device), exit 3 when (without --allocate) no forward exists.
 `foreign` prints one line per other UiAutomation client (`<pid> <tool>: <args>`); exit 1
 when there is one, 0 when the device is clear.
 `session` prints `<session id> reused|new` after re-applying the two settings.
@@ -44,7 +44,12 @@ OWN_PACKAGES = ("io.appium.uiautomator2.server", "io.appium.uiautomator2.server.
 
 
 class PortRefused(Exception):
-    """The requested host port cannot drive the requested device."""
+    """The requested host port cannot drive the requested device. `missing` = there is
+    simply no forward yet (the server was never started), not a conflict."""
+
+    def __init__(self, msg, missing=False):
+        super().__init__(msg)
+        self.missing = missing
 
 
 class ServerError(Exception):
@@ -96,7 +101,8 @@ def pick_port(serial, forwards, want=None, allocate=False, is_free=None):
         if s == serial and r == remote and p is not None:
             return p
     if not allocate:
-        raise PortRefused("no host port is forwarded to %s's UiAutomator2 server (%s)" % (serial, remote))
+        raise PortRefused("no host port is forwarded to %s's UiAutomator2 server (%s)" % (serial, remote),
+                          missing=True)
     used = {p for _, p, _ in forwards if p is not None}
     for p in PORT_RANGE:
         if p in used:
@@ -267,7 +273,7 @@ def main(argv=None):
             print(pick_port(a.serial, parse_forwards(sys.stdin.read()), a.want, a.allocate, port_is_free))
         except PortRefused as e:
             print(str(e), file=sys.stderr)
-            return 2
+            return 3 if e.missing else 2
         return 0
     if a.cmd == "foreign":
         found = foreign_clients(sys.stdin.read())
