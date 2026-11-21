@@ -165,19 +165,23 @@ done < <(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null \
           | sort -u -k3,3n)
 
 # --- the installed app ---------------------------------------------------------------------
+# An install the device holds for consent (Play Protect) has not happened yet: say that -
+# only a person at the device can let it through. For a reinstall the old APK is still
+# what runs, so the check holds whether the package is installed or not.
+# "Active install sessions:" is a header printed with an empty list too: only a session
+# of exactly THIS package, listed before the finalized ones, counts.
+consent_pending() {
+  sh_dev dumpsys window | has 'mFocusedApp=.*PlayProtectDialogsActivity' \
+    || sh_dev dumpsys package | awk -v p="appPackageName=$PKG" '/^Active install sessions:/ { a = 1; next }
+         /^[A-Z][a-z]+ install sessions:/ { a = 0 }
+         a { for (i = 1; i <= NF; i++) if ($i == p) f = 1 } END { exit !f }'
+}
 APKS="$(sh_dev pm path "$PKG" | sed -n 's/^package://p')"
 if [ -z "$APKS" ]; then
-  # An install the device holds for consent (Play Protect) is not installed yet: say that,
-  # not "not installed" - only a person at the device can let it through.
-  # "Active install sessions:" is a header printed with an empty list too: only a session
-  # of THIS package, listed before the finalized ones, counts.
-  if sh_dev dumpsys window | has 'mFocusedApp=.*PlayProtectDialogsActivity' \
-     || sh_dev dumpsys package | awk -v p="appPackageName=$PKG" '/^Active install sessions:/ { a = 1; next }
-          /^[A-Z][a-z]+ install sessions:/ { a = 0 } a && index($0, p) { f = 1 } END { exit !f }'; then
-    verdict DEAD "$PKG is waiting for consent on $SERIAL (Play Protect / an active install session) - a person at the device must approve the install"
-  fi
+  consent_pending && verdict DEAD "$PKG is waiting for consent on $SERIAL (Play Protect / an active install session) - a person at the device must approve the install"
   verdict DEAD "$PKG is not installed on $SERIAL"
 fi
+consent_pending && verdict DEAD "an install of $PKG is waiting for consent on $SERIAL (Play Protect / an active install session) - until a person approves it, the device runs the PREVIOUS APK"
 BASE_APK="$(awk '/\/base\.apk$/ { print; exit }' <<< "$APKS")"
 [ -n "$BASE_APK" ] || BASE_APK="$(head -1 <<< "$APKS")"
 if [ "$(printf '%s\n' "$APKS" | grep -c .)" -gt 1 ]; then
