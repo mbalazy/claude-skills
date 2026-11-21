@@ -2,7 +2,7 @@
 
 The digest is a summary of summaries; the one failure it must not have is a
 claim its sources do not carry. One fresh agent (no context from this
-session) checks it. Brief, placeholders filled, nothing else added:
+session, `model: "opus"`) checks it. Brief, placeholders filled, nothing else added:
 
 ```
 Read-only. Do not edit any file.

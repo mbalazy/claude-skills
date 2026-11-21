@@ -24,6 +24,10 @@ answer as it stands NOW, in the shape `reference/format.md` defines.
   taking-over) does its own pm bookkeeping.
 - Never re-run tests, builds or device checks: the digest reports what the
   files hold. A gap goes to `Otwarte:` or `phone-plan.md`.
+- **Every agent this skill spawns runs on Opus**: pass `model: "opus"` on
+  each Agent call (extraction, the `phone-plan.md` merge, verification),
+  whatever model the calling session runs on. Without it an agent inherits
+  the session's model, and a digest is only as good as its weakest reader.
 
 ## Procedure
 

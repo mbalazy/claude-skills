@@ -55,7 +55,7 @@ first headings usually name the ticket). One file can serve two questions.
 | Sources for the questions (current + review) | Mode |
 |---|---|
 | up to ~6 files and ~20k words | read them yourself, one question at a time |
-| more | one fresh agent per question (or per small group of related questions) with `prompts/extract.md` - in parallel, one message |
+| more | one fresh agent per question (or per small group of related questions) with `prompts/extract.md`, `model: "opus"` - in parallel, one message |
 
 Either way the result per question is the ledger entry `prompts/extract.md`
 defines. Backstage files are read only for sections 3, 5, 6 and `Na dole`
