@@ -338,5 +338,44 @@ class Alert(unittest.TestCase):
         self.assertEqual(buttons[0][2], (541, 1330))
 
 
+class AlertWaitGone(unittest.TestCase):
+    PERM = ("permission dialog", u2_el.DIALOGS[0][2], u2_el.DIALOGS[0][3], True)
+    ALLOW = [("Allow", "com.android.permissioncontroller:id/permission_allow_button", (1, 1))]
+
+    def run_with(self, reads, seconds=3):
+        seq = iter(reads)
+        orig_now, orig_sleep = u2_el.dialog_now, u2_el.time.sleep
+
+        def fake_now(_dev):
+            r = next(seq)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        u2_el.dialog_now, u2_el.time.sleep = fake_now, lambda _s: None
+        try:
+            return u2_el.wait_dialog_gone(None, (self.PERM, ["Allow camera?"], self.ALLOW), seconds)
+        finally:
+            u2_el.dialog_now, u2_el.time.sleep = orig_now, orig_sleep
+
+    def test_gone(self):
+        self.assertIsNone(self.run_with([(self.PERM, ["Allow camera?"], self.ALLOW), None]))
+
+    def test_the_closing_window_is_not_a_new_dialog(self):
+        # focus still on the dialog, tree already the app's: no dialog buttons in it
+        teardown = (self.PERM, ["Home"], [("Go", "com.example.app:id/go", (2, 2))])
+        self.assertIsNone(self.run_with([teardown, teardown, None]))
+
+    def test_the_next_request_of_a_queue_is_returned(self):
+        nxt = (self.PERM, ["Allow microphone?"], self.ALLOW)
+        self.assertEqual(self.run_with([nxt]), nxt)
+
+    def test_a_failed_read_during_the_teardown_is_retried(self):
+        self.assertIsNone(self.run_with([u2_el.u2_client.ServerError("x"), None]))
+
+    def test_the_same_dialog_after_the_wait_is_still(self):
+        same = (self.PERM, ["Allow camera?"], self.ALLOW)
+        self.assertEqual(self.run_with([same] * 50, seconds=0), "STILL")
+
+
 if __name__ == "__main__":
     unittest.main()

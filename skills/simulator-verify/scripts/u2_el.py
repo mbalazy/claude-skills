@@ -557,6 +557,40 @@ def dialog_text(d):
     return "\n".join(texts if known else [name] + texts) or name
 
 
+def _dialog_or_none(dev):
+    try:
+        return dialog_now(dev)
+    except u2_client.ServerError:
+        return None
+
+
+def wait_dialog_gone(dev, d, seconds=3):
+    """After a tap on dialog d: None once no dialog is in front, the next dialog when another
+    one took its place, "STILL" when the same one is there after `seconds`. Focus and the
+    tree are read separately, so while a window closes the focus can still name the dialog
+    while /source already holds the app: a "dialog" whose tree has none of its buttons is
+    that in-between state, not a new dialog. A read that fails during the teardown is retried."""
+    kind0, text0 = d[0][0], dialog_text(d)
+    deadline = time.time() + seconds
+    while True:
+        time.sleep(0.2)
+        try:
+            cur = dialog_now(dev)
+        except u2_client.ServerError:
+            cur = d
+        if not cur:
+            return None
+        (kind, acc, dis, _known), _texts, buttons = cur
+        if kind != kind0:
+            return cur
+        if dialog_text(cur) != text0:
+            ids = [i for group in (acc, dis) if group and group != "BACK" for i in group]
+            if "BACK" in (acc, dis) or any(b[1].endswith(":id/" + i) for i in ids for b in buttons):
+                return cur
+        if time.time() >= deadline:
+            return "STILL"
+
+
 def cmd_alert(dev, a):
     if a.sub == "wait":
         deadline = time.time() + a.seconds
@@ -600,20 +634,19 @@ def cmd_alert(dev, a):
         n += 1
         # The tap returns before the window closes (its exit animation is slower on some
         # API levels): wait until this dialog is gone, so the next step sees the app.
-        before = dialog_text(d)
-        deadline = time.time() + 3
-        while True:
-            time.sleep(0.2)
-            d = dialog_now(dev)
-            if not d or dialog_text(d) != before:
-                break
-            if time.time() >= deadline:
-                print("alert %s: tapped, but the dialog is still up after 3s: %s" % (a.sub, shown),
-                      file=sys.stderr)
-                return 1
+        d = wait_dialog_gone(dev, d)
+        if d == "STILL":
+            print("alert %s: tapped, but a dialog with the same text is still up 3s later (it did "
+                  "not close, or the app asked again): %s" % (a.sub, shown), file=sys.stderr)
+            return 1
         print("%sed: %s" % (a.sub, shown))
         if not a.all:
             break
+        # The next request of a queue opens a moment after the previous one closed.
+        deadline = time.time() + 1.5
+        while not d and time.time() < deadline:
+            time.sleep(0.25)
+            d = _dialog_or_none(dev)
     if a.all:
         print("%d dialog(s) drained" % n)
     return 0
