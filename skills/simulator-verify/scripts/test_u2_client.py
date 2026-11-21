@@ -288,7 +288,8 @@ class UnlessLocked(unittest.TestCase):
         t = __import__("time").time()
         with self.assertRaises(u2.ScreenLocked):
             u2.unless_locked(lambda: hang.wait(5), lambda v: False, lambda: True)
-        self.assertLess(__import__("time").time() - t, 1)
+        # the lock answer gives the read 1 s to show a hit, then wins
+        self.assertLess(__import__("time").time() - t, 2)
         hang.set()
 
     def test_a_miss_on_an_unlocked_screen_returns_the_read(self):
@@ -298,6 +299,18 @@ class UnlessLocked(unittest.TestCase):
     def test_a_locked_screen_wins_over_a_miss(self):
         with self.assertRaises(u2.ScreenLocked):
             u2.unless_locked(lambda: [], lambda v: bool(v), lambda: True)
+
+    def test_a_hit_soon_after_the_lock_answer_still_wins(self):
+        import time as tm
+        def slow_hit():
+            tm.sleep(0.3)
+            return "hit"
+        self.assertEqual(u2.unless_locked(slow_hit, lambda v: True, lambda: True), "hit")
+
+    def test_a_lock_check_that_raises_counts_as_unknown_not_a_hang(self):
+        def bad():
+            raise UnicodeDecodeError("utf-8", b"x", 0, 1, "bad")
+        self.assertEqual(u2.unless_locked(lambda: [], lambda v: bool(v), bad), [])
 
     def test_a_read_error_on_an_unlocked_screen_is_raised(self):
         def boom():

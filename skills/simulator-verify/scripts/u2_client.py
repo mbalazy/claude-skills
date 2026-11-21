@@ -297,13 +297,28 @@ def unless_locked(read, is_hit, locked):
         except Exception as e:  # noqa: BLE001 - handed back to the caller below
             q.put(("read", None, e))
 
-    for target in (run_read, lambda: q.put(("lock", locked(), None))):
+    def run_lock():
+        try:
+            q.put(("lock", locked(), None))
+        except Exception:  # noqa: BLE001 - an unreadable lock state is "unknown", never a hang
+            q.put(("lock", None, None))
+
+    for target in (run_read, run_lock):
         threading.Thread(target=target, daemon=True).start()
     got = {}
     while True:
         kind, value, err = q.get()
         got[kind] = (value, err)
         if kind == "lock" and value:
+            # A hit still wins when the read answers soon after (an activity shown over the
+            # keyguard); a read that hangs on the asleep screen does not hold the verdict.
+            if "read" not in got:
+                try:
+                    got["read"] = q.get(timeout=1.0)[1:]
+                except queue.Empty:
+                    pass
+            if "read" in got and got["read"][1] is None and is_hit(got["read"][0]):
+                return got["read"][0]
             raise ScreenLocked()
         if "read" in got:
             value, err = got["read"]
