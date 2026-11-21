@@ -24,8 +24,8 @@
 # build (a retail phone) refuses `adb root`, so there it is SKIPPED with that reason.
 # A physical device (not an emulator): the input group's lock cases are SKIPPED unless
 # LOCK_ON_DEVICE=1. With it, a phone with a PIN stays locked: `unlock` must then name the
-# PIN, and every case after it is SKIPPED with that reason (a person has to unlock it) - so
-# run that group last, or alone.
+# PIN, the rest of the input group is SKIPPED and the later groups do not run (a person has
+# to unlock it) - so run that group last, or alone.
 #
 # The cases change the device: they stop and start the UiAutomator2 server and run a
 # `uiautomator dump` loop for a few seconds. They leave the server RUNNING on
@@ -48,7 +48,14 @@ GROUPS_WANTED="${*:-core read input app rig}"
 mkdir -p "$OUT"
 PASS=0; FAIL=0; SKIP=0
 
-want_group() { case " $GROUPS_WANTED " in *" $1 "*) return 0 ;; esac; return 1; }
+# A phone left locked behind a PIN (LOCK_ON_DEVICE=1) runs no later group: their cases
+# would fail on the keyguard, and their direct adb steps would still change the device.
+want_group() {
+  case " $GROUPS_WANTED " in *" $1 "*) ;; *) return 1 ;; esac
+  if [ "${STAYS_LOCKED:-0}" = 1 ]; then
+    echo "SKIP group $1 (the screen stays locked behind a PIN - a person has to unlock it)"; return 1
+  fi
+}
 
 # case NAME RC [PATTERN ...] -- CMD...   (PATTERN: an ERE the output must match;
 # a leading ! means it must NOT match)
