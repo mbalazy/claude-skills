@@ -163,8 +163,11 @@ APKS="$(sh_dev pm path "$PKG" | sed -n 's/^package://p')"
 if [ -z "$APKS" ]; then
   # An install the device holds for consent (Play Protect) is not installed yet: say that,
   # not "not installed" - only a person at the device can let it through.
+  # "Active install sessions:" is a header printed with an empty list too: only a session
+  # of THIS package, listed before the finalized ones, counts.
   if sh_dev dumpsys window | has 'mFocusedApp=.*PlayProtectDialogsActivity' \
-     || sh_dev dumpsys package | has 'Active install session'; then
+     || sh_dev dumpsys package | awk -v p="appPackageName=$PKG" '/^Active install sessions:/ { a = 1; next }
+          /^[A-Z][a-z]+ install sessions:/ { a = 0 } a && index($0, p) { f = 1 } END { exit !f }'; then
     verdict DEAD "$PKG is waiting for consent on $SERIAL (Play Protect / an active install session) - a person at the device must approve the install"
   fi
   verdict DEAD "$PKG is not installed on $SERIAL"
@@ -302,6 +305,13 @@ start_cold() {
     note "start:   $(printf '%s\n' "$o" | grep -m1 -E '^(Error|Exception)')"
   fi
 }
+# logcat is the whole device's: another app on the same Metro logs the marker too when
+# Fast Refresh re-runs the entry file in it (seen: the embedded-bundle flavor, still up,
+# logged the marker of a run aimed at the other package). So the app's own pid filters
+# every read; LOG_PID is the process of the start being judged.
+LOG_PID=""
+log_since() { "$ADB" -s "$SERIAL" logcat -d -T "$1" ${LOG_PID:+--pid="$LOG_PID"} "${@:2}" </dev/null 2>/dev/null | tr -d '\r'; }
+
 T0="$(dev_now)"
 [[ "$T0" =~ ^[0-9]{2}-[0-9]{2}\ [0-9:]{8}\.000$ ]] || verdict DEAD "could not read the clock of $SERIAL (date said '$T0') - the log cannot be read from the start"
 if [ "$TRIGGER" = reload ]; then
@@ -312,8 +322,7 @@ else
   note "trigger: cold start (force-stop + start)"
 fi
 PID="$(sh_dev pidof "$PKG")"
-
-log_since() { "$ADB" -s "$SERIAL" logcat -d -T "$1" "${@:2}" </dev/null 2>/dev/null | tr -d '\r'; }
+LOG_PID="$PID"
 
 FOUND=""; APP_DIED=""; WAITED=0
 while [ "$WAITED" -lt "$TIMEOUT" ]; do
@@ -336,6 +345,7 @@ if [ -n "$FOUND" ] && [ "$TRIGGER" = cold ]; then
   T1="$(dev_now)"
   start_cold
   sleep 3
+  LOG_PID="$(sh_dev pidof "$PKG")"
   if [ -z "$(sh_dev pidof "$PKG")" ]; then
     note "after:   the second, marker-free start did not stay up - check the app before reading anything"
   elif log_since "$T1" -s ReactNativeJS:E | has 'runtime not ready'; then
@@ -351,13 +361,14 @@ if [ -n "$FOUND" ]; then
   verdict OK ""
 fi
 
+LOG_PID="$PID"
 METRO_FALSE="$(log_since "$T0" | grep -m1 -E 'isMetroRunning\(\): Async result = false|packager does not seem to be running' || true)"
 if [ -n "$APP_DIED" ]; then
   note "marker:  $MARKER never appeared - the app process is gone (checked after ${WAITED}s)"
   sleep 1
   R="$(sh_dev dumpsys activity exit-info "$PKG" | grep -m1 -E 'reason=' | sed -E 's/^ *//' || true)"
   [ -n "$R" ] && note "exit:    $R"
-  C="$(log_since "$T0" -b crash | grep -m2 -E 'FATAL|Process:|signal' || true)"
+  C="$(LOG_PID="" log_since "$T0" -b crash | grep -B1 -F "$PKG" | grep -m2 -E 'FATAL|Process:|signal' || true)"
   [ -n "$C" ] && while IFS= read -r l; do note "crash:   $l"; done <<< "$C"
   verdict DEAD "the app TERMINATED instead of running your code - this is not a rig problem to debug through the log. A native crash at start after a dependency change: suspect a JS/native version skew first."
 fi
@@ -367,7 +378,7 @@ if [ -n "$EXPO_SCHEME" ] && sh_dev dumpsys window | has 'mCurrentFocus=.*DevLaun
   verdict DEAD "the Expo dev-client shows its LAUNCHER (the list of dev servers), not the app - it did not load from http://$HOST. Is that dev server up and serving this tree?"
 fi
 if [ -n "$EMBEDDED" ] && [ -n "$METRO_FALSE" ]; then
-  note "logcat:  $(printf '%s' "$METRO_FALSE" | sed -E 's/^.* [VDIWEF] [^:]+: //')"
+  note "logcat:  $(printf '%s' "$METRO_FALSE" | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ [VDIWEF] //')"
   verdict DEAD "the app runs its EMBEDDED bundle (assets/index.android.bundle), not your code - it found no Metro at $HOST. JS frozen at build time is all it shows."
 fi
 # The port the app was pointed at is not this tree's Metro: whatever it ran (another
@@ -387,5 +398,5 @@ if [ -n "$JS_ERR" ]; then
   esac
   verdict DEAD "the app is ALIVE but its JS threw while loading the bundle, before your code could run (see js-error above). Fix that error first - the rig cannot be judged through it."
 fi
-[ -n "$METRO_FALSE" ] && note "logcat:  $(printf '%s' "$METRO_FALSE" | sed -E 's/^.* [VDIWEF] [^:]+: //')"
+[ -n "$METRO_FALSE" ] && note "logcat:  $(printf '%s' "$METRO_FALSE" | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ [VDIWEF] //')"
 verdict DEAD "the app never ran your code, and neither the build nor Metro explains why. Check that the app is in front (android-ui.sh foreground) and that it talks to $HOST."
