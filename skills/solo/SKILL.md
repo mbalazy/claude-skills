@@ -1,6 +1,6 @@
 ---
 name: solo
-description: Works one or more tasks in ONE unattended Claude Code session - the user is away, day or night - instead of an executor batch plus an acceptance run. Input is a pm tracker, pm task ids, ticket keys, Linear / Jira / Slack / GitHub links or pasted text; anything that is not a pm task becomes one first, with criteria derived from the source when the reporter gave none. Per task, in order: cold start from pm, branch off the base, implement, gate, verify on the live runtime itself (simulator-verify / web-verify), one reviewer pass, brief + Log, next. Procedure and state live in files so auto-compaction loses nothing, a guard hook enforces the no-push/no-PR/no-done contract, and the shift ends with one report for a cold reader. Flags - --sim / --web / --no-runtime, --push, --pr, --max-tasks N, --max-hours H, resume. Use when the user says "/solo", "leć solo", "odpal solo", "solo z tymi taskami", "leć z listą", "dowieź to jak mnie nie będzie", "zrób to sam po kolei", or hands over work and leaves. With the user present use developing-features.
+description: Works one or more tasks in ONE unattended Claude Code session - the user is away, day or night - instead of an executor batch plus an acceptance run. Input is a pm tracker, pm task ids, ticket keys, Linear / Jira / Slack / GitHub links or pasted text; anything that is not a pm task becomes one first, with criteria derived from the source when the reporter gave none. Per task, in order: cold start from pm, branch off the base, implement, gate, verify on the live runtime itself (simulator-verify / web-verify), one reviewer pass, brief + Log, next. Procedure and state live in files so auto-compaction loses nothing, a guard hook enforces the no-push/no-PR/no-done contract, and the shift ends with one report for a cold reader. Flags - --sim / --web / --no-runtime, --push, --pr, --max-tasks N, --max-hours H, --digest (always on for now), resume. Use when the user says "/solo", "leć solo", "odpal solo", "solo z tymi taskami", "leć z listą", "dowieź to jak mnie nie będzie", "zrób to sam po kolei", or hands over work and leaves. With the user present use developing-features.
 ---
 
 # Solo
@@ -101,6 +101,12 @@ within the task's scope and AC, keep everything local. Explicitly:
   `resume` it - a smaller context (below) pushes that ceiling out.
 - `--base`: the branch every task forks from (default: `executor.base_branch`
   from `pm executor show`, else the repo's default branch).
+- `--digest`: the shift ends with the `session-digest` answer in the chat
+  (Step Z). **Hardcoded ON for now**: every shift behaves as if `--digest`
+  was given, with or without it - the user's decision (2026-11-21), the flag
+  exists so it can become selective later. Never read its absence as off.
+  Off (only once the user lifts the hardcoding) = the chat gets the report
+  file of `prompts/report.md` section 2, as before.
 
 **Launch** (the user's launcher for unattended runs - usually a shell
 abbreviation named in their CLAUDE.md):
@@ -227,12 +233,17 @@ makes this mode cheaper than a batch.
 Read `prompts/report.md` and follow it: leave the runtime and the checkout in
 a known state, journal every incident of the shift (`solo` journal:
 what went wrong without a human, with its cost), write the report file next
-to the state file, append the closing lines to the tracker's Log, print the
-same report in the chat, and LAST run `scripts/shift-close.sh <shift-id>` (the guard
+to the state file, append the closing lines to the tracker's Log, produce
+the end-of-work answer with the `session-digest` procedure (`--digest`, always
+on for now: read `../session-digest/SKILL.md` and follow it in THIS session -
+never through the Skill tool, which would run it in the background and close
+the shift before the answer exists) and print THAT in the chat, and LAST run `scripts/shift-close.sh <shift-id>` (the guard
 stays armed until then, so a forgotten close blocks the user's own next
-push - the report must say the shift is closed). The
-report is written for someone who launched this hours ago and remembers
-nothing - section 1 in plain words, TL;DR last.
+push - the answer must say the shift is closed). The
+report file is written for someone who launched this hours ago and remembers
+nothing - section 1 in plain words, TL;DR last; the chat answer follows
+`../session-digest/reference/format.md`, the one format solo, taking-over and
+session-digest share.
 
 ## Resume
 

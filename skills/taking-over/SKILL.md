@@ -45,6 +45,22 @@ When hitting a fork (design choice, ambiguous spec, failing approach):
 
 ## Final report (mandatory)
 
+When the work is done - or when stopping for any reason - end with ONE of the two reports below, chosen by the `digest` flag (see "Arguments").
+
+**`digest` is hardcoded ON for now**: every handover behaves as if `digest` was given, with or without it - the user's decision (2026-11-21); the flag exists so it can become selective later. Never read its absence as off.
+
+### With `digest` (the current behaviour, always)
+
+Produce the end-of-work answer with the `session-digest` procedure and print it: read `../session-digest/SKILL.md` and follow it in THIS session, for this session - never through the Skill tool, which would run it in the background and end the handover before the answer exists. Its format, `../session-digest/reference/format.md`, is the one solo and session-digest use too: change the format there, never here.
+
+What this contract adds to it:
+
+- The running decision list (see "Decision policy") is the source of `digest.md`'s `## Wszystkie decyzje`, every fork with the rejected alternative. The chat answer's `Decyzje podjęte za Ciebie` keeps only the ones that change how a result reads.
+- The user reviews the decisions and asks for corrections - so make them honest and specific, including the rejected alternatives. A vague record defeats the whole point of the handover.
+- Commits made under the handover go to `digest.md` (section 5, per branch); the chat answer's `## 5. Kod` names each branch and whether it is on origin.
+
+### Without `digest` (only once the user lifts the hardcoding)
+
 When the work is done - or when stopping for any reason - end with a report in exactly this structure:
 
 ```
@@ -79,4 +95,5 @@ Write the report in Polish, headings included. The user reviews it and asks for 
 
 Text after the invocation refines the contract for this session, e.g.:
 - `/taking-over push ok` or "możesz wypchnąć ten branch" ("you can push this branch") - lifts the push restriction for the current branch.
+- `/taking-over digest` - end with the `session-digest` answer (see "Final report"). Hardcoded ON for now: the same with or without the word.
 - Any other instruction ("focus only on the tests", "max 1h of work") - treat as a scope constraint layered on top of this contract.
