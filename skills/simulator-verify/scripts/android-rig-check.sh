@@ -326,13 +326,20 @@ else
   note "trigger: cold start (force-stop + start)"
 fi
 PID="$(sh_dev pidof "$PKG")"
+[ -n "$PID" ] || { sleep 1; PID="$(sh_dev pidof "$PKG")"; }
 LOG_PID="$PID"
 
 FOUND=""; APP_DIED=""; WAITED=0
-while [ "$WAITED" -lt "$TIMEOUT" ]; do
+# No process at all after the start: it died before it could be watched (a crash in
+# Application.onCreate). Reading logcat unfiltered then would take another app's marker.
+[ -n "$PID" ] || APP_DIED=1
+while [ -z "$APP_DIED" ] && [ "$WAITED" -lt "$TIMEOUT" ]; do
   sleep 1; WAITED=$((WAITED + 1))
   if log_since "$T0" -s ReactNativeJS:V | has "$MARKER"; then FOUND=1; break; fi
-  if [ -n "$PID" ] && [ "$(sh_dev pidof "$PKG")" != "$PID" ]; then APP_DIED=1; break; fi
+  if [ "$(sh_dev pidof "$PKG")" != "$PID" ]; then APP_DIED=1; break; fi
+  # A crashed process can stay listed for a while (behind the "keeps stopping" dialog, then
+  # killed as cached): its crash-buffer line is the earlier signal.
+  if log_since "$T0" -b crash | has 'FATAL EXCEPTION|Fatal signal'; then APP_DIED=1; break; fi
   # A thrown bundle never logs the marker; once the error is in, waiting longer adds nothing.
   if log_since "$T0" -s ReactNativeJS:E | has 'runtime not ready'; then sleep 1; break; fi
 done
@@ -366,11 +373,26 @@ if [ -n "$FOUND" ]; then
 fi
 
 LOG_PID="$PID"
-METRO_FALSE="$(log_since "$T0" | grep -m1 -E 'isMetroRunning\(\): Async result = false|packager does not seem to be running' || true)"
+METRO_FALSE=""
+[ -n "$PID" ] && METRO_FALSE="$(log_since "$T0" | grep -m1 -E 'isMetroRunning\(\): Async result = false|packager does not seem to be running' || true)"
 if [ -n "$APP_DIED" ]; then
   note "marker:  $MARKER never appeared - the app process is gone (checked after ${WAITED}s)"
   sleep 1
-  R="$(sh_dev dumpsys activity exit-info "$PKG" | grep -m1 -E 'reason=' | sed -E 's/^ *//' || true)"
+  # The record of the process judged here: a fresh crash may not be written yet, and record
+  # #0 is then the force-stop of the process before it. The pid is on the timestamp line,
+  # the reason on the next one. No pid (died before it was seen) = the newest record.
+  R=""
+  for _i in 1 2 3; do
+    # One process can have several records (a crash, then the kill of what it left
+    # behind): the crash or signal one names the cause.
+    R="$(sh_dev dumpsys activity exit-info "$PKG" | awk -v p="${PID:-}" '
+          / pid=[0-9]+ / { n++; want = (p == "" ? n == 1 : index($0, " pid=" p " ") > 0); next }
+          want && /reason=/ { sub(/^ */, ""); if (!first) first = $0
+                              if (!cause && $0 ~ /CRASH|SIGNAL|ANR|INIT FAILURE/) cause = $0 }
+          END { if (cause) print cause; else if (first) print first }')"
+    [ -n "$R" ] && break
+    sleep 1
+  done
   [ -n "$R" ] && note "exit:    $R"
   C="$(LOG_PID="" log_since "$T0" -b crash | grep -B1 -F "$PKG" | grep -m2 -E 'FATAL|Process:|signal' || true)"
   [ -n "$C" ] && while IFS= read -r l; do note "crash:   $l"; done <<< "$C"
