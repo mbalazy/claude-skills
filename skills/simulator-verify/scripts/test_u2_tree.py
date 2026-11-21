@@ -44,6 +44,19 @@ SCREEN = source(
 )
 
 
+def windows(focus, pkg):
+    """A `dumpsys window` dump: the focus line and, further down, every window's block
+    with its own package; the focused window (`focus`) belongs to `pkg`."""
+    h = focus.split("{")[1].split(" ")[0]
+    return ("  mCurrentFocus=%s\nWINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+            "  Window #3 Window{ffff u0 com.android.systemui}:\n"
+            "    mOwnerUid=10100 showForAllUsers=true package=com.android.systemui appop=NONE\n"
+            "  Window #4 %s:\n"
+            "    mOwnerUid=10215 showForAllUsers=false package=%s appop=NONE\n"
+            "  Window #5 Window{%s0 u0 other}:\n"
+            "    mOwnerUid=10300 showForAllUsers=false package=com.example.other appop=NONE\n" % (focus, focus, pkg, h))
+
+
 class Elements(unittest.TestCase):
     def by_name(self, els):
         return {e.get("name") or e.get("label"): e for e in els}
@@ -108,18 +121,55 @@ class Element(unittest.TestCase):
         self.assertTrue(got["Modal-close"]["displayed"])
         self.assertEqual(u2_el.matches(SCREEN, "nope", 2.625), [])
 
-    def test_focus_parsing(self):
-        self.assertTrue(u2_el.in_focus(PKG, "Window{ccaae10 u0 com.example.app/com.example.app.MainActivity}"))
-        self.assertTrue(u2_el.in_focus(PKG, "Window{1 u0 Splash Screen com.example.app}"))
-        self.assertFalse(u2_el.in_focus(PKG, "Window{1 u0 com.example.app.other/x.Main}"))
-        self.assertFalse(u2_el.in_focus(PKG, ""))
+    def test_focus_matches_the_package_of_the_focused_window(self):
+        f = u2_el.focused_window(windows("Window{ccaae10 u0 com.example.app/com.example.app.MainActivity}", PKG))
+        self.assertEqual(f, ("Window{ccaae10 u0 com.example.app/com.example.app.MainActivity}", PKG))
+        self.assertTrue(u2_el.in_focus(PKG, f))
+        self.assertFalse(u2_el.in_focus("com.example.app.other", f))
+        self.assertFalse(u2_el.in_focus(PKG, ("", None)))
+
+    def test_a_titled_dialog_of_the_app_is_the_app(self):
+        f = u2_el.focused_window(windows("Window{ab12 u0 Delete item?}", PKG))
+        self.assertTrue(u2_el.in_focus(PKG, f))
+
+    def test_an_anr_dialog_naming_the_app_is_not_the_app(self):
+        f = u2_el.focused_window(windows("Window{ab12 u0 Application Not Responding: %s}" % PKG, "android"))
+        self.assertEqual(f[1], "android")
+        self.assertFalse(u2_el.in_focus(PKG, f))
+
+    def test_focus_without_a_package_line_falls_back_to_the_title(self):
+        self.assertTrue(u2_el.in_focus(PKG, ("Window{1 u0 Splash Screen com.example.app}", None)))
+        self.assertTrue(u2_el.in_focus(PKG, ("Window{1 u0 com.example.app/x.Main}", None)))
+        self.assertFalse(u2_el.in_focus(PKG, ("Window{1 u0 com.example.app.other/x.Main}", None)))
+        self.assertEqual(u2_el.focused_window("  mCurrentFocus=null\n"), ("", None))
 
     def test_why_not_names_the_failed_condition(self):
+        app = ("Window{1 u0 %s/x}" % PKG, PKG)
         e = u2_el.matches(SCREEN, "Modal-close", 2.625)[0]
-        self.assertIn("outside the screen", u2_el.why_not(e, "Window{1 u0 %s/x}" % PKG))
+        self.assertIn("outside the screen", u2_el.why_not(e, app))
         e = u2_el.matches(SCREEN, "Comp-text", 2.625)[0]
-        self.assertIsNone(u2_el.why_not(e, "Window{1 u0 %s/x}" % PKG))
-        self.assertIn("focused window", u2_el.why_not(e, "Window{1 u0 com.android.launcher3/x}"))
+        self.assertIsNone(u2_el.why_not(e, app))
+        self.assertIn("focused window", u2_el.why_not(e, ("Window{1 u0 com.android.launcher3/x}", "com.android.launcher3")))
+
+
+ACTIVITIES = """  * Task{1bac009 #111 type=standard A=10215:%(app)s U=0 visible=true sz=2}
+    topResumedActivity=ActivityRecord{183426601 u0 com.google.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity t111}
+    * Hist  #1: ActivityRecord{183426601 u0 com.google.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity t111}
+    * Hist  #0: ActivityRecord{233745680 u0 %(app)s/.MainActivity t111}
+      * Hist  #1: ActivityRecord{183207967 u0 com.android.launcher3/.Launcher t6}
+""" % {"app": PKG}
+
+
+class Foreground(unittest.TestCase):
+    def test_a_permission_dialog_on_the_app_task_names_the_app_as_root(self):
+        top, root = u2_el.front(ACTIVITIES)
+        self.assertEqual(top[0], "com.google.android.permissioncontroller")
+        self.assertEqual(root, (PKG, ".MainActivity"))
+
+    def test_the_app_alone(self):
+        acts = "    topResumedActivity=ActivityRecord{9 u0 %s/.MainActivity t5}\n    * Hist  #0: ActivityRecord{9 u0 %s/.MainActivity t5}\n" % (PKG, PKG)
+        self.assertEqual(u2_el.front(acts), ((PKG, ".MainActivity"), (PKG, ".MainActivity")))
+        self.assertEqual(u2_el.front("nothing resumed"), (None, None))
 
 
 if __name__ == "__main__":

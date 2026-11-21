@@ -17,6 +17,8 @@ com.android.permissioncontroller
 com.google.android.permissioncontroller
 com.android.vending
 com.android.launcher3
+com.android.systemui
+com.android.permissioncontroller.permission.ui.GrantPermissionsActivity
 com.google.android
 # Open-source driver servers and helpers (Appium UiAutomator2, Maestro, mobilecli, agent-device)
 io.appium.uiautomator2

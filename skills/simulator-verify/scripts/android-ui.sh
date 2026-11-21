@@ -203,27 +203,13 @@ case "$cmd" in
     run_child python3 "$HERE/u2_tree.py" --port "$_MEMO_PORT" --scale "$_MEMO_SCALE" --match "$_pat" "${_wf_args[@]+"${_wf_args[@]}"}"
     ;;
 
-  # The resumed activity is the app in front; the focused WINDOW can be a system one on
-  # top of it (a permission dialog, the chooser, a browser the app opened), and that is
-  # what every element read sees, so it is named whenever its package differs.
+  # The app in front is the top resumed activity - or, when that is a system activity
+  # pushed onto the app's task (a permission dialog), the task's root. The focused WINDOW
+  # can still be another one (the dialog, a chooser, a browser the app opened), and that
+  # is what every element read sees, so it is named whenever it is not the app's.
   foreground)
-    _ser="$(serial)"
-    _top="$("$ADB" -s "$_ser" shell dumpsys activity activities 2>/dev/null </dev/null | tr -d '\r' \
-            | sed -nE 's/.*topResumedActivity=ActivityRecord\{[^ ]+ [^ ]+ ([^ ]+).*/\1/p' | head -1 || true)"
-    _focus="$("$ADB" -s "$_ser" shell dumpsys window 2>/dev/null </dev/null | tr -d '\r' \
-              | sed -nE 's/.*mCurrentFocus=(.*)$/\1/p' | head -1 || true)"
-    if [ -z "$_top" ]; then
-      echo "ERROR: no resumed activity on $_ser (screen off or locked?) - focused window: ${_focus:-none}" >&2
-      exit 1
-    fi
-    _pkg="${_top%%/*}"
-    _pid="$("$ADB" -s "$_ser" shell pidof "$_pkg" 2>/dev/null </dev/null | tr -d '\r' || true)"
-    echo "$_pkg pid ${_pid:-?} ($_top)"
-    case "$_focus" in
-      *" $_pkg/"*|*" $_pkg}"*) ;;
-      null|"") echo "focus: none (screen off?)" ;;
-      *) echo "focus: $_focus - this window, not $_pkg, is what element reads see" ;;
-    esac
+    _ser="$(serial)" || exit $?
+    run_child python3 "$HERE/u2_el.py" --adb "$ADB" --serial "$_ser" foreground
     ;;
 
   *)
