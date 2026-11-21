@@ -5,7 +5,12 @@
 #
 #   ANDROID_SERIAL=<serial> [OTHER_SERIAL=<serial>] android-regress.sh <outdir> [GROUP ...]
 #
-# GROUP: core (device selection, server lifecycle, session) - default: every group.
+# GROUP: core (device selection, server lifecycle, session), read (elements, el, waitid,
+# waitfor, foreground, --settled on the fixture app) - default: every group.
+# read needs the fixture (tests/android-fixture) installed and running its JS, and the
+# server READY (core leaves it running). FIXTURE_PKG / FIXTURE_SCHEME default to
+# com.example.svcli / svp2cli; OTHER_PKG names a second app with the same testIDs (the
+# fixture's embedded-bundle flavor) for the case where it starts over the first.
 # OTHER_SERIAL: a second attached device for the cases that need two (ambiguity, a port
 # forwarded to the other device); without it those cases are SKIPPED, not passed.
 # ADBD_RESTART=1 adds the case that restarts adbd on ANDROID_SERIAL (`adb root` + `unroot`)
@@ -13,7 +18,8 @@
 #
 # The cases change the device: they stop and start the UiAutomator2 server and run a
 # `uiautomator dump` loop for a few seconds. They leave the server RUNNING on
-# ANDROID_SERIAL. Animation scales are read before and after: a change is a FAIL.
+# ANDROID_SERIAL. read revokes the fixture's notification permission to show the dialog.
+# Animation scales are read before and after: a change is a FAIL.
 # Exit 0 = every case passed, 1 = at least one FAIL.
 
 set -uo pipefail
@@ -25,7 +31,7 @@ U="$HERE/uia2-server.sh"
 . "$HERE/android-lib.sh"
 SERIAL="${ANDROID_SERIAL:?set ANDROID_SERIAL to the emulator the cases run on}"
 OTHER="${OTHER_SERIAL:-}"
-GROUPS_WANTED="${*:-core}"
+GROUPS_WANTED="${*:-core read}"
 mkdir -p "$OUT"
 PASS=0; FAIL=0; SKIP=0
 
@@ -135,6 +141,113 @@ if want_group core; then
     case_ adbd_repair   0 'restarting it' "READY $SERIAL " -- "$U" ensure "$SERIAL"
   else
     skip adbd_check "ADBD_RESTART not set"; skip adbd_repair "ADBD_RESTART not set"
+  fi
+fi
+
+if want_group read; then
+  # The read commands against the fixture app (tests/android-fixture), already installed
+  # and showing its JS (Metro running): screens are opened by deep link, controls tapped
+  # with `adb input` at the centre `el` reports - the driver's own tap comes later.
+  export ANDROID_SERIAL="$SERIAL"
+  PKG="${FIXTURE_PKG:-com.example.svcli}"
+  SCHEME="${FIXTURE_SCHEME:-svp2cli}"
+  DENSITY="$("$ADB" -s "$SERIAL" shell wm density </dev/null | tr -d '\r' \
+    | awk -F': *' '/Physical density/ { p = $2 } /Override density/ { o = $2 } END { print (o != "" ? o : p) }')"
+  open_screen() {   # NAME TITLE-ID
+    "$ADB" -s "$SERIAL" shell am start -W -a android.intent.action.VIEW -d "$SCHEME://screen/$1" "$PKG" >/dev/null 2>&1 </dev/null
+    "$A" waitid "$2" --timeout 15 >/dev/null 2>&1 || echo "WARN: $2 did not appear"
+  }
+  tap_id() {
+    local xy
+    xy="$("$A" el "$1" 2>/dev/null | python3 -c '
+import json, sys
+r = json.load(sys.stdin)[0]["rect"]; s = float(sys.argv[1]) / 160
+print("%d %d" % ((r[0] + r[2] / 2) * s, (r[1] + r[3] / 2) * s))' "$DENSITY")" || { echo "WARN: cannot tap $1"; return 1; }
+    # shellcheck disable=SC2086
+    "$ADB" -s "$SERIAL" shell input tap $xy </dev/null
+  }
+
+  case_ read_usage_waitid 2 'usage: waitid ID' -- "$A" waitid
+  case_ read_usage_waitfor 2 'usage: waitfor REGEX' -- "$A" waitfor
+  case_ read_bad_flag    2 'unknown flag for elements' -- "$A" elements --frob
+  case_ read_bad_grep    2 'not a valid regular expression' -- "$A" elements --grep '('
+  case_ read_bad_timeout 2 'must be a non-negative number' -- "$A" waitid X --timeout abc
+  case_ read_el_flag     2 'unknown flag for el' -- "$A" el X --exists
+
+  "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+  open_screen components Comp-title
+  case_ elements_components 0 '"name":"Comp-switch"' '"name":"Comp-text"' '"name":"Comp-busy"' \
+    '!Comp-text-inner' '!Comp-opacity0' -- "$A" elements
+  case_ elements_names   0 "$(printf '^Comp-switch\tSwitch\t')" -- "$A" elements --names
+  case_ elements_grep    0 'Comp-busy' '!Comp-text' -- "$A" elements --grep busy
+  case_ elements_all_more 0 '^more with --all' -- bash -c '
+    a="$("$1" elements --all | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")" || exit 1
+    d="$("$1" elements | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")" || exit 1
+    [ "$a" -gt "$d" ] && echo "more with --all ($a > $d)" || echo "not more ($a, $d)"' _ "$A"
+  case_ el_switch        0 '"checked":false' -- "$A" el Comp-switch
+  case_ el_missing       1 "no element with id 'Nope-id'" -- "$A" el Nope-id
+  case_ waitid_hit       0 '"name":"Comp-text"' "matched id 'Comp-text'" -- "$A" waitid Comp-text --timeout 5
+  case_ waitid_missing   1 'nothing displayed on screen' -- "$A" waitid Nope-id --timeout 1
+  case_ waitid_exists    0 '"name":"Comp-switch"' -- "$A" waitid Comp-switch --exists --timeout 2
+  case_ waitfor_hit      0 'Plain text' -- "$A" waitfor 'Plain text' --timeout 5
+  case_ waitfor_miss     1 'nothing matching' 'on screen now' 'Comp-switch' -- "$A" waitfor 'zz-not-there' --timeout 1
+  case_ settled_still    0 'Comp-switch' -- "$A" elements --settled
+  case_ foreground_app   0 "^$PKG pid [0-9]+" '!focus:' -- "$A" foreground
+
+  # Motion: the tree is read at every frame (waitForIdleTimeout=0), so endless loops do
+  # not slow a read and --settled is what tells a moving screen from a still one.
+  open_screen anim Anim-title
+  tap_id Anim-toggle-loop; tap_id Anim-toggle-rea; sleep 0.5
+  case_ elements_anim_fast 0 '^fast' -- bash -c '
+    t0=$(python3 -c "import time; print(time.time())"); "$1" elements >/dev/null || exit 1
+    python3 -c "import sys, time; d = time.time() - float(sys.argv[1]); print(\"%s %.2fs\" % (\"fast\" if d < 0.5 else \"slow\", d))" "$t0"' _ "$A"
+  case_ settled_loops    3 'changed between two reads' -- "$A" elements --settled
+  tap_id Anim-toggle-loop; tap_id Anim-toggle-rea; sleep 0.5
+  tap_id Anim-slide
+  case_ settled_slide    3 'changed between two reads' -- "$A" elements --settled
+  case_ settled_after_slide 0 -- "$A" elements --settled
+  tap_id Anim-modal-open
+  case_ waitid_modal_on_screen 0 '^on screen' -- bash -c '
+    r="$("$1" waitid Anim-modal-close --timeout 5)" || exit 1
+    printf "%s" "$r" | python3 -c "
+import json, sys
+e = json.load(sys.stdin)[0]; y = e[\"rect\"][1]
+print((\"on screen\" if e[\"on_screen\"] and y < float(sys.argv[1]) else \"NOT on screen\") + \" y=%s\" % y)" "$2"' \
+    _ "$A" "$(awk -v d="$DENSITY" 'BEGIN { print 2424 * 160 / d }')"
+  "$ADB" -s "$SERIAL" shell input keyevent 4 </dev/null; sleep 1
+
+  # A fresh start empties the inputs; the placeholder must not read as a value.
+  "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
+  open_screen inputs Input-title
+  case_ el_empty_input   0 '"value":""' '"hint":"Controlled"' -- "$A" el Input-controlled
+  tap_id Input-controlled; sleep 0.8
+  "$ADB" -s "$SERIAL" shell input text abc </dev/null; sleep 0.8
+  case_ el_typed_input   0 '"value":"abc"' '!"hint"' -- "$A" el Input-controlled
+  "$ADB" -s "$SERIAL" shell input keyevent 4 </dev/null; sleep 0.5
+
+  # A system window in front: the permission dialog is the active window.
+  "$ADB" -s "$SERIAL" shell pm revoke "$PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 </dev/null
+  "$ADB" -s "$SERIAL" shell pm clear-permission-flags "$PKG" android.permission.POST_NOTIFICATIONS user-set user-fixed >/dev/null 2>&1 </dev/null
+  open_screen perm Perm-title
+  tap_id Perm-notif; sleep 1.5
+  case_ foreground_dialog 0 'permissioncontroller' -- "$A" foreground
+  case_ elements_dialog   0 'SYSTEM window' 'permission_deny_button' -- "$A" elements --names
+  case_ waitid_under_dialog 1 'SYSTEM window' -- "$A" waitid Perm-title --timeout 1
+  tap_id com.android.permissioncontroller:id/permission_deny_button; sleep 1
+  case_ foreground_back   0 "^$PKG pid" -- "$A" foreground
+
+  # Another app with the same testIDs starting over this one: for a moment the tree
+  # still holds this app's window, and that must not count as a hit.
+  if [ -n "${OTHER_PKG:-}" ]; then
+    open_screen home Home-title
+    "$ADB" -s "$SERIAL" shell am force-stop "$OTHER_PKG" </dev/null
+    _act="$("$ADB" -s "$SERIAL" shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$OTHER_PKG" </dev/null | tr -d '\r' | tail -1)"
+    "$ADB" -s "$SERIAL" shell am start -n "$_act" >/dev/null 2>&1 </dev/null &
+    case_ waitid_new_window 0 "\"package\":\"$OTHER_PKG\"" -- "$A" waitid Home-title --timeout 10
+    wait
+    "$ADB" -s "$SERIAL" shell am force-stop "$OTHER_PKG" </dev/null
+  else
+    skip waitid_new_window "no OTHER_PKG (an app with the same testIDs, e.g. the fixture's embedded-bundle flavor)"
   fi
 fi
 
