@@ -316,7 +316,7 @@ if want_group input; then
   "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
   open_screen inputs Input-title
   _word="$(python3 -c 'print("word" * 25)')"
-  for _f in controlled uncontrolled; do
+  for _f in controlled uncontrolled plain; do
     case_ "typeid_${_f}_100"   0 "typed into id Input-$_f: '$_word' \(read back\)" -- "$A" typeid "Input-$_f" "$_word"
     case_ "typeid_${_f}_pl"    0 "'zażółć' \(read back\)" -- "$A" typeid "Input-$_f" 'zażółć'
     case_ "typeid_${_f}_emoji" 0 "'😀 emoji' \(read back\)" -- "$A" typeid "Input-$_f" '😀 emoji'
@@ -329,7 +329,13 @@ if want_group input; then
   case_ typeid_empty     0 "Input-controlled: '' \(read back\)" -- "$A" typeid Input-controlled ''
   case_ typeid_empty_el  0 '"value":"","hint":"Controlled"' -- "$A" el Input-controlled
   case_ typeid_append_placeholder 0 "Input-controlled: 'abc' \(read back\)" -- "$A" typeid Input-controlled abc --append
-  case_ typeid_return    0 'then Return' -- "$A" typeid Input-controlled $'go\n'
+  # Return reaches the field: its onSubmitEditing counter moves.
+  case_ typeid_return    0 '^changes [0-9]+ submits 1$' -- bash -c '"$1" typeid Input-controlled $'"'"'go\n'"'"' >/dev/null && sleep 0.5 && "$1" el Input-counts | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  case_ typeid_backslash_n 1 'backslash followed by n' -- "$A" typeid Input-controlled 'go\n'
+  # A field without a placeholder: the text is replaced, not appended to what it holds.
+  case_ typeid_plain_replace 0 "Input-plain: 'xyz' \(read back\)" -- bash -c '"$1" typeid Input-plain abc >/dev/null && "$1" typeid Input-plain xyz' _ "$A"
+  case_ typeid_plain_append  0 "Input-plain: 'xyzq' \(read back\)" -- "$A" typeid Input-plain q --append
+  case_ typeid_plain_clear   0 "Input-plain: '' \(read back\)" -- "$A" typeid Input-plain ''
   case_ typeid_not_field 1 'not a text field' -- "$A" typeid Input-counts x
   # A fresh start: no field has focus and no keyboard is up (a BACK with no keyboard
   # would send the app away instead).
