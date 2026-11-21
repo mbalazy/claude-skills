@@ -15,8 +15,10 @@ A HIT (what `wait` waits for and what `tapid` will act on) is all of:
     button is displayed=true BELOW the screen for ~0.3 s (measured: y 2526-2569 px on a
     2424 px screen),
   - the node's package is the package of the focused window (`dumpsys window`
-    mCurrentFocus): for ~0.5 s after a cold start the tree still shows the window that
-    was underneath, so an id that also exists there would hit too early.
+    mCurrentFocus): after `am start` of another app the tree keeps showing the window
+    that was underneath for ~0.4 s (measured: focus empty until 0.31 s, the new app's
+    from 0.36 s, its tree from 0.39 s), so an id that also exists there would hit too
+    early. While nothing has focus nothing is a hit.
 --exists drops all three: the id is anywhere in the tree. It cannot tell "scrolled away"
 from "absent" on Android - rows outside a list's viewport have no node at all.
 """
@@ -99,25 +101,26 @@ class Device:
 
 
 def hits_now(dev, ident, scale, exists):
-    """(hits, all matches, focus line or None) from one snapshot."""
-    found = matches(dev.source(), ident, scale)
+    """(hits, all matches, focus line or None, the source) from one snapshot."""
+    src = dev.source()
+    found = matches(src, ident, scale)
     if exists:
-        return found, found, None
+        return found, found, None, src
     cand = [e for e in found if e["displayed"] and e["on_screen"]]
     if not cand:
-        return [], found, None
+        return [], found, None, src
     focus = dev.focus()
-    return [e for e in cand if in_focus(e["package"], focus)], found, focus
+    return [e for e in cand if in_focus(e["package"], focus)], found, focus, src
 
 
 def cmd_wait(dev, a):
     started = time.time()
     deadline = started + a.timeout
-    polls, found, focus, err = 0, [], None, None
+    polls, found, focus, err, src = 0, [], None, None, None
     while True:
         polls += 1
         try:
-            hits, found, focus = hits_now(dev, a.id, a.scale, a.exists)
+            hits, found, focus, src = hits_now(dev, a.id, a.scale, a.exists)
             err = None
         except u2_client.ServerError as e:
             hits, found, err = [], [], str(e)
@@ -140,9 +143,10 @@ def cmd_wait(dev, a):
             elif err:
                 print("  last read failed: %s" % err, file=sys.stderr)
             else:
-                print("  no element carries that resource-id in this tree (only the active window is "
-                      "read, and off-screen list rows do not exist). `elements --all --grep` lists what "
-                      "is there.", file=sys.stderr)
+                note = u2_tree.window_note(src) if src else None
+                print("  %s" % (note or "no element carries that resource-id in this tree (only the active "
+                      "window is read, and off-screen list rows do not exist). `elements --all --grep` "
+                      "lists what is there."), file=sys.stderr)
             return 1
         time.sleep(a.interval)
 

@@ -11,6 +11,10 @@ Element: {"type", "label", "name", "value", "checked", "hint", "rect"} - `name` 
 resource-id (a React Native testID arrives there bare, no package prefix), `type` the
 last part of the class (TextView, Button, ViewGroup, EditText, Switch ...), `label` the
 content-desc or else the text, `rect` [x, y, w, h] in dp (px / density-scale, rounded).
+The rect is in SCREEN coordinates and clipped to the screen: in an edge-to-edge window
+(API 35+, and the RN 0.8x template) it equals React Native's measureInWindow; in a window
+without edge-to-edge it is lower by the status bar (24 dp measured on API 34), and an
+element running past the bottom edge reports only its visible part.
 An EditText's text is its `value`, except while `showing-hint` is true: then the text is
 the placeholder, so `value` is empty and the placeholder is `hint`. A checkable node
 (Switch, CheckBox) carries `checked` instead of a value.
@@ -20,7 +24,7 @@ or a content-desc, or is a clickable Button / EditText / Switch / CheckBox. Visi
 displayed, a positive size, and some part inside the screen. --all keeps every visible
 node.
 
-What the tree is - read before relying on it (measured on API 34/35/36, RN 0.88):
+What the tree is - read before relying on it (measured on API 34 and 36, RN 0.88):
   - Only the ACTIVE window. A permission dialog or a chooser replaces the app's nodes
     entirely; a NOTE on stderr says when the tree is a system window.
   - Off-screen rows of a list or a horizontal ScrollView do not exist at all (iOS
@@ -29,7 +33,10 @@ What the tree is - read before relying on it (measured on API 34/35/36, RN 0.88)
   - waitForIdleTimeout=0 (set by u2_client.py) means a read during a transition is a
     FRAME: a sliding Modal's button is displayed=true below the screen for ~0.3 s and a
     native-driver slide moves on every read. --settled (two reads 2 s apart) is the
-    answer to "is this the state".
+    answer to "is this the state". It catches steady motion of any length (a 4 s slide
+    included); a pause in the middle of an animation longer than the gap reads as
+    settled. A react-navigation native-stack push never shows a middle frame: the new
+    screen's nodes appear at their final rects within ~0.1 s of the tap.
 """
 import argparse
 import difflib
@@ -45,7 +52,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import u2_client  # noqa: E402
 
 KEEP_CLICKABLE = ("Button", "EditText", "Switch", "CheckBox")
-SYSTEM_PREFIXES = ("com.android.", "com.google.android.", "android")
+SYSTEM_PREFIXES = ("com.android.", "com.google.android.")
 FIELDS = ("type", "label", "name", "value")
 
 
@@ -156,7 +163,7 @@ def window_package(xml_text):
 
 
 def is_system_package(pkg):
-    return bool(pkg) and (pkg == "android" or pkg.startswith(SYSTEM_PREFIXES[:2]))
+    return bool(pkg) and (pkg == "android" or pkg.startswith(SYSTEM_PREFIXES))
 
 
 def window_note(xml_text):
