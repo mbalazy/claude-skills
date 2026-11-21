@@ -202,14 +202,20 @@ launcher_activity() {
   esac
 }
 
-# `am start` exits 0 on its own errors ("Error: Activity not started, unable to resolve
-# Intent"), so its output is what decides. A "Warning: Activity not started, intent has
-# been delivered to currently running top-most instance" is a success (the app was in front).
+# `adb shell` joins its arguments with spaces and hands them to the DEVICE's shell, so
+# every argument is single-quoted here: an unquoted URL with `&` was cut at it and its
+# tail run as a second command. `am start` exits 0 on its own errors ("Error: Activity
+# not started, unable to resolve Intent"), so its output decides as much as the exit
+# code. A "Warning: Activity not started, intent has been delivered to currently running
+# top-most instance" is a success (the app was in front).
+shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 am_start() {
-  local o
-  o="$("$ADB" -s "$_MEMO_SERIAL" shell am start -W "$@" 2>&1 </dev/null | tr -d '\r' || true)"
-  if printf '%s\n' "$o" | grep -qE '^(Error|Exception|java\.)'; then
-    echo "ERROR: am start failed:" >&2
+  local o c="am start -W" rc=0 x
+  for x in "$@"; do c="$c $(shq "$x")"; done
+  o="$("$ADB" -s "$_MEMO_SERIAL" shell "$c" 2>&1 </dev/null)" || rc=$?
+  o="$(printf '%s\n' "$o" | tr -d '\r')"
+  if [ "$rc" != 0 ] || printf '%s\n' "$o" | grep -qE '^(Error|Exception|java\.)|not found'; then
+    echo "ERROR: am start failed (exit $rc):" >&2
     printf '%s\n' "$o" | grep -vE '^\s*$' | sed 's/^/  /' >&2
     return 1
   fi
@@ -218,10 +224,15 @@ am_start() {
 
 app_pid() { "$ADB" -s "$_MEMO_SERIAL" shell pidof "$1" 2>/dev/null </dev/null | tr -d '\r' || true; }
 
-# An Expo dev-client declares an exp+<slug> scheme; prints it, or nothing for any other app.
+# An Expo dev-client declares an exp+<slug> scheme (the slug keeps `.`, `+` and `-`);
+# prints it, or nothing for any other app. A release build of an app with expo-dev-client
+# carries the scheme too, but its launcher is compiled out: only a DEBUGGABLE package is
+# started through the link.
 expo_scheme() {
-  "$ADB" -s "$_MEMO_SERIAL" shell dumpsys package "$1" 2>/dev/null </dev/null | tr -d '\r' \
-    | grep -oE 'exp\+[a-z0-9-]+' | head -1 || true
+  local d
+  d="$("$ADB" -s "$_MEMO_SERIAL" shell dumpsys package "$1" 2>/dev/null </dev/null | tr -d '\r' || true)"
+  printf '%s\n' "$d" | grep -qE 'pkgFlags=\[[^]]*DEBUGGABLE' || return 0
+  printf '%s\n' "$d" | grep -oE 'exp\+[a-z0-9.+-]+' | head -1 || true
 }
 
 # The dev server a dev-client should load: its own debug_http_host pref (the launcher
