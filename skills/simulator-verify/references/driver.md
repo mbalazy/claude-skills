@@ -4,7 +4,7 @@ Read before your first batch in a session, and whenever a command does something
 
 - **`scripts/sim-ui.sh`** - the driver for everything: observation and interaction via WebDriverAgent's HTTP API (localhost:8100), lifecycle via `xcrun simctl`. No MCP server needed. Run it with no args for the command list. It auto-starts WDA (`com.facebook.WebDriverAgentRunner.xctrunner` must be installed on the sim). **A physical iPhone on the cable is the same driver**: put the phone's udid in `SIM_UDID` and every command works unchanged - see `device.md`.
 
-- **Android emulator**: `scripts/android-ui.sh` is the counterpart of `sim-ui.sh` (same commands, flags and exit codes); what differs per command is in `android.md`.
+- **Android emulator**: `scripts/android-ui.sh` is the counterpart of `sim-ui.sh` (the same command names and exit codes; no launch arguments, `openurl` needs a package); what differs per command is in `android.md`.
 
 - **`scripts/rn-devtools.mjs`** - asks the app's JS runtime over Metro's CDP inspector (runtime pages, evaluate JS, a log of the app's JS requests); see 2b. Its shared code is `scripts/devtools/`, Argent-derived files under `scripts/devtools/vendor/argent/` (Apache 2.0, see its NOTICE).
 
