@@ -31,6 +31,34 @@ trips stopped existing.
 
 - **WDA version is pinned**: both `wda-sim.sh` and `wda-device.sh` fetch `appium-webdriveragent@$WDA_VERSION` (default 16.18.5; unpinned, npm hands out 17.x, which wants Node 22/24/26+). Against 16.17.10 on an iPhone 17 simulator (2026-11-17, 5 rounds each): `findElements` with 134 matches 5.5 s -> 0.44 s and with 20 matches 0.74 s -> 0.13 s; `elements`, `el`, `waitid` and `screenshot` unchanged; `regress.sh` output identical apart from session ids and `waitid` fitting one more poll into its second. A sources checkout of another version (`~/.cache/wda-device/package`) is never replaced by the scripts - they print a NOTE saying how to switch.
 
+## Android driver (2026-11-21)
+
+Apple Silicon Mac (M5 Pro, 64 GB), API 34/35/36 `google_apis` arm64 emulators (Pixel 9
+profile, 420 dpi, scale 2.625), UiAutomator2 server 11.2.4 run without Appium, fixture app
+RN 0.88.1 (RN CLI and Expo SDK 58 dev-client) and a real RN 0.81.1 app. The phase-2
+measurements behind the design are in `android-phase2-2026-11-20.md`.
+
+- **Server**: `uia2-server.sh ensure` 1.6 s from scratch, 0.45 s on a running server;
+  repair after an adbd restart 4.7 s; a foreign UiAutomation client refused in ~1 s.
+- **Tree read**: `elements` 0.16-0.18 s on a screen with an `Animated.loop` and a
+  Reanimated loop both running (raw `/source` 7 ms) - an app that never idles does not
+  slow it, unlike `tapid` on iOS.
+- **Default filter**: the fixture's big screen 63 nodes / 59 visible / 46 kept; the real
+  app's first screen 54 / 37 / 25.
+- **After a start**: focus is empty for ~0.31 s, the new app owns it from 0.36 s and its
+  tree from 0.39 s; `waitid` hit only in the new window, 3/3.
+- **Gestures**: double tap as W3C actions 10/10 (and `input tap` x2 10/10) on API 34/36;
+  a drag held 502 ms as W3C actions, against 419 ms `draganddrop` and 40 ms `swipe`.
+- **Expo dev-client relaunch** through its link: 0.5-1.3 s into the app, 3/3.
+- **Coordinates**: UiA2 rects are screen coordinates; equal to `measureInWindow` with
+  edge-to-edge (API 36), 24 dp apart without it (API 34 build with edge-to-edge off).
+- **Transitions**: a native-stack push shows no middle frame (final rect within 0.1 s);
+  1.5 s and 4 s slides and a Modal slide give `--settled` exit 3; a 2.5 s pause in the
+  middle of an animation reads as settled.
+- **Rig check**: the marker arrives 1-3 s after the cold start; an embedded bundle is
+  found by `unzip -l` on the device in 0.03 s; an `am crash` during the wait is reported as
+  TERMINATED in 8-9 s.
+
 ## Where the other dated numbers live
 
 Numbers that justify one specific rule stay next to that rule, with their date:
