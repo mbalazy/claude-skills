@@ -90,7 +90,7 @@ scale() {
   local d
   if [ -z "$_MEMO_SCALE" ]; then
     d="$("$ADB" -s "$_MEMO_SERIAL" shell wm density 2>/dev/null </dev/null | tr -d '\r' \
-         | awk -F': *' '/Physical density/ { p = $2 } /Override density/ { o = $2 } END { print (o != "" ? o : p) }')"
+         | awk -F': *' '/Physical density/ { p = $2 } /Override density/ { o = $2 } END { print (o != "" ? o : p) }' || true)"
     [[ "$d" =~ ^[0-9]+$ ]] && [ "$d" -gt 0 ] || { echo "ERROR: could not read the screen density of $_MEMO_SERIAL (wm density)" >&2; exit 1; }
     _MEMO_SCALE="$(awk -v d="$d" 'BEGIN { printf "%.4f", d / 160 }')"
   fi
