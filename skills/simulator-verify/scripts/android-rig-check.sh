@@ -213,7 +213,14 @@ else
     note "binary:  the installed APK IS ${MATCH#$REPO/}"
   else
     note "binary:  the installed APK matches NO local build; newest local: ${NEWEST#* } ($(date -r "${NEWEST%% *}" '+%Y-%m-%d %H:%M'))"
-    note "         a native change built there is not on the device - adb -s $SERIAL install -r <that apk> keeps the app's data"
+    INST_EPOCH="$(date -j -f '%Y-%m-%d %H:%M:%S' "${INSTALLED_AT:-x}" +%s 2>/dev/null || true)"
+    if [ -n "$INST_EPOCH" ] && [ "${NEWEST%% *}" -gt "$INST_EPOCH" ]; then
+      note "         that build is NEWER than the install: a native change built there is not on the device - adb -s $SERIAL install -r <that apk> keeps the app's data"
+    elif [ -n "$INST_EPOCH" ]; then
+      note "         the install is newer than every local build - it came from elsewhere (CI, another worktree); this tree's native code is not what runs"
+    else
+      note "         install time unreadable - cannot tell which one is newer"
+    fi
   fi
 fi
 
@@ -262,6 +269,13 @@ if [ -z "$EXPO_SCHEME" ] && [ "$TRIGGER" = cold ]; then
   # keeps its own copy in memory and writes it back.
   "$ADB" -s "$SERIAL" shell am force-stop "$PKG" </dev/null
   "$ADB" -s "$SERIAL" shell "run-as $PKG mkdir -p shared_prefs" </dev/null >/dev/null 2>&1
+  # A .bak left by a write that was cut off is what the app loads (it replaces the file with
+  # it): settle it the same way first, or the merge below is undone at the next start.
+  if "$ADB" -s "$SERIAL" shell "run-as $PKG ls $PREFS_FILE.bak" </dev/null 2>/dev/null | tr -d '\r' | has "$PREFS_FILE.bak\$"; then
+    "$ADB" -s "$SERIAL" shell "run-as $PKG mv -f $PREFS_FILE.bak $PREFS_FILE" </dev/null >/dev/null 2>&1
+    note "prefs:   $PREFS_FILE.bak was left behind - moved over the file, as the app would at load"
+    WAS="$(read_prefs | python3 "$PREFS" get debug_http_host || true)"
+  fi
   CUR="$(read_prefs)"
   NEW="$(mktemp -t android-rig-prefs)"
   if ! printf '%s' "$CUR" | python3 "$PREFS" set debug_http_host "$HOST" > "$NEW"; then
@@ -361,6 +375,8 @@ fi
 # Leave the app running marker-free code: a second cold start (never a reload right after
 # the marker - startup and reload race), and say whether it came up clean.
 if [ -n "$FOUND" ] && [ "$TRIGGER" = cold ]; then
+  # Same watcher race as the insertion: a start that wins it is served the marker bundle.
+  sleep 1
   T1="$(dev_now)"
   start_cold
   sleep 3
