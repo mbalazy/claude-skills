@@ -35,13 +35,14 @@ android_attached() {
 }
 
 # Human name of a device: the AVD name for an emulator (the only reliable serial <-> AVD
-# link), the model for anything else.
+# link), the model for anything else. stdin is closed for adb: called inside
+# `while read` loops, `adb shell` would otherwise eat the remaining lines.
 android_name() {
   local n=""
   case "$1" in
-    emulator-*) n="$("$ADB" -s "$1" emu avd name 2>/dev/null | head -1 | tr -d '\r' || true)" ;;
+    emulator-*) n="$("$ADB" -s "$1" emu avd name 2>/dev/null </dev/null | head -1 | tr -d '\r' || true)" ;;
   esac
-  [ -n "$n" ] || n="$("$ADB" -s "$1" shell getprop ro.product.model 2>/dev/null | tr -d '\r' || true)"
+  [ -n "$n" ] || n="$("$ADB" -s "$1" shell getprop ro.product.model 2>/dev/null </dev/null | tr -d '\r' || true)"
   echo "${n:-?}"
 }
 
