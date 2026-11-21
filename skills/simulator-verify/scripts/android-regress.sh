@@ -96,14 +96,16 @@ if want_group core; then
 
   # Another UiAutomation client: a `uiautomator dump` loop. The refusal must come in
   # seconds, naming the holder - not as a 10-19 s timeout.
-  timeout 30 "$ADB" -s "$SERIAL" shell 'while true; do uiautomator dump /dev/null >/dev/null 2>&1; done' >/dev/null 2>&1 &
+  # Plain background job, killed below: base macOS has no `timeout`.
+  "$ADB" -s "$SERIAL" shell 'while true; do uiautomator dump /dev/null >/dev/null 2>&1; done' >/dev/null 2>&1 </dev/null &
   LOOP=$!
+  trap 'kill "$LOOP" 2>/dev/null' EXIT
   sleep 1.5
   case_ foreign_client  1 'UiAutomation is held by another client' 'uiautomator' -- bash -c '
     t0=$(date +%s); "$1" ensure "$2"; rc=$?; echo "took $(( $(date +%s) - t0 ))s"; exit $rc' _ "$U" "$SERIAL"
   grep -qE 'took [0-4]s' "$OUT/foreign_client.txt" && echo "PASS foreign_client_fast" && PASS=$((PASS + 1)) \
     || { echo "FAIL foreign_client_fast (not under 5 s) - $OUT/foreign_client.txt"; FAIL=$((FAIL + 1)); }
-  kill "$LOOP" 2>/dev/null; wait "$LOOP" 2>/dev/null
+  kill "$LOOP" 2>/dev/null; wait "$LOOP" 2>/dev/null; trap - EXIT
   "$ADB" -s "$SERIAL" shell pkill -f 'uiautomator dump' >/dev/null 2>&1
   "$ADB" -s "$SERIAL" shell pkill -x uiautomator >/dev/null 2>&1
   sleep 1
