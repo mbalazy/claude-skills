@@ -5,7 +5,7 @@
 #
 #   uia2-server.sh ensure [SERIAL]   # install if needed, start, forward a port, prove it: READY or NOT READY
 #   uia2-server.sh check  [SERIAL]   # the same proof without installing or starting anything
-#   uia2-server.sh stop   [SERIAL]   # stop this driver's server on SERIAL and remove its forward
+#   uia2-server.sh stop   [SERIAL]   # stop the UiAutomator2 server on SERIAL and remove this driver's forward
 #   uia2-server.sh fetch             # put the pinned APKs into the cache (npm pack) and verify them
 #
 # SERIAL: the argument, else $ANDROID_SERIAL, else the only attached device (several and
@@ -226,8 +226,10 @@ stop() {
   local p removed=0
   SERIAL="${1:-}"
   [ -n "$SERIAL" ] || SERIAL="$(android_serial)"
-  for p in $("$ADB" forward --list 2>/dev/null | awk -v s="$SERIAL" -v r="tcp:$U2_DEVICE_PORT" \
-              '$1 == s && $3 == r && $2 ~ /^tcp:/ { sub(/^tcp:/, "", $2); print $2 }'); do
+  # Only forwards this driver makes: its range 8210-8229 or the U2_PORT it was given.
+  # Appium's own driver forwards the same device port from 8200-8299 - not ours to remove.
+  for p in $("$ADB" forward --list 2>/dev/null | awk -v s="$SERIAL" -v r="tcp:$U2_DEVICE_PORT" -v u="${U2_PORT:-}" \
+              '$1 == s && $3 == r && $2 ~ /^tcp:/ { sub(/^tcp:/, "", $2); n = $2 + 0; if ((n >= 8210 && n <= 8229) || $2 == u) print $2 }'); do
     "$ADB" -s "$SERIAL" forward --remove "tcp:$p" && { echo "removed forward :$p -> $SERIAL"; removed=1; }
   done
   if [ -n "$(server_pid)" ]; then
