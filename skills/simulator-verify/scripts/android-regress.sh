@@ -23,8 +23,9 @@
 # to prove a server that says ready but cannot answer is detected and repaired; a `user`
 # build (a retail phone) refuses `adb root`, so there it is SKIPPED with that reason.
 # A physical device (not an emulator): the input group's lock cases are SKIPPED unless
-# LOCK_ON_DEVICE=1 - a phone with a PIN stays locked after them, and every later case
-# would run against the keyguard.
+# LOCK_ON_DEVICE=1. With it, a phone with a PIN stays locked: `unlock` must then name the
+# PIN, and every case after it is SKIPPED with that reason (a person has to unlock it) - so
+# run that group last, or alone.
 #
 # The cases change the device: they stop and start the UiAutomator2 server and run a
 # `uiautomator dump` loop for a few seconds. They leave the server RUNNING on
@@ -51,8 +52,12 @@ want_group() { case " $GROUPS_WANTED " in *" $1 "*) return 0 ;; esac; return 1; 
 
 # case NAME RC [PATTERN ...] -- CMD...   (PATTERN: an ERE the output must match;
 # a leading ! means it must NOT match)
+STAYS_LOCKED=0
 case_() {
   local name="$1" rc_want="$2" pats=() out rc p ok=1 why=""
+  if [ "$STAYS_LOCKED" = 1 ]; then
+    skip "$name" "the screen stays locked behind a PIN - a person has to unlock it"; return
+  fi
   shift 2
   while [ "$#" -gt 0 ] && [ "$1" != -- ]; do pats+=("$1"); shift; done
   shift
@@ -87,6 +92,7 @@ SCHEME="${FIXTURE_SCHEME:-svp2cli}"
 DENSITY="$("$ADB" -s "$SERIAL" shell wm density </dev/null | tr -d '\r' \
   | awk -F': *' '/Physical density/ { p = $2 } /Override density/ { o = $2 } END { print (o != "" ? o : p) }')"
 open_screen() {   # NAME TITLE-ID
+  [ "$STAYS_LOCKED" = 1 ] && return 0
   "$ADB" -s "$SERIAL" shell am start -W -a android.intent.action.VIEW -d "$SCHEME://screen/$1" "$PKG" >/dev/null 2>&1 </dev/null
   "$A" waitid "$2" --timeout 15 >/dev/null 2>&1 || echo "WARN: $2 did not appear"
 }
@@ -399,11 +405,29 @@ if want_group input; then
     sleep 1
     case_ locked_after     0 '^true$' -- "$A" locked
     case_ lock_again       0 '^true$' -- bash -c '"$1" lock >/dev/null && sleep 0.5 && "$1" locked' _ "$A"
-    case_ unlock           0 '^unlocked$' -- "$A" unlock
-    case_ locked_unlocked  0 '^false$' -- "$A" locked
+    # A wait on a locked screen stops after its first read, naming the lock, not at --timeout.
+    case_ locked_waitid    0 'waitid: the screen of .* is LOCKED' '^rc=1 in [0-9]s$' -- bash -c \
+      's=$SECONDS; "$1" waitid Home-title --timeout 30; echo "rc=$? in $((SECONDS - s))s"' _ "$A"
+    case_ locked_waitfor   0 'waitfor: the screen of .* is LOCKED' '^rc=1 in [0-9]s$' -- bash -c \
+      's=$SECONDS; "$1" waitfor "^Nothing-here$" --timeout 30; echo "rc=$? in $((SECONDS - s))s"' _ "$A"
+    if [ "$IS_EMULATOR" = 1 ]; then
+      case_ unlock           0 '^unlocked$' -- "$A" unlock
+      case_ locked_unlocked  0 '^false$' -- "$A" locked
+    else
+      # A phone without a PIN unlocks like an emulator; with one, unlock names it and
+      # the phone stays locked for the rest of the run.
+      case_ unlock         0 '^unlocked rc=0$|a PIN, pattern or password lock needs a person at the device.* rc=1$' -- \
+        bash -c 'o="$("$1" unlock 2>&1)"; echo "$o rc=$?"' _ "$A"
+      if grep -q 'a PIN, pattern or password' "$OUT/unlock.txt" 2>/dev/null; then
+        case_ locked_unlocked  0 '^true$' -- "$A" locked
+        STAYS_LOCKED=1
+      else
+        case_ locked_unlocked  0 '^false$' -- "$A" locked
+      fi
+    fi
   else
     case_ locked_before    0 '^false$' -- "$A" locked
-    for c in lock locked_after lock_again unlock locked_unlocked; do
+    for c in lock locked_after lock_again locked_waitid locked_waitfor unlock locked_unlocked; do
       skip "$c" "a physical device: a PIN would keep it locked (LOCK_ON_DEVICE=1 runs it)"
     done
   fi
