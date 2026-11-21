@@ -1,5 +1,5 @@
 #!/bin/bash
-# android-regress.sh - run the Android driver's behaviour cases against a live emulator and
+# android-regress.sh - run the Android driver's behaviour cases against a live emulator or phone and
 # keep what each one printed. One file per case (command, stdout + stderr, exit code) plus
 # a PASS/FAIL line per case against its expected exit code and output patterns.
 #
@@ -19,7 +19,11 @@
 # OTHER_SERIAL: a second attached device for the cases that need two (ambiguity, a port
 # forwarded to the other device); without it those cases are SKIPPED, not passed.
 # ADBD_RESTART=1 adds the case that restarts adbd on ANDROID_SERIAL (`adb root` + `unroot`)
-# to prove a server that says ready but cannot answer is detected and repaired.
+# to prove a server that says ready but cannot answer is detected and repaired; a `user`
+# build (a retail phone) refuses `adb root`, so there it is SKIPPED with that reason.
+# A physical device (not an emulator): the input group's lock cases are SKIPPED unless
+# LOCK_ON_DEVICE=1 - a phone with a PIN stays locked after them, and every later case
+# would run against the keyguard.
 #
 # The cases change the device: they stop and start the UiAutomator2 server and run a
 # `uiautomator dump` loop for a few seconds. They leave the server RUNNING on
@@ -69,8 +73,14 @@ scales() {
   "$ADB" -s "$SERIAL" shell 'settings get global window_animation_scale; settings get global transition_animation_scale; settings get global animator_duration_scale' | tr -d '\r' | tr '\n' ' '
 }
 
+# An emulator by its serial or by the property every emulator image sets.
+IS_EMULATOR=0
+case "$SERIAL" in emulator-*) IS_EMULATOR=1 ;; esac
+[ "$IS_EMULATOR" = 1 ] || [ "$("$ADB" -s "$SERIAL" shell getprop ro.kernel.qemu </dev/null | tr -d '\r')" != 1 ] || IS_EMULATOR=1
+BUILD_TYPE="$("$ADB" -s "$SERIAL" shell getprop ro.build.type </dev/null | tr -d '\r')"
+
 SCALES_BEFORE="$(scales)"
-echo "target $SERIAL, other ${OTHER:-none}, groups: $GROUPS_WANTED, animation scales: $SCALES_BEFORE"
+echo "target $SERIAL ($([ "$IS_EMULATOR" = 1 ] && echo emulator || echo "physical device, $BUILD_TYPE build")), other ${OTHER:-none}, groups: $GROUPS_WANTED, animation scales: $SCALES_BEFORE"
 
 # The fixture app (tests/android-fixture) the read and input groups drive.
 PKG="${FIXTURE_PKG:-com.example.svcli}"
@@ -93,6 +103,24 @@ print("%d %d" % ((r[0] + r[2] / 2) * s, (r[1] + r[3] / 2) * s))' "$DENSITY")" ||
 lbl() {   # the label (else value) of the first element with that id
   "$A" el "$1" 2>/dev/null | python3 -c 'import json, sys
 e = json.load(sys.stdin)[0]; print(e.get("label", e.get("value", "")))'
+}
+# Puts the fixture's notification permission back to "never asked", so its request shows
+# the dialog. Some vendor builds refuse `pm revoke` and `pm clear-permission-flags` from the
+# shell (SecurityException: the shell lacks REVOKE_RUNTIME_PERMISSIONS); there the last
+# answer stays, and the dialog still appears only while the permission is neither granted
+# nor fixed by a second "Don't allow". Exit 1 with the reason when it cannot appear.
+# A revoke that works kills the app.
+perm_reset() {
+  local o st
+  o="$("$ADB" -s "$SERIAL" shell pm revoke "$PKG" android.permission.POST_NOTIFICATIONS 2>&1 </dev/null)"
+  "$ADB" -s "$SERIAL" shell pm clear-permission-flags "$PKG" android.permission.POST_NOTIFICATIONS user-set user-fixed >/dev/null 2>&1 </dev/null
+  st="$("$ADB" -s "$SERIAL" shell dumpsys package "$PKG" </dev/null | tr -d '\r' | grep -m1 'POST_NOTIFICATIONS: granted')"
+  case "$st" in *granted=false*) case "$st" in *USER_FIXED*) ;; *) return 0 ;; esac ;; esac
+  case "$o" in
+    *SecurityException*) echo "the device refuses pm revoke from the shell and the permission stays ${st#*: } - reinstall the fixture" ;;
+    *) echo "the permission is ${st#*: } after pm revoke" ;;
+  esac
+  return 1
 }
 
 if want_group core; then
@@ -164,7 +192,9 @@ if want_group core; then
 
   case_ ensure_after    0 "READY $SERIAL " '!installing' -- "$U" ensure "$SERIAL"
 
-  if [ "${ADBD_RESTART:-}" = 1 ]; then
+  if [ "${ADBD_RESTART:-}" = 1 ] && [ "$BUILD_TYPE" = user ]; then
+    skip adbd_check "a user build refuses adb root"; skip adbd_repair "a user build refuses adb root"
+  elif [ "${ADBD_RESTART:-}" = 1 ]; then
     "$ADB" -s "$SERIAL" root >/dev/null 2>&1; sleep 3; "$ADB" -s "$SERIAL" wait-for-device
     "$ADB" -s "$SERIAL" unroot >/dev/null 2>&1; sleep 3; "$ADB" -s "$SERIAL" wait-for-device
     case_ adbd_check    1 'NOT READY' -- "$U" check "$SERIAL"
@@ -239,15 +269,17 @@ print((\"on screen\" if e[\"on_screen\"] and y < float(sys.argv[1]) else \"NOT o
   "$ADB" -s "$SERIAL" shell input keyevent 4 </dev/null; sleep 0.5
 
   # A system window in front: the permission dialog is the active window.
-  "$ADB" -s "$SERIAL" shell pm revoke "$PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 </dev/null
-  "$ADB" -s "$SERIAL" shell pm clear-permission-flags "$PKG" android.permission.POST_NOTIFICATIONS user-set user-fixed >/dev/null 2>&1 </dev/null
-  open_screen perm Perm-title
-  tap_id Perm-notif; sleep 1.5
-  case_ foreground_dialog 0 "^$PKG pid" '^focus: .*permissioncontroller' -- "$A" foreground
-  case_ elements_dialog   0 'SYSTEM window' 'permission_deny_button' -- "$A" elements --names
-  case_ waitid_under_dialog 1 'SYSTEM window' -- "$A" waitid Perm-title --timeout 1
-  tap_id com.android.permissioncontroller:id/permission_deny_button; sleep 1
-  case_ foreground_back   0 "^$PKG pid" -- "$A" foreground
+  if _why="$(perm_reset)"; then
+    open_screen perm Perm-title
+    tap_id Perm-notif; sleep 1.5
+    case_ foreground_dialog 0 "^$PKG pid" '^focus: .*permissioncontroller' -- "$A" foreground
+    case_ elements_dialog   0 'SYSTEM window' 'permission_deny_button' -- "$A" elements --names
+    case_ waitid_under_dialog 1 'SYSTEM window' -- "$A" waitid Perm-title --timeout 1
+    tap_id com.android.permissioncontroller:id/permission_deny_button; sleep 1
+    case_ foreground_back   0 "^$PKG pid" -- "$A" foreground
+  else
+    for c in foreground_dialog elements_dialog waitid_under_dialog foreground_back; do skip "$c" "$_why"; done
+  fi
 
   # Another app with the same testIDs starting over this one: for a moment the tree
   # still holds this app's window, and that must not count as a hit.
@@ -362,13 +394,20 @@ if want_group input; then
   open_screen home Home-title
   case_ back_home        0 '^alive [0-9]+' '!'"^$PKG pid" -- bash -c '"$1" button BACK >/dev/null && sleep 1 && "$1" foreground && echo "alive $("$2" -s "$3" shell pidof "$4" </dev/null)"' _ "$A" "$ADB" "$SERIAL" "$PKG"
 
-  case_ locked_before    0 '^false$' -- "$A" locked
-  case_ lock             0 '^locked$' -- "$A" lock
-  sleep 1
-  case_ locked_after     0 '^true$' -- "$A" locked
-  case_ lock_again       0 '^true$' -- bash -c '"$1" lock >/dev/null && sleep 0.5 && "$1" locked' _ "$A"
-  case_ unlock           0 '^unlocked$' -- "$A" unlock
-  case_ locked_unlocked  0 '^false$' -- "$A" locked
+  if [ "$IS_EMULATOR" = 1 ] || [ "${LOCK_ON_DEVICE:-}" = 1 ]; then
+    case_ locked_before    0 '^false$' -- "$A" locked
+    case_ lock             0 '^locked$' -- "$A" lock
+    sleep 1
+    case_ locked_after     0 '^true$' -- "$A" locked
+    case_ lock_again       0 '^true$' -- bash -c '"$1" lock >/dev/null && sleep 0.5 && "$1" locked' _ "$A"
+    case_ unlock           0 '^unlocked$' -- "$A" unlock
+    case_ locked_unlocked  0 '^false$' -- "$A" locked
+  else
+    case_ locked_before    0 '^false$' -- "$A" locked
+    for c in lock locked_after lock_again unlock locked_unlocked; do
+      skip "$c" "a physical device: a PIN would keep it locked (LOCK_ON_DEVICE=1 runs it)"
+    done
+  fi
   open_screen home Home-title
 fi
 
@@ -424,29 +463,32 @@ if want_group app; then
   case_ wait_note          0 'fixed pause 2.5s' -- "$A" wait 2.5
 
   # The notification permission dialog: pm revoke kills the app, so it comes after.
-  perm_reset() {
-    "$ADB" -s "$SERIAL" shell pm revoke "$PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 </dev/null
-    "$ADB" -s "$SERIAL" shell pm clear-permission-flags "$PKG" android.permission.POST_NOTIFICATIONS user-set user-fixed >/dev/null 2>&1 </dev/null
-  }
-  perm_reset
+  _perm_ok=1; _why="$(perm_reset)" || _perm_ok=0
   open_screen perm Perm-title
   case_ alert_none         1 'no system dialog on screen' -- "$A" alert
   case_ alert_dismiss_none 1 'no system dialog on screen' -- "$A" alert dismiss
   case_ alert_wait_none    1 'no system dialog appeared within 1s' -- "$A" alert wait 1
-  tap_id Perm-notif
-  case_ alert_wait         0 'send you notifications' -- "$A" alert wait 5
-  case_ alert_text         0 'send you notifications' -- "$A" alert
-  case_ alert_buttons      0 '^\["Allow","Don.t allow"\]$' -- "$A" alert buttons
-  case_ alert_accept       0 '^accepted: .*notifications' -- "$A" alert accept
-  case_ alert_granted      0 'POST_NOTIFICATIONS: granted=true' -- bash -c '"$1" -s "$2" shell dumpsys package "$3" </dev/null | grep -m1 "POST_NOTIFICATIONS: granted"' _ "$ADB" "$SERIAL" "$PKG"
-  case_ alert_result       0 '^notif: granted$' -- bash -c 'sleep 0.5; "$1" el Perm-result | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
-  perm_reset
-  open_screen perm Perm-title
-  tap_id Perm-notif
-  "$A" alert wait 5 >/dev/null 2>&1
-  case_ alert_dismiss      0 '^dismissed: ' -- "$A" alert dismiss
-  case_ alert_denied       0 '^notif: denied' -- bash -c 'sleep 0.5; "$1" el Perm-result | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
-  perm_reset
+  if [ "$_perm_ok" = 1 ]; then
+    tap_id Perm-notif
+    case_ alert_wait         0 'send you notifications' -- "$A" alert wait 5
+    case_ alert_text         0 'send you notifications' -- "$A" alert
+    case_ alert_buttons      0 '^\["Allow","Don.t allow"\]$' -- "$A" alert buttons
+    case_ alert_accept       0 '^accepted: .*notifications' -- "$A" alert accept
+    case_ alert_granted      0 'POST_NOTIFICATIONS: granted=true' -- bash -c '"$1" -s "$2" shell dumpsys package "$3" </dev/null | grep -m1 "POST_NOTIFICATIONS: granted"' _ "$ADB" "$SERIAL" "$PKG"
+    case_ alert_result       0 '^notif: granted$' -- bash -c 'sleep 0.5; "$1" el Perm-result | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  else
+    for c in alert_wait alert_text alert_buttons alert_accept alert_granted alert_result; do skip "$c" "$_why"; done
+  fi
+  if _why="$(perm_reset)"; then
+    open_screen perm Perm-title
+    tap_id Perm-notif
+    "$A" alert wait 5 >/dev/null 2>&1
+    case_ alert_dismiss      0 '^dismissed: ' -- "$A" alert dismiss
+    case_ alert_denied       0 '^notif: denied' -- bash -c 'sleep 0.5; "$1" el Perm-result | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"label\"])"' _ "$A"
+  else
+    for c in alert_dismiss alert_denied; do skip "$c" "$_why"; done
+  fi
+  perm_reset >/dev/null
 
   # The system chooser: two installed apps with one scheme and no package on the intent.
   if [ -n "$OTHERP" ] && "$ADB" -s "$SERIAL" shell pm path "$OTHERP" </dev/null 2>/dev/null | grep -q package:; then
