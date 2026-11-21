@@ -12,6 +12,7 @@ import {
   Image,
   Linking,
   Modal,
+  PanResponder,
   PermissionsAndroid,
   PixelRatio,
   Platform,
@@ -36,8 +37,8 @@ import { PROBE_PORT } from './rigswitch';
 
 type Screen =
   | 'home' | 'profile' | 'settings' | 'badge' | 'network' | 'components' | 'inputs'
-  | 'list' | 'anim' | 'back' | 'perm' | 'big';
-const SCREENS: Screen[] = ['home', 'profile', 'settings', 'badge', 'network', 'components', 'inputs', 'list', 'anim', 'back', 'perm', 'big'];
+  | 'list' | 'anim' | 'back' | 'perm' | 'big' | 'gest';
+const SCREENS: Screen[] = ['home', 'profile', 'settings', 'badge', 'network', 'components', 'inputs', 'list', 'anim', 'back', 'perm', 'big', 'gest'];
 
 const logLayout = (tag: string) => (e: LayoutChangeEvent) => {
   const { x, y, width, height } = e.nativeEvent.layout;
@@ -392,6 +393,52 @@ function BigScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
+// Gestures: a pad that tells a tap, a double tap (two presses within 300 ms) and a long
+// press apart; a box that reports how far it was dragged and how long the finger rested
+// before moving; a scroll view that reports its offset.
+function GestScreen({ onBack }: { onBack: () => void }) {
+  const [c, setC] = useState({ taps: 0, doubles: 0, longs: 0 });
+  const last = useRef(0);
+  const onPress = () => {
+    const now = Date.now();
+    const dbl = now - last.current < 300;
+    last.current = dbl ? 0 : now;
+    setC((p) => ({ taps: p.taps + 1, doubles: p.doubles + (dbl ? 1 : 0), longs: p.longs }));
+  };
+  const [drag, setDrag] = useState('none');
+  const g = useRef({ t0: 0, moved: 0 });
+  const pan = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => { g.current = { t0: Date.now(), moved: 0 }; },
+    onPanResponderMove: (_e, st) => {
+      if (!g.current.moved && Math.hypot(st.dx, st.dy) > 10) g.current.moved = Date.now();
+    },
+    onPanResponderRelease: (_e, st) => {
+      const held = g.current.moved ? g.current.moved - g.current.t0 : Date.now() - g.current.t0;
+      setDrag(`dx ${Math.round(st.dx)} dy ${Math.round(st.dy)} held ${held}`);
+    },
+  })).current;
+  const [sy, setSy] = useState(0);
+  return (
+    <View style={styles.screen}>
+      <Header title="Gestures" id="Gest-title" onBack={onBack} />
+      <Pressable testID="Gest-pad" accessibilityRole="button" onPress={onPress}
+        onLongPress={() => setC((p) => ({ ...p, longs: p.longs + 1 }))} delayLongPress={500} style={styles.pad}>
+        <Text style={styles.body}>pad</Text>
+      </Pressable>
+      <Text testID="Gest-counts" style={styles.small}>{`taps ${c.taps} doubles ${c.doubles} longs ${c.longs}`}</Text>
+      <View testID="Gest-drag" style={styles.dragBox} {...pan.panHandlers} />
+      <Text testID="Gest-drag-out" style={styles.small}>{`drag ${drag}`}</Text>
+      <ScrollView testID="Gest-scroll" style={styles.scrollBox} scrollEventThrottle={16}
+        onScroll={(e) => setSy(Math.round(e.nativeEvent.contentOffset.y))}>
+        {Array.from({ length: 30 }, (_, i) => <Text key={i} style={styles.body}>{`row ${i}`}</Text>)}
+      </ScrollView>
+      <Text testID="Gest-scroll-y" style={styles.small}>{`scroll y ${sy}`}</Text>
+    </View>
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>('home');
   const [reduce, setReduce] = useState('?');
@@ -440,6 +487,7 @@ export default function App() {
       {screen === 'back' && <BackScreen onBack={home} />}
       {screen === 'perm' && <PermScreen onBack={home} />}
       {screen === 'big' && <BigScreen onBack={home} />}
+      {screen === 'gest' && <GestScreen onBack={home} />}
     </View>
   );
 }
@@ -465,6 +513,9 @@ const styles = StyleSheet.create({
   anchorBox: { position: 'absolute', left: 20, top: 0, width: 300, height: 60, backgroundColor: 'rgb(255,0,0)' },
   frameBox: { position: 'absolute', left: 20, top: 66, width: 300, height: 80, backgroundColor: 'rgb(0,255,0)' },
   box: { width: 40, height: 40, backgroundColor: '#d33' },
+  pad: { height: 90, backgroundColor: '#e3e8f0', borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  dragBox: { height: 120, backgroundColor: '#cfe8cf', borderRadius: 10 },
+  scrollBox: { height: 150, borderWidth: 1, borderColor: '#999' },
   box2: { width: 40, height: 40, backgroundColor: '#3d3' },
   box3: { width: 40, height: 40, backgroundColor: '#33d' },
   img: { width: 48, height: 48 },
