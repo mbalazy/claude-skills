@@ -319,11 +319,17 @@ class Alert(unittest.TestCase):
         self.assertIsNone(u2_el.dialog_kind(home, launcher, launcher))
         self.assertIsNone(u2_el.dialog_kind(("", None), None, None))
 
-    def test_an_unknown_system_window_over_the_app_is_named(self):
+    def test_an_unknown_system_window_is_named(self):
         anr = ("Window{5 u0 Application Not Responding: %s}" % PKG, "android")
-        name, acc, dis = u2_el.dialog_kind(anr, self.APP, self.APP)
-        self.assertIn("system window of android", name)
-        self.assertEqual((acc, dis), (None, None))
+        kind = u2_el.dialog_kind(anr, self.APP, self.APP)
+        self.assertIn("system window of android", kind[0])
+        self.assertEqual(kind[1:], (None, None, False))
+        self.assertEqual(u2_el.dialog_text((kind, ["keeps stopping"], [])).split("\n")[1], "keeps stopping")
+
+    def test_a_system_app_opened_by_the_app_is_not_a_dialog(self):
+        picker = ("Window{6 u0 com.android.documentsui/com.android.documentsui.picker.PickActivity}",
+                  "com.android.documentsui")
+        self.assertIsNone(u2_el.dialog_kind(picker, ("com.android.documentsui", "x"), self.APP))
 
     def test_dialog_text_and_buttons(self):
         texts, buttons = u2_el.dialog_parts(DIALOG)

@@ -493,7 +493,8 @@ def cmd_foreground(a):
 # Play Protect is named but never answered: installing past it is a person's decision.
 DIALOGS = (
     ("GrantPermissionsActivity", "permission dialog",
-     ("permission_allow_button", "permission_allow_foreground_only_button", "permission_allow_one_time_button"),
+     ("permission_allow_button", "permission_allow_foreground_only_button", "permission_allow_all_button",
+      "permission_allow_always_button", "permission_allow_one_time_button"),
      ("permission_deny_button", "permission_deny_and_dont_ask_again_button")),
     ("ResolverActivity", "app chooser", None, "BACK"),
     ("ChooserActivity", "app chooser", None, "BACK"),
@@ -502,23 +503,22 @@ DIALOGS = (
 
 
 def dialog_kind(focus, top, root):
-    """The dialog in front as (name, accept ids, dismiss ids | "BACK") or None. Known
-    ones by the focused window's activity; any other SYSTEM window counts when it sits
-    over an app (the task under it is an app's, or the window is not an activity at all,
-    as an ANR dialog): the launcher or a system app opened on purpose is not a dialog."""
+    """The dialog in front as (name, accept ids, dismiss ids | "BACK", known) or None.
+    Known ones by the focused window's activity; any other SYSTEM window counts only when
+    it is not an activity window at all (an ANR dialog is titled "Application Not
+    Responding: ..."): the launcher, or a system app the app opened on purpose (a Custom
+    Tab, the photo picker, the camera - pushed onto the app's own task), is not a dialog."""
     line, fpkg = focus
     if not line:
         return None
     for act, name, acc, dis in DIALOGS:
         if act in line:
-            return name, acc, dis
+            return name, acc, dis, True
     pkg = fpkg or (line.split()[-1].split("/")[0].rstrip("}") if line.startswith("Window{") else "")
     if not pkg or not is_system(pkg):
         return None
-    over_app = root is not None and not is_system(root[0])
-    not_activity = "/" not in line
-    if over_app or not_activity:
-        return "system window of %s (%s)" % (pkg, line), None, None
+    if "/" not in line:
+        return "system window of %s (%s)" % (pkg, line), None, None, False
     return None
 
 
@@ -551,13 +551,19 @@ def dialog_now(dev):
     return kind, texts, buttons
 
 
+def dialog_text(d):
+    """A known dialog prints its text; any other window names itself first."""
+    (name, _acc, _dis, known), texts, _buttons = d
+    return "\n".join(texts if known else [name] + texts) or name
+
+
 def cmd_alert(dev, a):
     if a.sub == "wait":
         deadline = time.time() + a.seconds
         while True:
             d = dialog_now(dev)
             if d:
-                print("\n".join(d[1]) or d[0][0])
+                print(dialog_text(d))
                 return 0
             if time.time() >= deadline:
                 print("no system dialog appeared within %ds" % a.seconds, file=sys.stderr)
@@ -569,14 +575,14 @@ def cmd_alert(dev, a):
               "`elements` reads it, `tapid`/`tap` answers it)", file=sys.stderr)
         return 1
     if a.sub == "text":
-        print("\n".join(d[1]) or d[0][0])
+        print(dialog_text(d))
         return 0
     if a.sub == "buttons":
         out([b[0] for b in d[2]])
         return 0
     n = 0
     while d:
-        (name, acc, dis), texts, buttons = d
+        (name, acc, dis, _known), texts, buttons = d
         ids = acc if a.sub == "accept" else dis
         shown = " / ".join(texts) or name
         if ids == "BACK":
