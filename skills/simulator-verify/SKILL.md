@@ -28,9 +28,9 @@ S=$SV/sim-ui.sh
 | `$SV/read-rn-logs-cdp.py`, `$SV/read-rn-logs.sh` | JS console logs (CDP for RN >= 0.77, os_log before) |
 | `$SV/measure-*.py`, `$SV/probe-collector.py` | pixel measurement and instrumentation |
 | `$SV/simbench.sh`, `$SV/regress.sh`, `$SV/test-wda-diagnostics.sh` | only when changing the driver itself |
-| `$SV/android-rig-check.sh` | the Rig gate on an Android emulator |
+| `$SV/android-rig-check.sh` | the Rig gate on an Android emulator or phone |
 | `$SV/android-ui.sh` | the Android driver (UiAutomator2 server + `adb`): the commands and exit codes of `sim-ui.sh`, plus `button BACK`; no launch arguments, `openurl` needs a package (`references/android.md`) |
-| `$SV/uia2-server.sh` | the UiAutomator2 server on an emulator (`ensure` = install + start + proof, before the first `android-ui.sh` call) |
+| `$SV/uia2-server.sh` | the UiAutomator2 server on an emulator or phone (`ensure` = install + start + proof, before the first `android-ui.sh` call) |
 | `$SV/android-regress.sh` | only when changing the Android driver itself |
 
 The Metro port and the bundle id always come from `.simulator-verify/config.md` (`$PORT`, `$BUNDLE` below) - never from an example in this skill.
@@ -64,7 +64,7 @@ What each verdict means: `references/rig-check.md`; the Metro, binary and store 
 
 **One driver at a time.** WebDriverAgent holds one session per simulator and Metro lets one debugger hold an app: two sessions on one simulator take turns, they do not overlap (nothing locks this - see `references/driver.md`).
 
-**Simulator, emulator or phone.** A physical iPhone on the USB cable is the same loop with the same scripts: put its udid in `SIM_UDID`. Read `references/device.md` before the first phone run. An Android emulator is the same loop with `android-ui.sh` and `android-rig-check.sh` (`references/android.md`); an Android phone on the USB cable runs the same driver (`references/android.md`, "A phone on the USB cable"); its rig check is not built yet.
+**Simulator, emulator or phone.** A physical iPhone on the USB cable is the same loop with the same scripts: put its udid in `SIM_UDID`. Read `references/device.md` before the first phone run. An Android emulator is the same loop with `android-ui.sh` and `android-rig-check.sh` (`references/android.md`); an Android phone on the USB cable runs the same driver and rig check, Metro through `adb reverse` (`references/android.md`, "A phone on the USB cable").
 
 ## The loop
 
