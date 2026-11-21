@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Address ONE element by its resource-id (React Native `testID`) on an Android device -
+the counterpart of wda_el.py.
+
+  u2_el.py --port P --scale S --adb ADB --serial SER wait ID [--timeout S] [--exists]
+  u2_el.py --port P --scale S --adb ADB --serial SER info ID
+
+Every poll is ONE /source snapshot (5-20 ms over HTTP; ~100 ms on a 250-node screen),
+matched on resource-id == ID exactly. One snapshot means displayed, rect and package
+come from the same moment - three separate requests per element would not.
+
+A HIT (what `wait` waits for and what `tapid` will act on) is all of:
+  - displayed=true and a positive size,
+  - some part of the rect inside the screen: with waitForIdleTimeout=0 a sliding Modal's
+    button is displayed=true BELOW the screen for ~0.3 s (measured: y 2526-2569 px on a
+    2424 px screen),
+  - the node's package is the package of the focused window (`dumpsys window`
+    mCurrentFocus): for ~0.5 s after a cold start the tree still shows the window that
+    was underneath, so an id that also exists there would hit too early.
+--exists drops all three: the id is anywhere in the tree. It cannot tell "scrolled away"
+from "absent" on Android - rows outside a list's viewport have no node at all.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import u2_client  # noqa: E402
+import u2_tree  # noqa: E402
+
+
+def out(obj):
+    print(json.dumps(obj, separators=(",", ":"), ensure_ascii=False))
+
+
+def matches(xml_text, ident, scale):
+    """[(element dict + displayed/package/on_screen, attrib)] for every node with that id."""
+    root, screen = u2_tree.parse(xml_text)
+    found = []
+    for n in root.iter():
+        a = n.attrib
+        if a.get("resource-id") != ident:
+            continue
+        e = u2_tree.describe(a, scale)
+        b = u2_tree.parse_bounds(a.get("bounds"))
+        e["displayed"] = a.get("displayed", "true") == "true"
+        e["on_screen"] = bool(b) and u2_tree.on_screen(b, screen)
+        e["package"] = a.get("package")
+        found.append(e)
+    return found
+
+
+def focus_line(adb, serial):
+    """mCurrentFocus of `dumpsys window`, e.g. 'Window{c3 u0 com.example.app/...MainActivity}';
+    '' when nothing has focus (screen off) or adb did not answer."""
+    try:
+        r = subprocess.run([adb, "-s", serial, "shell", "dumpsys", "window"], capture_output=True,
+                           text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    m = re.search(r"mCurrentFocus=(\S.*)", r.stdout)
+    v = m.group(1).strip() if m else ""
+    return "" if v == "null" else v
+
+
+def in_focus(pkg, focus):
+    """Does the focused window belong to `pkg`? The focus line names it as `pkg/activity`
+    or, for a starting window, as the last word ('Splash Screen com.example.app')."""
+    if not pkg or not focus:
+        return False
+    return re.search(r"(^|[\s{])%s([/}\s]|$)" % re.escape(pkg), focus) is not None
+
+
+def why_not(e, focus):
+    if not e["displayed"]:
+        return "displayed=false"
+    if not e["on_screen"]:
+        return "outside the screen (rect %s dp) - mid-transition or scrolled" % (e["rect"],)
+    if not in_focus(e["package"], focus):
+        return "in the window of %s, but the focused window is %s" % (e["package"], focus or "none (screen off?)")
+    return None
+
+
+class Device:
+    def __init__(self, a):
+        self.a = a
+        self.u = u2_client.U2(a.port)
+        self.u.session()
+
+    def source(self):
+        return self.u.source(timeout=10)
+
+    def focus(self):
+        return focus_line(self.a.adb, self.a.serial)
+
+
+def hits_now(dev, ident, scale, exists):
+    """(hits, all matches, focus line or None) from one snapshot."""
+    found = matches(dev.source(), ident, scale)
+    if exists:
+        return found, found, None
+    cand = [e for e in found if e["displayed"] and e["on_screen"]]
+    if not cand:
+        return [], found, None
+    focus = dev.focus()
+    return [e for e in cand if in_focus(e["package"], focus)], found, focus
+
+
+def cmd_wait(dev, a):
+    started = time.time()
+    deadline = started + a.timeout
+    polls, found, focus, err = 0, [], None, None
+    while True:
+        polls += 1
+        try:
+            hits, found, focus = hits_now(dev, a.id, a.scale, a.exists)
+            err = None
+        except u2_client.ServerError as e:
+            hits, found, err = [], [], str(e)
+        if hits:
+            out(hits)
+            print("matched id '%s' (%s) after %d poll(s), %.1fs" % (
+                a.id, "exists" if a.exists else "displayed", polls, time.time() - started), file=sys.stderr)
+            return 0
+        if time.time() >= deadline:
+            print("waitid: nothing %s with id '%s' within %gs (%d polls)" % (
+                "present" if a.exists else "displayed on screen in the app's window", a.id, a.timeout, polls),
+                file=sys.stderr)
+            if found:
+                if focus is None:
+                    focus = dev.focus()
+                print("  %d element(s) with that id EXIST but none is a hit:" % len(found), file=sys.stderr)
+                for e in found[:5]:
+                    print("    %s" % why_not(e, focus), file=sys.stderr)
+                out(found[:5])
+            elif err:
+                print("  last read failed: %s" % err, file=sys.stderr)
+            else:
+                print("  no element carries that resource-id in this tree (only the active window is "
+                      "read, and off-screen list rows do not exist). `elements --all --grep` lists what "
+                      "is there.", file=sys.stderr)
+            return 1
+        time.sleep(a.interval)
+
+
+def cmd_info(dev, a):
+    src = dev.source()
+    found = matches(src, a.id, a.scale)
+    if not found:
+        note = u2_tree.window_note(src)
+        print("no element with id '%s' on this screen%s" % (a.id, (" - " + note) if note else ""), file=sys.stderr)
+        return 1
+    out(found)
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--port", type=int, required=True)
+    ap.add_argument("--scale", type=float, required=True)
+    ap.add_argument("--adb", required=True)
+    ap.add_argument("--serial", required=True)
+    ap.add_argument("cmd", choices=("wait", "info"))
+    ap.add_argument("id")
+    ap.add_argument("--timeout", type=float, default=10.0)
+    ap.add_argument("--exists", action="store_true")
+    ap.add_argument("--interval", type=float, default=0.1)
+    a = ap.parse_args(argv)
+    try:
+        dev = Device(a)
+        return cmd_wait(dev, a) if a.cmd == "wait" else cmd_info(dev, a)
+    except u2_client.ServerError as e:
+        print("%sid: %s" % ("wait" if a.cmd == "wait" else "el ", e), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
