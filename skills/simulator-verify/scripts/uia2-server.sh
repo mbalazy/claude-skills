@@ -161,8 +161,11 @@ start_server() {
     fi
     sleep 0.25
   done
-  # Losing to another UiAutomation client leaves its mark only in logcat.
-  if "$ADB" -s "$SERIAL" logcat -d -T "$t0" 2>/dev/null | grep -q 'UiAutomationService.*already registered'; then
+  # Losing to another UiAutomation client leaves its mark only in logcat. Read into a
+  # variable first: piped into `grep -q`, an early match kills adb with SIGPIPE and
+  # pipefail turns the match into a failure.
+  f="$("$ADB" -s "$SERIAL" logcat -d -T "$t0" 2>/dev/null || true)"
+  if printf '%s\n' "$f" | grep 'UiAutomationService.*already registered' >/dev/null; then
     f="$(foreign_now || true)"
     not_ready "UiAutomation is held by another client${f:+: $f} (logcat: UiAutomationService already registered)"
   fi
