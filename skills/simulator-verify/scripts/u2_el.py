@@ -598,11 +598,22 @@ def cmd_alert(dev, a):
                 return 1
             adb_shell(a.adb, a.serial, "input", "tap", str(hit[0][2][0]), str(hit[0][2][1]))
         n += 1
+        # The tap returns before the window closes (its exit animation is slower on some
+        # API levels): wait until this dialog is gone, so the next step sees the app.
+        before = dialog_text(d)
+        deadline = time.time() + 3
+        while True:
+            time.sleep(0.2)
+            d = dialog_now(dev)
+            if not d or dialog_text(d) != before:
+                break
+            if time.time() >= deadline:
+                print("alert %s: tapped, but the dialog is still up after 3s: %s" % (a.sub, shown),
+                      file=sys.stderr)
+                return 1
         print("%sed: %s" % (a.sub, shown))
         if not a.all:
             break
-        time.sleep(1)
-        d = dialog_now(dev)
     if a.all:
         print("%d dialog(s) drained" % n)
     return 0
