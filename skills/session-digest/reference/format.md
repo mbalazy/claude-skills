@@ -211,6 +211,15 @@ The chat answer's sections, expanded, plus:
   (holds an answer), superseded (an older version of a current file), backstage
   (logistics, briefs, decision logs) - one line each with what it holds.
 
+**Light writes only the first and third bullet** (`Źródła:` per block, the
+commits per branch): no earlier versions, no `## Wszystkie decyzje`, no
+`## Mapa plików` - the archive, not the answer, and `/session-digest full`
+writes it. The chat answer is the same in both modes; section 2 still comes
+from the earlier versions the ledger collected, they are just not copied
+into the file. The extraction is never cut: a later pass often covers only
+the gaps of an earlier one, so reading only the newest file per topic gives
+incomplete answers and misses reversals between files.
+
 ## `phone-plan.md`
 
 One sitting with the device, merged from every current source; superseded

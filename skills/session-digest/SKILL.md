@@ -31,7 +31,8 @@ run - the `phone-plan.md` merge (15.5 min on the benchmark session) and the
 verifier (9 min) - and keeps the parallel extraction, which carries the
 answers. The price: the verifier caught 27 defects there, 3 of them wrong
 answers, all made while assembling - a light answer says on its face that it
-was not checked.
+was not checked. Light also writes a shorter `digest.md` (format.md,
+`digest.md`): the same answer, without the archive layers.
 
 Running as a background agent, this file is the whole prompt: no
 conversation history comes with it. Every path below is relative to this
