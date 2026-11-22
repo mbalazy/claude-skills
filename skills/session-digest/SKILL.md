@@ -1,6 +1,7 @@
 ---
 name: session-digest
-description: Turns one Claude Code session - its transcript plus every markdown file it and the sessions and agents it drove wrote - into ONE answer organised by what the user does with it - questions and their current answers with a confidence label, what changed since the user was last told, decisions left to the user, one merged plan of manual device checks, branches, cleanup. Writes digest.md + phone-plan.md next to the evidence. Runs as a background agent - ALWAYS pass the session to read as the argument (a /rename name or uuid; for the calling session its id from `pm session-id`). When its notification arrives, paste its answer to the user VERBATIM - every heading and line exactly as returned, never summarised, shortened or rephrased. solo and taking-over run it inline as their end-of-work answer. Use when the user says "/session-digest", "zbierz sesję", "podsumuj sesję X", "zrób digest", "co wyszło z tej sesji", "ten raport to chaos". Never drafts messages to people.
+description: Turns one Claude Code session - its transcript plus every markdown file it and the sessions and agents it drove wrote - into ONE answer organised by what the user does with it - questions with current answers and confidence labels, what changed, decisions left to the user, manual device checks, branches, cleanup. Writes digest.md (+ phone-plan.md in full mode) next to the evidence. On demand it runs light (no device-plan merge, no verifier, a few minutes) unless the argument holds `full`. Runs as a background agent - ALWAYS pass the session to read as the argument (a /rename name or uuid; for the calling session its id from `pm session-id`). When its notification arrives, paste its answer to the user VERBATIM - every heading and line as returned, never summarised or rephrased. solo and taking-over run it inline, full. Use when the user says "/session-digest", "zbierz sesję", "podsumuj sesję X", "zrób digest", "co wyszło z tej sesji", "ten raport to chaos". Never drafts messages to people.
+argument-hint: "[full] [session name or uuid]"
 context: fork
 background: true
 model: opus
@@ -14,11 +15,23 @@ answer as it stands NOW, in the shape `reference/format.md` defines.
 
 ## Input
 
-| Invocation | Session read | How it runs |
-|---|---|---|
-| `/session-digest <name or uuid>` | that session (a `/rename` title, an agent name or a uuid) | a background agent (frontmatter `context: fork`); the caller gets the answer as a notification and prints it in full |
-| `/session-digest` with no argument | the newest transcript of the cwd's project - normally the calling session; the inventory header names it, check it | same |
-| from `solo` Step Z or `taking-over`'s final report | the session that is ending | inline: they read this file and follow it in their own session, so the answer exists before they close |
+| Invocation | Session read | How it runs | Mode |
+|---|---|---|---|
+| `/session-digest <name or uuid>` | that session (a `/rename` title, an agent name or a uuid) | a background agent (frontmatter `context: fork`); the caller gets the answer as a notification and prints it in full | light |
+| `/session-digest full <name or uuid>` | same | same | full |
+| `/session-digest` / `/session-digest full` with no session | the newest transcript of the cwd's project - normally the calling session; the inventory header names it, check it | same | light / full |
+| from `solo` Step Z or `taking-over`'s final report | the session that is ending | inline: they read this file and follow it in their own session, so the answer exists before they close | full - nobody is waiting |
+
+The word `full` (or `light`) anywhere in the argument picks the mode; the
+rest of the argument is the session.
+
+**Light** (the user's decision, 2026-11-21: a full run on a large session
+took over 12 minutes and was stopped) skips the two slowest steps of a full
+run - the `phone-plan.md` merge (15.5 min on the benchmark session) and the
+verifier (9 min) - and keeps the parallel extraction, which carries the
+answers. The price: the verifier caught 27 defects there, 3 of them wrong
+answers, all made while assembling - a light answer says on its face that it
+was not checked.
 
 Running as a background agent, this file is the whole prompt: no
 conversation history comes with it. Every path below is relative to this
@@ -49,15 +62,17 @@ summary, despite the description asking for it verbatim.
    per question when the sources are large), into `<work-dir>/ledger/`.
    -> `prompts/extract.md`
 3. **Assemble** - read `reference/format.md` and write `digest.md` and
-   `phone-plan.md` into the output directory the inventory suggests (move an
+   (full only) `phone-plan.md` into the output directory the inventory suggests (move an
    existing pair to `previous/` first). For `phone-plan.md`, read the device
    sections the ledger entries located and merge them: setup once, blocks by
    topic (ordered to avoid rebuilds), every step self-contained. More than
    about three sections or 60 steps: give the merge to one fresh agent - its
    brief is format.md's `phone-plan.md` section plus the located sections
    (path + heading, newest only) - and write `digest.md` meanwhile.
-4. **Verify** - one fresh agent checks both files against their sources;
-   apply what its evidence supports.
+   Light: no `phone-plan.md`; section 4 lists the located device sections
+   instead (format.md, section 4, light).
+4. **Verify** (full only) - one fresh agent checks both files against their
+   sources; apply what its evidence supports. Light skips this step.
    -> `prompts/verify.md`
 5. **Keep the work** - copy `inventory.md`, `asks.md`, `shown-messages.md`
    and `ledger/` into `<out-dir>/work/`, so the `S<n>` references and the
@@ -70,7 +85,8 @@ summary, despite the description asking for it verbatim.
    <the chat answer, format.md "Chat answer">
    ```
 
-   The answer's last line under `Na dole` names both files with full paths.
+   `Na dole` names the files written, with full paths; the `TL;DR` closes
+   the answer.
 
 Before printing, read section 1 once as the user who was not there: a line
 that needs the session, a file or a question number to be understood is

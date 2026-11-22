@@ -7,7 +7,8 @@ python3 -I <skill>/scripts/inventory.py --session <name|uuid|path> --out <work-d
 ```
 
 - `<work-dir>`: a fresh temp dir (`mktemp -d`), never the output dir.
-- `--session` = the argument the skill was given (`$ARGUMENTS`). None given:
+- `--session` = the argument the skill was given (`$ARGUMENTS`), without the
+  mode word `full` / `light`. None given:
   inline (solo, taking-over) pass this session's id from `pm session-id`;
   as a background agent, omit `--session` - the script takes the newest
   transcript of the cwd's project - and name the session it picked in the

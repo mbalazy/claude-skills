@@ -5,9 +5,13 @@ produce it and none of them carries its own copy:
 
 | Who | When |
 |---|---|
-| `session-digest` | on demand, about this session or another one - a background agent |
+| `session-digest` | on demand, about this session or another one - a background agent; light unless asked for `full` |
 | `solo` (Step Z, `--digest`) | closing a shift - the chat answer, inline; the cockpit report file keeps its own contract (`solo/prompts/report.md`) |
 | `taking-over` (`digest`) | the final report when the user comes back, inline |
+
+solo and taking-over always produce the full answer. Light (on demand only)
+writes no `phone-plan.md`, runs no verifier, and differs from full in two
+places: the line under `Od Ciebie` and section 4.
 
 `--digest` / `digest` is hardcoded ON in solo and taking-over for now; the
 flag exists so the user can make it selective later.
@@ -36,7 +40,7 @@ morning sync and the final report without a word, and every detail behind
 |---|---|---|
 | chat answer | the sections below, short | up to ~700 words |
 | `digest.md` | the same sections, each claim with its source (`path` + heading), the earlier versions, the file map | no limit |
-| `phone-plan.md` | every check that needs a human with a device, merged into one session | no limit; only when there are such checks |
+| `phone-plan.md` | every check that needs a human with a device, merged into one session | no limit; only when there are such checks; full mode only |
 
 Both files go to ONE directory next to the evidence:
 `<project evidence root>/digest-<YYYY-MM-DD>-<session-name>/` - for a pm
@@ -54,6 +58,10 @@ it is left out, except section 2.
 **First line:** `Od Ciebie:` and a numbered list of what the user has to do,
 each one action naming its object (decide X, test Y, answer Z) - or
 `Od Ciebie: nic`.
+
+Light only, the line right after the list:
+`Wersja light: bez weryfikacji i bez planu telefonu. Pełna: /session-digest full <session>`
+(the session as the user can type it - its name, else its uuid).
 
 ### `## 1. Pytania i zadania, z którymi weszliśmy`
 
@@ -111,6 +119,14 @@ Setup raz: <build / install / account, one line>
 Plik: <full path to phone-plan.md>
 ```
 
+Light: no plan was merged, so the section points at where the steps are -
+the NEWEST file per topic, never a superseded one:
+
+```
+| Temat | Plik | Nagłówek | Rozstrzyga |
+Plan telefonu w jednym pliku: /session-digest full <session>
+```
+
 ### `## 5. Kod`
 
 `| Gałąź | Co na niej | Na origin? | Dalej |` - one row per branch the work
@@ -130,7 +146,17 @@ usuń jeśli przeszkadza" or what was cleaned.
   feature, so the phone look is untested"), each "wybrane / odrzucone /
   dlaczego" in one line. Execution logistics (ordering, ports, worktrees)
   stay out.
-- `Pliki:` the full paths of `digest.md` and `phone-plan.md`.
+- `Pliki:` the full paths of the files written (`digest.md`, and
+  `phone-plan.md` in full mode).
+
+### `**TL;DR:**`
+
+LAST, always, in light and full, even when the answer is short: 2-4 full
+sentences, no bullets - what got done, what did not and why, and the single
+next action expected from the user. It is what a skimming reader reads
+first, so it stands entirely on its own: no references to the sections
+above ("patrz sekcja 3"), no question numbers. The rule taking-over's old
+report had; the user asked for it back on 2026-11-22.
 
 ## Confidence labels (closed set)
 
