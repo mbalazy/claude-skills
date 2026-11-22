@@ -108,8 +108,10 @@ UNVERIFIED (could not reach, rig down, no negative control - with the reason).
 
 A reading that later proves false (the negative control matches the
 positive, a screenshot of the wrong tree, a stale bundle): `pm_journal_add`
-on the project's runtime journal (`sim-rig` / `web-rig` - `pm_journal_list`
-shows the declared names) with `symptom`, `false_conclusion`, `cause`,
+on the project's runtime journal - `pm_journal_list` shows the declared
+names: `sim-rig` for the iOS simulator or an iPhone, `android-rig` for an
+Android emulator or phone (a project that declares none yet takes it in
+`sim-rig`, with the tag `android`), `web-rig` for the browser - with `symptom`, `false_conclusion`, `cause`,
 `cost_min`, tag `false-reading`, `fix` empty. This is the only feedback the
 next shift gets.
 

@@ -323,8 +323,9 @@ skill prescribes (element tree / measured numbers / screenshot), never "looks
 fine". A claim you could not reach stays UNVERIFIED with the reason. A
 "worker-observed" claim (an `OBSERVED:` line) gets the same look, with its own
 two controls re-run: agreement = CONFIRMED and the worker's screenshot becomes
-evidence; disagreement = REFUTED, the AC is open on that point AND a `sim-rig`
-journal entry (`pm_journal_add`, tag `false-reading`) records what the worker
+evidence; disagreement = REFUTED, the AC is open on that point AND a rig
+journal entry (`sim-rig` for iOS, `android-rig` for an Android emulator or
+phone, as `batch-finish` says) (`pm_journal_add`, tag `false-reading`) records what the worker
 read, what was true and why the rig lied - the only feedback the next batch's
 runtime phase ever gets. The worker's reading never shortens the queue.
 

@@ -294,7 +294,9 @@ the reading proves nothing about the rig, whatever the screen shows. Then:
   text). The AC is NOT met on that point: fix the code if it is a code fault
   (`fix:` commit, like a refuted assumption), and ALWAYS add a journal entry
   for the project's rig (`pm_journal_add`, tag `false-reading` - `sim-rig` on
-  a React Native project; a web project declares its own, e.g. `web-rig`, in
+  a React Native project's iOS simulator or iPhone, `android-rig` on its
+  Android emulator or phone (`sim-rig` with the tag `android` while the
+  project declares no `android-rig`); a web project declares its own, e.g. `web-rig`, in
   `project.yaml` `journals:`; none declared = say so in the report instead)
   naming what the worker read, what was true, and why the rig lied - that
   entry is the only thing that improves the next batch.

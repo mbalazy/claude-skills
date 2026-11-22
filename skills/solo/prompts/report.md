@@ -46,7 +46,7 @@ when there was one, `cause` (verified only), `cost_min` (rough), `tags` (reuse
 the ones `pm_journal_list` returns), `session` = the shift id, `fix` EMPTY -
 the fix is a later change to this skill, recorded by a later entry that
 `resolves` this one. Rig incidents go to the rig journal (`sim-rig` /
-`web-rig`) as `prompts/runtime.md` says, never here. No `solo` journal
+`android-rig` / `web-rig`) as `prompts/runtime.md` says, never here. No `solo` journal
 declared for the project: one line in the report, nothing invented.
 
 ## 2. The report file

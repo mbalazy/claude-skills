@@ -71,7 +71,8 @@ of the repo, and one shared paragraph patched by hand in seven subs.
   the ticket key and URLs. Reuse an existing task; report a done one, never
   reopen it.
 - Lessons: `pm_journal_list` for `solo` and the runtime journal (`web-rig` /
-  `sim-rig`), and the newest report in `~/.claude/pm/<slug>/.shift/`. Carry
+  `sim-rig`, and `android-rig` when the queue drives an Android emulator or
+  phone), and the newest report in `~/.claude/pm/<slug>/.shift/`. Carry
   forward what they prove.
 - Write every claim as one of four kinds: **DECIDED** (who, when, where),
   **ASSUMPTION** (reversible default plus a cheap check and what to do if it
