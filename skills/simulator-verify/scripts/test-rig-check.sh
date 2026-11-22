@@ -115,17 +115,19 @@ mkdir -p "$T/app/Demo.app"
 # --- runner -----------------------------------------------------------------------------
 PASS=0; FAIL=0
 # check <name> <expected exit> <regex the output must match> <script> [args...]
-# The environment for the case comes from the STUB_* / PATH variables set before the call.
+# The environment for the case comes from the STUB_* / PATH variables set before the call;
+# CASE_NOT, when set, is a regex the output must NOT match.
 check() {
   local name="$1" want="$2" re="$3" script="$4"; shift 4
   local out rc
   out="$(cd "$T" && env -i HOME="$T/home" PATH="${CASE_PATH:-$BASE_PATH}" TMPDIR="$T" \
           ${CASE_ENV[@]+"${CASE_ENV[@]}"} bash "$T/skill/scripts/$script" "$@" 2>&1)"
   rc=$?
-  if [[ "$rc" == "$want" ]] && grep -qE -- "$re" <<< "$out"; then
+  if [[ "$rc" == "$want" ]] && grep -qE -- "$re" <<< "$out" \
+     && { [[ -z "${CASE_NOT:-}" ]] || ! grep -qE -- "$CASE_NOT" <<< "$out"; }; then
     PASS=$((PASS + 1)); echo "PASS  $name"
   else
-    FAIL=$((FAIL + 1)); echo "FAIL  $name (exit $rc, want $want; want output matching: $re)"
+    FAIL=$((FAIL + 1)); echo "FAIL  $name (exit $rc, want $want; want output matching: $re${CASE_NOT:+, and not: $CASE_NOT})"
     printf '%s\n' "$out" | sed 's/^/      | /'
     return
   fi
@@ -136,35 +138,43 @@ CASE_ENV=()
 
 # ======================================================================== rig-check.sh
 CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)")
+OK_ID='- **bundle id**: `com.example.app`'
 
 R="$(mkrepo index.js)"
 check "ios: no config at all" 2 \
-  "no bundle id" rig-check.sh --repo "$R"
+  "no config: .*/\.simulator-verify/config\.md does not exist .*config-template\.md" rig-check.sh --repo "$R"
 
 R="$(mkrepo index.js)"; template "$R"
 check "ios: config is the unfilled template" 2 \
-  "no bundle id" rig-check.sh --repo "$R"
+  "the 'bundle id' line in .* is still the template's placeholder" rig-check.sh --repo "$R"
 
 R="$(mkrepo index.js)"; config "$R" "- **bundle id**: com.example.app"
 check "ios: bundle id without backticks" 2 \
-  "no bundle id" rig-check.sh --repo "$R"
+  "the 'bundle id' line in .* has no id in backticks" rig-check.sh --repo "$R"
 
-R="$(mkrepo)"; config "$R" '- **bundle id**: `com.example.app`'
+R="$(mkrepo index.js)"; config "$R" "- **scheme**: \`MyApp\`"
+check "ios: config without a bundle id line" 2 \
+  "no 'bundle id' line in .*config\.md" rig-check.sh --repo "$R"
+
+R="$(mkrepo)"; config "$R" "$OK_ID"
 check "ios: no index.js, no package.json" 2 \
-  "entry file not found: .*/index\.js" rig-check.sh --repo "$R"
+  "entry file not found: .*/index\.js \(pass --entry" rig-check.sh --repo "$R"
 
-R="$(mkrepo index.ts 'package.json={"main": "index.ts"}')"; config "$R" '- **bundle id**: `com.example.app`'
-check "ios: Expo app with index.ts" 2 \
-  "entry file not found: .*/index\.js" rig-check.sh --repo "$R"
+R="$(mkrepo 'package.json={"main": "expo-router/entry"}' app/_layout.tsx)"; config "$R" "$OK_ID"
+check "ios: Expo Router app names its root layout" 2 \
+  "an Expo Router app\. Mark its root layout instead: pass --entry app/_layout\.tsx" rig-check.sh --repo "$R"
 
-R="$(mkrepo 'package.json={"main": "expo-router/entry"}' app/_layout.tsx)"; config "$R" '- **bundle id**: `com.example.app`'
-check "ios: Expo Router app (no entry file)" 2 \
-  "entry file not found: .*/index\.js" rig-check.sh --repo "$R"
+R="$(mkrepo 'package.json={"main": "src/start.js"}')"; config "$R" "$OK_ID"
+check "ios: package.json main names a missing file" 2 \
+  "package\.json main \('src/start\.js'\) is not a file" rig-check.sh --repo "$R"
 
-R="$(mkrepo index.js)"; config "$R" '- **bundle id**: `com.example.app`'
+R="$(mkrepo index.js)"; config "$R" "$OK_ID"
 CASE_ENV=("STUB_NO_SIMCTL=1" "STUB_DEVDIR=/Library/Developer/CommandLineTools")
 check "ios: command line tools only, no Xcode" 1 \
-  "RIG DEAD: no booted simulator" rig-check.sh --repo "$R" --timeout 2
+  "RIG DEAD: xcrun simctl does not run: the developer directory is the command line tools" rig-check.sh --repo "$R" --timeout 2
+CASE_ENV=("STUB_NO_SIMCTL=1")
+check "ios: simctl fails with Xcode selected" 1 \
+  "RIG DEAD: xcrun simctl list failed" rig-check.sh --repo "$R" --timeout 2
 
 CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)
     Other Sim ($SIM_B) (Booted)")
@@ -175,20 +185,42 @@ CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)")
 check "ios: app not installed" 1 \
   "RIG DEAD: com\.example\.app is not installed on $SIM_A" rig-check.sh --repo "$R" --timeout 2
 
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)")
+check "ios: --bundle-id wins over the config line" 1 \
+  "RIG DEAD: com\.example\.other is not installed" rig-check.sh --repo "$R" --bundle-id com.example.other --timeout 2
+
 CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app")
 check "ios: no Metro serves the repo" 1 \
   "RIG DEAD: no Metro is serving" rig-check.sh --repo "$R" --timeout 2
 
 sleep 120 & APP_PID=$!
-CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app" "STUB_METRO_PORT=8081"
-          "STUB_METRO_CWD=$R" "STUB_PID=$APP_PID" "STUB_LOGS_MARKER=1" "STUB_ENTRY_FILE=$R/index.js")
-check "ios: happy path" 0 \
-  "RIG OK - the app is running code from $R" rig-check.sh --repo "$R" --timeout 6
-if grep -q RIGCHECK_ "$R/index.js"; then
-  FAIL=$((FAIL + 1)); echo "FAIL  ios: happy path left the marker in index.js"
-else
-  PASS=$((PASS + 1)); echo "PASS  ios: happy path restored index.js"
-fi
+# happy <name> <repo> <entry file the stub app logs from> [args...]
+happy() {
+  local name="$1" repo="$2" entry="$3"; shift 3
+  CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app" "STUB_METRO_PORT=8081"
+            "STUB_METRO_CWD=$repo" "STUB_PID=$APP_PID" "STUB_LOGS_MARKER=1" "STUB_ENTRY_FILE=$repo/$entry")
+  check "$name" 0 "RIG OK - the app is running code from $repo" rig-check.sh --repo "$repo" --timeout 6 "$@"
+  if grep -q RIGCHECK_ "$repo/$entry"; then
+    FAIL=$((FAIL + 1)); echo "FAIL  $name: the marker stayed in $entry"
+  else
+    PASS=$((PASS + 1)); echo "PASS  $name: $entry restored"
+  fi
+}
+happy "ios: happy path" "$R" index.js
+
+# index.js wins over package.json main: an RN CLI app's bundle starts there.
+R2="$(mkrepo index.js 'src/other.js' 'package.json={"main": "src/other.js"}')"; config "$R2" "$OK_ID"
+happy "ios: index.js wins over package.json main" "$R2" index.js
+
+R2="$(mkrepo index.ts 'package.json={"main": "index.ts"}')"; config "$R2" "$OK_ID"
+happy "ios: Expo app with index.ts" "$R2" index.ts
+
+R2="$(mkrepo 'package.json={"main": "expo-router/entry"}' app/_layout.tsx)"
+config "$R2" "$OK_ID" '- **entry**: `app/_layout.tsx` - the root layout (an Expo Router app has no entry file)'
+happy "ios: entry line in the config" "$R2" app/_layout.tsx
+
+R2="$(mkrepo index.js app/_layout.tsx)"; config "$R2" "$OK_ID" '- **entry**: `index.js`'
+happy "ios: --entry wins over the config line" "$R2" app/_layout.tsx --entry app/_layout.tsx
 
 # A linked worktree has no .simulator-verify/ of its own: the bundle id comes from the main one.
 git -C "$R" worktree add -q "$T/wt" >/dev/null 2>&1
@@ -201,31 +233,41 @@ kill "$APP_PID" 2>/dev/null; APP_PID=""
 
 # ================================================================ android-rig-check.sh
 CASE_ENV=("ADB=$T/bin/adb")
+OK_PKG='- **android package**: `com.example.app`'
 
 R="$(mkrepo index.js)"; template "$R"
 check "android: config is the unfilled template" 2 \
-  "no package" android-rig-check.sh --repo "$R"
+  "the 'android package' line in .* is still the template's placeholder.*or delete that line" android-rig-check.sh --repo "$R"
 
 R="$(mkrepo index.js)"
 check "android: no config at all" 2 \
-  "no package" android-rig-check.sh --repo "$R"
+  "no config: .*config\.md does not exist" android-rig-check.sh --repo "$R"
 
-R="$(mkrepo)"; config "$R" '- **android package**: `com.example.app`'
+R="$(mkrepo index.js)"; config "$R" "$OK_ID"
+check "android: bundle id line serves when there is no android package line" 1 \
+  "no Android device attached" android-rig-check.sh --repo "$R"
+
+R="$(mkrepo)"; config "$R" "$OK_PKG"
 check "android: no index.js, no package.json" 2 \
-  "entry file not found: .*/index\.js" android-rig-check.sh --repo "$R"
+  "entry file not found: .*/index\.js \(pass --entry" android-rig-check.sh --repo "$R"
 
-R="$(mkrepo 'package.json={"main": "expo-router/entry"}' app/_layout.tsx)"; config "$R" '- **android package**: `com.example.app`'
-check "android: Expo Router app (no entry file)" 2 \
-  "entry file not found: .*/index\.js" android-rig-check.sh --repo "$R"
+R="$(mkrepo 'package.json={"main": "expo-router/entry"}' src/app/_layout.tsx)"; config "$R" "$OK_PKG"
+check "android: Expo Router app names its root layout" 2 \
+  "Expo Router app\. Mark its root layout instead: pass --entry src/app/_layout\.tsx" android-rig-check.sh --repo "$R"
 
-R="$(mkrepo index.ts 'package.json={"main": "index.ts"}')"; config "$R" '- **android package**: `com.example.app`'
+R="$(mkrepo 'package.json={"main": "expo-router/entry"}' app/_layout.tsx)"
+config "$R" "$OK_PKG" '- **entry**: `app/_layout.tsx`'
+check "android: entry line in the config gets past the entry check" 1 \
+  "no Android device attached" android-rig-check.sh --repo "$R"
+
+R="$(mkrepo index.ts 'package.json={"main": "index.ts"}')"; config "$R" "$OK_PKG"
 check "android: Expo index.ts gets past the entry check" 1 \
   "no Android device attached" android-rig-check.sh --repo "$R"
 
-CASE_ENV=(); CASE_PATH="$NOADB_PATH"
-check "android: no adb anywhere" 1 \
+CASE_ENV=(); CASE_PATH="$NOADB_PATH"; CASE_NOT="no Android device"
+check "android: no adb anywhere - one error, the right one" 1 \
   "adb not found" android-rig-check.sh --repo "$R" --package com.example.app
-CASE_PATH=""
+CASE_PATH=""; CASE_NOT=""
 
 echo
 echo "$PASS passed, $FAIL failed"

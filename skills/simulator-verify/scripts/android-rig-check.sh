@@ -12,8 +12,10 @@
 #     --package PKG     app under test (default: the `android package` line of
 #                       <repo>/.simulator-verify/config.md, else its `bundle id` line; a worktree
 #                       without the config reads the main worktree's)
-#     --entry FILE      entry file to mark, relative to repo (default: the file `main` names in
-#                       package.json when it exists - index.ts in an Expo app - else index.js)
+#     --entry FILE      entry file to mark, relative to repo (default: the config's `entry`
+#                       line, else the file `main` names in package.json when it exists -
+#                       index.ts in an Expo app - else index.js. An Expo Router app has no
+#                       entry file; the error says to mark its root layout)
 #     --serial SERIAL   emulator or phone on USB (default: $ANDROID_SERIAL, else the only
 #                       attached device; several and none named = exit 2 with the list)
 #     --port N          Metro port (default: the Metro whose cwd is <repo>, else refused)
@@ -32,13 +34,18 @@
 # says what both were before. An Expo dev-client (an exp+<slug> scheme) is started through
 # its exp+<slug>://expo-development-client link instead, which writes the same pref itself.
 #
-# Exit: 0 = RIG OK, 1 = RIG DEAD, 2 = bad usage or an ambiguous device.
+# Exit: 0 = RIG OK, 1 = RIG DEAD, 2 = the check could not start: a bad flag, a setup gap it
+# names (no config, no package, no entry file), or several devices and none named.
 # The marker is always removed again, including on Ctrl-C or an error mid-run.
 
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/android-lib.sh"
+# android-lib.sh has already said that adb is missing; going on would only add a second,
+# wrong error ("no device attached") to the right one.
+[ -n "$ADB" ] || exit 1
+. "$HERE/../lib/rig-config.sh"
 PREFS="$HERE/android_prefs.py"
 
 REPO=""; PKG=""; ENTRY=""; PORT=""; PORT_EXPLICIT=""; TRIGGER="cold"; TIMEOUT=30
@@ -98,35 +105,45 @@ if [ -z "$REPO" ]; then
 fi
 [ -d "$REPO" ] || { echo "--repo is not a directory: $REPO" >&2; exit 2; }
 REPO="$(cd "$REPO" && pwd -P)"   # physical path: lsof reports cwd resolved
+# `.simulator-verify/` is per-project and normally gitignored, so a fresh worktree lacks it;
+# the main worktree's copy describes the same project (as rig-check.sh).
+CONFIG="$REPO/.simulator-verify/config.md"
+CONFIG_NOTE=""
+if [ ! -f "$CONFIG" ]; then
+  _common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [ -n "$_common" ] && [ -f "$(dirname "$_common")/.simulator-verify/config.md" ]; then
+    CONFIG="$(dirname "$_common")/.simulator-verify/config.md"
+    CONFIG_NOTE="config:  $REPO has no .simulator-verify/ - read from the main worktree's"
+  fi
+fi
 if [ -z "$ENTRY" ]; then
-  ENTRY="index.js"
-  if [ -f "$REPO/package.json" ]; then
-    _main="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("main") or "")' "$REPO/package.json" 2>/dev/null || true)"
+  ENTRY="$(rc_config_entry "$CONFIG")"
+  if [ -z "$ENTRY" ]; then
+    ENTRY="index.js"
+    _main="$(rc_package_main "$REPO")"
     [ -n "$_main" ] && [ -f "$REPO/$_main" ] && ENTRY="$_main"
   fi
 fi
 ENTRY_PATH="$REPO/$ENTRY"
-[ -f "$ENTRY_PATH" ] || { echo "entry file not found: $ENTRY_PATH (pass --entry)" >&2; exit 2; }
+[ -f "$ENTRY_PATH" ] || { rc_entry_problem "$REPO" "$ENTRY" --entry >&2; exit 2; }
 note "repo:    $REPO"
 _sha="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || true)"
 [ -n "$_sha" ] && note "branch:  $(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null) @ $_sha"
 note "entry:   $ENTRY"
 
-# `.simulator-verify/` is per-project and normally gitignored, so a fresh worktree lacks it;
-# the main worktree's copy describes the same project (as rig-check.sh).
-CONFIG="$REPO/.simulator-verify/config.md"
-if [ ! -f "$CONFIG" ]; then
-  _common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  if [ -n "$_common" ] && [ -f "$(dirname "$_common")/.simulator-verify/config.md" ]; then
-    CONFIG="$(dirname "$_common")/.simulator-verify/config.md"
-    note "config:  $REPO has no .simulator-verify/ - read from the main worktree's"
-  fi
-fi
+[ -n "$CONFIG_NOTE" ] && note "$CONFIG_NOTE"
 if [ -z "$PKG" ] && [ -f "$CONFIG" ]; then
   PKG="$( { grep -m1 -i 'android package' "$CONFIG" || grep -m1 -i 'bundle id' "$CONFIG" || true; } \
           | grep -oE '`[A-Za-z0-9._]+`' | head -1 | tr -d '`')"
 fi
-[ -n "$PKG" ] || { echo "no package (no 'android package' or 'bundle id' line in $CONFIG) - pass --package" >&2; exit 2; }
+if [ -z "$PKG" ]; then
+  if [ -f "$CONFIG" ] && grep -qi 'android package' "$CONFIG"; then
+    echo "$(rc_config_problem "$CONFIG" "android package" --package) (or delete that line: the 'bundle id' line is read when it is absent)" >&2
+  else
+    rc_config_problem "$CONFIG" "bundle id" --package >&2
+  fi
+  exit 2
+fi
 note "package: $PKG"
 
 # --- device ---------------------------------------------------------------------------------

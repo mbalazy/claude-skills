@@ -17,6 +17,10 @@ here. The skill stays generic; this file is where the project knowledge lives.
 - **bundle id**: `<com.example.app.development>` - the dev build's id, what
   `sim-ui.sh launch` takes.
 - **scheme**: `<Xcode scheme, e.g. MyApp-Development>`
+- **entry**: <only when the rig check cannot find the file the bundle starts from
+  by itself (it tries index.js, then package.json `main`). An Expo Router app has
+  none: put its root layout here in backticks, e.g. `app/_layout.tsx`. The rig
+  check reads only this first line - delete the line otherwise.>
 - **platform**: iOS simulator, and optionally a physical iPhone on the USB cable.
   A phone is driven by the same scripts (`SIM_UDID=<phone udid>`); what it needs
   from this file is the section below.

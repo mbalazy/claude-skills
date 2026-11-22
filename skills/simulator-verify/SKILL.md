@@ -28,6 +28,7 @@ S=$SV/sim-ui.sh
 | `$SV/read-rn-logs-cdp.py`, `$SV/read-rn-logs.sh` | JS console logs (CDP for RN >= 0.77, os_log before) |
 | `$SV/measure-*.py`, `$SV/probe-collector.py` | pixel measurement and instrumentation |
 | `$SV/simbench.sh`, `$SV/regress.sh`, `$SV/test-wda-diagnostics.sh` | only when changing the driver itself |
+| `$SV/test-rig-check.sh` | only when changing a rig check (`rig-check.sh`, `android-rig-check.sh`, `lib/rig-config.sh`): their setup paths on stubs, no device, ~15 s |
 | `$SV/android-rig-check.sh` | the Rig gate on an Android emulator or phone |
 | `$SV/android-ui.sh` | the Android driver (UiAutomator2 server + `adb`): the commands and exit codes of `sim-ui.sh`, plus `button BACK`; no launch arguments, `openurl` needs a package (`references/android.md`) |
 | `$SV/uia2-server.sh` | the UiAutomator2 server on an emulator or phone (`ensure` = install + start + proof, before the first `android-ui.sh` call) |
@@ -55,7 +56,7 @@ $SV/rig-check.sh --repo <worktree> --udid <udid> --port <n>
 ```
 
 - `RIG OK` = your tree reaches the app. `RIG DEAD` names the cause it found (no sim, app not installed, embedded bundle, wedged Metro, no Metro for this tree, app terminated, JS throwing at load, JS/native skew) - read it before rebuilding anything.
-- Exit **2** is a question, not a dead rig: several simulators booted and none identifiable. Answer with `--udid` / `SIM_UDID`.
+- Exit **2** is never a dead rig: the check could not start. Either a question - several simulators booted and none identifiable, answer with `--udid` / `SIM_UDID` - or a setup gap it names in one line (no config, the template's placeholder still in the bundle id line, no entry file); fix that and re-run.
 - **Android:** `$SV/android-rig-check.sh` (`--serial` / `ANDROID_SERIAL`, `--port`, `--repo`); same verdicts plus an embedded `index.android.bundle`, install consent pending, not debuggable, a locked screen (a PIN needs a person: `references/android.md`, "What only a person at the phone can do"). Its cold start sets the app's Metro host and leaves it set.
 - **The gate:** on `RIG DEAD` fix the rig and re-run. Do not navigate, do not screenshot, do not report - never report an observation, PASS, FAIL or "the screen looks right" from a session whose rig check did not pass. Silence from instrumentation is a suspicion about the rig, never evidence about the code.
 - Re-run it after anything that could swap what the app runs: a rebuild, a reinstall, a branch switch, a Metro restart.

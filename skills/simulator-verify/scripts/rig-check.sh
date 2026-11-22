@@ -16,7 +16,10 @@
 #   rig-check.sh [options]
 #     --repo PATH        tree that must reach the app (default: git root of cwd)
 #     --bundle-id ID     app under test (default: parsed from <repo>/.simulator-verify/config.md)
-#     --entry FILE       entry file to mark, relative to repo (default: index.js)
+#     --entry FILE       entry file to mark, relative to repo (default: the config's
+#                        `entry` line, else index.js, else the file package.json `main`
+#                        names - an Expo app's index.ts. An Expo Router app has no entry
+#                        file; the error says to mark its root layout)
 #     --udid UDID        simulator (default: $SIM_UDID; else the only booted one, or - with
 #                        several booted - the one connected to this repo's Metro. Never a guess.)
 #                        A PHYSICAL iPhone's udid (0000XXXX-<16 hex>, from `xcrun devicectl
@@ -49,7 +52,10 @@
 # lists MORE than one Metro candidate ignores the launch flag (AppDelegate probes the
 # candidates first); with one line or none, the flag wins.
 #
-# Exit: 0 = RIG OK, 1 = RIG DEAD, 2 = bad usage.
+# Exit: 0 = RIG OK, 1 = RIG DEAD (a Mac without full Xcode included), 2 = the check
+# could not start: a bad flag, a setup gap it names (no config, no bundle id, no entry
+# file), or several simulators booted and none tied to this repo - a question, not a
+# dead rig.
 # The marker is always removed again, including on Ctrl-C or an error mid-run.
 
 set -uo pipefail
@@ -57,8 +63,9 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 READ_LOGS="$SCRIPT_DIR/read-rn-logs.sh"
 READ_CDP="$SCRIPT_DIR/read-rn-logs-cdp.py"
+. "$SCRIPT_DIR/../lib/rig-config.sh"
 
-REPO=""; BUNDLE_ID=""; ENTRY="index.js"; UDID="${SIM_UDID:-}"; PORT=""; PORT_EXPLICIT=""; HOST=""
+REPO=""; BUNDLE_ID=""; ENTRY=""; UDID="${SIM_UDID:-}"; PORT=""; PORT_EXPLICIT=""; HOST=""
 KIND="sim"
 TRIGGER="relaunch"; TIMEOUT=30; AUTO_JSLOCATION=1
 LAUNCH_ARGS=()
@@ -176,14 +183,8 @@ if [[ -z "$REPO" ]]; then
   [[ -z "$REPO" ]] && { echo "not in a git repo and no --repo given" >&2; exit 2; }
 fi
 REPO="$(cd "$REPO" && pwd -P)"   # physical path - lsof reports cwd resolved, they must compare equal
-ENTRY_PATH="$REPO/$ENTRY"
-[[ -f "$ENTRY_PATH" ]] || { echo "entry file not found: $ENTRY_PATH (pass --entry)" >&2; exit 2; }
 
-note "repo:    $REPO"
-note "branch:  $(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null) @ $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)"
-note "entry:   $ENTRY"
-
-# --- bundle id -----------------------------------------------------------------------
+# --- config --------------------------------------------------------------------------
 # `.simulator-verify/` is per-project config, and it is normally gitignored - so a fresh
 # `git worktree` of the same repo does not have it and never will. Falling back to the main
 # worktree's copy is not a guess: --repo already says the two are checkouts of ONE repo, and
@@ -191,20 +192,44 @@ note "entry:   $ENTRY"
 # throwaway worktree forces a --bundle-id nobody remembers.
 CONFIG="$REPO/.simulator-verify/config.md"
 CONFIG_SOURCE="$CONFIG"
+CONFIG_NOTE=""
 if [[ ! -f "$CONFIG" ]]; then
   COMMON_DIR="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
   if [[ -n "$COMMON_DIR" ]]; then
     MAIN_WORKTREE="$(dirname "$COMMON_DIR")"
     if [[ "$MAIN_WORKTREE" != "$REPO" && -f "$MAIN_WORKTREE/.simulator-verify/config.md" ]]; then
       CONFIG_SOURCE="$MAIN_WORKTREE/.simulator-verify/config.md"
-      note "config:  $REPO has no .simulator-verify/ - read from main worktree $MAIN_WORKTREE"
+      CONFIG_NOTE="config:  $REPO has no .simulator-verify/ - read from main worktree $MAIN_WORKTREE"
     fi
   fi
 fi
+
+# --- entry file ------------------------------------------------------------------------
+# index.js first: an RN CLI app's bundle starts there whatever package.json says. An Expo
+# app starts from package.json `main` (index.ts in the TypeScript template).
+if [[ -z "$ENTRY" ]]; then
+  ENTRY="$(rc_config_entry "$CONFIG_SOURCE")"
+  if [[ -z "$ENTRY" ]]; then
+    ENTRY="index.js"
+    if [[ ! -f "$REPO/$ENTRY" ]]; then
+      _main="$(rc_package_main "$REPO")"
+      [[ -n "$_main" && -f "$REPO/$_main" ]] && ENTRY="$_main"
+    fi
+  fi
+fi
+ENTRY_PATH="$REPO/$ENTRY"
+[[ -f "$ENTRY_PATH" ]] || { rc_entry_problem "$REPO" "$ENTRY" --entry >&2; exit 2; }
+
+note "repo:    $REPO"
+note "branch:  $(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null) @ $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)"
+note "entry:   $ENTRY"
+
+# --- bundle id -----------------------------------------------------------------------
+[[ -n "$CONFIG_NOTE" ]] && note "$CONFIG_NOTE"
 if [[ -z "$BUNDLE_ID" && -f "$CONFIG_SOURCE" ]]; then
   BUNDLE_ID="$(grep -m1 -i 'bundle id' "$CONFIG_SOURCE" | grep -oE '`[A-Za-z0-9._-]+`' | head -1 | tr -d '`')"
 fi
-[[ -z "$BUNDLE_ID" ]] && { echo "no bundle id (not in $CONFIG_SOURCE either) - pass --bundle-id" >&2; exit 2; }
+[[ -z "$BUNDLE_ID" ]] && { rc_config_problem "$CONFIG_SOURCE" "bundle id" --bundle-id >&2; exit 2; }
 note "bundle:  $BUNDLE_ID"
 
 # --- Metro listeners -------------------------------------------------------------------
@@ -250,13 +275,24 @@ done < <(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null \
           | sort -u -k3,3n)
 
 # --- simulator -----------------------------------------------------------------------
+# simctl ships with the Xcode app only. With just the command line tools selected it does
+# not run at all, and an empty device list would read as "no booted simulator" while one
+# is up on the screen - so a failing simctl is named for what it is.
+if ! SIMCTL_BOOTED="$(xcrun simctl list devices booted 2>/dev/null)"; then
+  note "simctl:  $(xcrun simctl list devices booted 2>&1 >/dev/null | head -1)"
+  DEVDIR="$(xcode-select -p 2>/dev/null)"
+  if [[ "$DEVDIR" == *CommandLineTools* ]]; then
+    verdict DEAD "xcrun simctl does not run: the developer directory is the command line tools ($DEVDIR), and simulators need the full Xcode app. Install Xcode, then: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+  fi
+  verdict DEAD "xcrun simctl list failed (see the simctl note) - nothing about the simulator can be checked until it runs"
+fi
 BOOTED=(); BOOTED_NAMES=()
 while IFS= read -r line; do
   u="$(printf '%s' "$line" | grep -oE '[0-9A-Fa-f-]{36}' | head -1)"
   [[ -z "$u" ]] && continue
   BOOTED+=("$u")
   BOOTED_NAMES+=("$(printf '%s' "$line" | sed -E 's/^[[:space:]]*(.*) \([0-9A-Fa-f-]{36}\).*$/\1/')")
-done < <(xcrun simctl list devices booted 2>/dev/null)
+done < <(printf '%s\n' "$SIMCTL_BOOTED")
 
 if [[ -z "$UDID" ]]; then
   if (( ${#BOOTED[@]} == 0 )); then
