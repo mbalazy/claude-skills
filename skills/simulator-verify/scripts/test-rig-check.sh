@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# test-rig-check.sh - regression test of the two rig checks' setup paths, with no
+# simulator, emulator, Metro or app: xcrun, xcode-select, lsof, curl and adb are stubs.
+#
+# What it covers is everything a rig check decides BEFORE it touches a device, plus one
+# stubbed happy path through rig-check.sh: config found or not, the bundle id / package
+# line, the entry file, a Mac without full Xcode, several simulators, an app that is not
+# installed, no Metro, no adb. What a stub cannot answer (a real marker in a real log, a
+# real install) is regress.sh's and android-regress.sh's job on a live device.
+#
+# Usage: test-rig-check.sh [-v]     -v prints each case's output
+# Exit:  0 all cases pass, 1 a case failed.
+#
+# Runs in a temp dir; touches nothing outside it (HOME is the temp dir too).
+
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL="$(cd "$HERE/.." && pwd)"
+VERBOSE=""; [[ "${1:-}" == "-v" ]] && VERBOSE=1
+
+T="$(mktemp -d -t test-rig-check)"
+APP_PID=""
+cleanup() { [[ -n "$APP_PID" ]] && kill "$APP_PID" 2>/dev/null; rm -rf "$T"; }
+trap cleanup EXIT
+
+# --- a copy of the skill whose log reader is a stub -------------------------------------
+mkdir -p "$T/skill/scripts" "$T/bin" "$T/home"
+cp "$HERE/rig-check.sh" "$HERE/android-rig-check.sh" "$HERE/android-lib.sh" "$HERE/android_prefs.py" "$T/skill/scripts/"
+[[ -d "$SKILL/lib" ]] && cp -R "$SKILL/lib" "$T/skill/lib"
+[[ -d "$SKILL/references" ]] && cp -R "$SKILL/references" "$T/skill/references"
+cat > "$T/skill/scripts/read-rn-logs.sh" <<'EOF'
+#!/bin/bash
+# stub: the app "logs" the marker that rig-check.sh wrote into the entry file
+[[ -n "${STUB_LOGS_MARKER:-}" && -f "${STUB_ENTRY_FILE:-}" ]] && grep -o 'RIGCHECK_[0-9_]*' "$STUB_ENTRY_FILE"
+exit 0
+EOF
+chmod +x "$T/skill/scripts/"*.sh
+
+# --- stubs ------------------------------------------------------------------------------
+cat > "$T/bin/xcrun" <<'EOF'
+#!/bin/bash
+[[ "$1" == simctl ]] || { echo "xcrun stub: $*" >&2; exit 1; }
+if [[ -n "${STUB_NO_SIMCTL:-}" ]]; then
+  echo 'xcrun: error: unable to find utility "simctl", not a developer tool or in PATH' >&2; exit 72
+fi
+shift
+case "$1" in
+  list) printf '== Devices ==\n'; [[ -n "${STUB_BOOTED:-}" ]] && printf '%s\n' "$STUB_BOOTED" ;;
+  get_app_container) [[ -n "${STUB_APP:-}" ]] && echo "$STUB_APP" || exit 2 ;;
+  terminate) ;;
+  launch) echo "$3: ${STUB_PID:-}" ;;
+  spawn) ;;
+esac
+exit 0
+EOF
+cat > "$T/bin/xcode-select" <<'EOF'
+#!/bin/bash
+echo "${STUB_DEVDIR:-/Applications/Xcode.app/Contents/Developer}"
+EOF
+cat > "$T/bin/lsof" <<'EOF'
+#!/bin/bash
+case "$*" in
+  *"-sTCP:LISTEN"*)
+    echo "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME"
+    [[ -n "${STUB_METRO_PORT:-}" ]] && echo "node 4321 u 20u IPv6 0x0 0t0 TCP *:${STUB_METRO_PORT} (LISTEN)" ;;
+  *"-d cwd"*) printf 'p4321\nfcwd\nn%s\n' "${STUB_METRO_CWD:-/nowhere}" ;;
+esac
+exit 0
+EOF
+cat > "$T/bin/curl" <<'EOF'
+#!/bin/bash
+case "$*" in *"/status"*) echo "${STUB_STATUS:-packager-status:running}" ;; esac
+exit 0
+EOF
+cat > "$T/bin/adb" <<'EOF'
+#!/bin/bash
+# no device attached
+case "$*" in *devices*) echo "List of devices attached" ;; esac
+exit 0
+EOF
+chmod +x "$T/bin/"*
+# python3 and git only, through their own directory - never the rest of PATH (an adb there
+# would defeat the "no adb" case).
+mkdir -p "$T/tools"
+ln -s "$(command -v python3)" "$T/tools/python3"
+ln -s "$(command -v git)" "$T/tools/git"
+BASE_PATH="$T/bin:$T/tools:/usr/bin:/bin:/usr/sbin:/sbin"
+NOADB_PATH="$T/nobin:$T/tools:/usr/bin:/bin:/usr/sbin:/sbin"
+mkdir -p "$T/nobin"
+for s in xcrun xcode-select lsof curl; do ln -s "$T/bin/$s" "$T/nobin/$s"; done
+
+# --- repos ------------------------------------------------------------------------------
+# mkrepo <files...> - a fresh git repo with an initial commit; prints its path.
+# A file spec "path=content" writes content; a bare path writes a line of JS.
+# (mktemp, not a counter: it runs in a $(...) subshell, where a counter never advances.)
+mkrepo() {
+  local r f
+  r="$(mktemp -d "$T/repo.XXXXXX")" && git -C "$r" init -q
+  for f in "$@"; do
+    mkdir -p "$(dirname "$r/${f%%=*}")"
+    if [[ "$f" == *=* ]]; then printf '%s\n' "${f#*=}" > "$r/${f%%=*}"; else echo "console.log('app');" > "$r/$f"; fi
+  done
+  git -C "$r" add -A >/dev/null 2>&1
+  git -C "$r" -c user.name=t -c user.email=t@example.com commit -qm init --allow-empty
+  (cd "$r" && pwd -P)
+}
+template() { mkdir -p "$1/.simulator-verify"; cp "$SKILL/references/config-template.md" "$1/.simulator-verify/config.md"; }
+config() { mkdir -p "$1/.simulator-verify"; printf '%s\n' "${@:2}" > "$1/.simulator-verify/config.md"; }
+
+SIM_A="11111111-2222-3333-4444-555555555555"
+SIM_B="22222222-2222-2222-2222-222222222222"
+mkdir -p "$T/app/Demo.app"
+
+# --- runner -----------------------------------------------------------------------------
+PASS=0; FAIL=0
+# check <name> <expected exit> <regex the output must match> <script> [args...]
+# The environment for the case comes from the STUB_* / PATH variables set before the call.
+check() {
+  local name="$1" want="$2" re="$3" script="$4"; shift 4
+  local out rc
+  out="$(cd "$T" && env -i HOME="$T/home" PATH="${CASE_PATH:-$BASE_PATH}" TMPDIR="$T" \
+          ${CASE_ENV[@]+"${CASE_ENV[@]}"} bash "$T/skill/scripts/$script" "$@" 2>&1)"
+  rc=$?
+  if [[ "$rc" == "$want" ]] && grep -qE -- "$re" <<< "$out"; then
+    PASS=$((PASS + 1)); echo "PASS  $name"
+  else
+    FAIL=$((FAIL + 1)); echo "FAIL  $name (exit $rc, want $want; want output matching: $re)"
+    printf '%s\n' "$out" | sed 's/^/      | /'
+    return
+  fi
+  [[ -n "$VERBOSE" ]] && printf '%s\n' "$out" | sed 's/^/      | /'
+  return 0
+}
+CASE_ENV=()
+
+# ======================================================================== rig-check.sh
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)")
+
+R="$(mkrepo index.js)"
+check "ios: no config at all" 2 \
+  "no bundle id" rig-check.sh --repo "$R"
+
+R="$(mkrepo index.js)"; template "$R"
+check "ios: config is the unfilled template" 2 \
+  "no bundle id" rig-check.sh --repo "$R"
+
+R="$(mkrepo index.js)"; config "$R" "- **bundle id**: com.example.app"
+check "ios: bundle id without backticks" 2 \
+  "no bundle id" rig-check.sh --repo "$R"
+
+R="$(mkrepo)"; config "$R" '- **bundle id**: `com.example.app`'
+check "ios: no index.js, no package.json" 2 \
+  "entry file not found: .*/index\.js" rig-check.sh --repo "$R"
+
+R="$(mkrepo index.ts 'package.json={"main": "index.ts"}')"; config "$R" '- **bundle id**: `com.example.app`'
+check "ios: Expo app with index.ts" 2 \
+  "entry file not found: .*/index\.js" rig-check.sh --repo "$R"
+
+R="$(mkrepo 'package.json={"main": "expo-router/entry"}' app/_layout.tsx)"; config "$R" '- **bundle id**: `com.example.app`'
+check "ios: Expo Router app (no entry file)" 2 \
+  "entry file not found: .*/index\.js" rig-check.sh --repo "$R"
+
+R="$(mkrepo index.js)"; config "$R" '- **bundle id**: `com.example.app`'
+CASE_ENV=("STUB_NO_SIMCTL=1" "STUB_DEVDIR=/Library/Developer/CommandLineTools")
+check "ios: command line tools only, no Xcode" 1 \
+  "RIG DEAD: no booted simulator" rig-check.sh --repo "$R" --timeout 2
+
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)
+    Other Sim ($SIM_B) (Booted)")
+check "ios: two simulators, none tied to this repo" 2 \
+  "CANNOT TELL WHICH SIMULATOR IS YOURS" rig-check.sh --repo "$R" --timeout 2
+
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)")
+check "ios: app not installed" 1 \
+  "RIG DEAD: com\.example\.app is not installed on $SIM_A" rig-check.sh --repo "$R" --timeout 2
+
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app")
+check "ios: no Metro serves the repo" 1 \
+  "RIG DEAD: no Metro is serving" rig-check.sh --repo "$R" --timeout 2
+
+sleep 120 & APP_PID=$!
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app" "STUB_METRO_PORT=8081"
+          "STUB_METRO_CWD=$R" "STUB_PID=$APP_PID" "STUB_LOGS_MARKER=1" "STUB_ENTRY_FILE=$R/index.js")
+check "ios: happy path" 0 \
+  "RIG OK - the app is running code from $R" rig-check.sh --repo "$R" --timeout 6
+if grep -q RIGCHECK_ "$R/index.js"; then
+  FAIL=$((FAIL + 1)); echo "FAIL  ios: happy path left the marker in index.js"
+else
+  PASS=$((PASS + 1)); echo "PASS  ios: happy path restored index.js"
+fi
+
+# A linked worktree has no .simulator-verify/ of its own: the bundle id comes from the main one.
+git -C "$R" worktree add -q "$T/wt" >/dev/null 2>&1
+WT="$(cd "$T/wt" && pwd -P)"
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app" "STUB_METRO_PORT=8081"
+          "STUB_METRO_CWD=$WT" "STUB_PID=$APP_PID" "STUB_LOGS_MARKER=1" "STUB_ENTRY_FILE=$WT/index.js")
+check "ios: worktree reads the main worktree's config" 0 \
+  "read from main worktree" rig-check.sh --repo "$WT" --timeout 6
+kill "$APP_PID" 2>/dev/null; APP_PID=""
+
+# ================================================================ android-rig-check.sh
+CASE_ENV=("ADB=$T/bin/adb")
+
+R="$(mkrepo index.js)"; template "$R"
+check "android: config is the unfilled template" 2 \
+  "no package" android-rig-check.sh --repo "$R"
+
+R="$(mkrepo index.js)"
+check "android: no config at all" 2 \
+  "no package" android-rig-check.sh --repo "$R"
+
+R="$(mkrepo)"; config "$R" '- **android package**: `com.example.app`'
+check "android: no index.js, no package.json" 2 \
+  "entry file not found: .*/index\.js" android-rig-check.sh --repo "$R"
+
+R="$(mkrepo 'package.json={"main": "expo-router/entry"}' app/_layout.tsx)"; config "$R" '- **android package**: `com.example.app`'
+check "android: Expo Router app (no entry file)" 2 \
+  "entry file not found: .*/index\.js" android-rig-check.sh --repo "$R"
+
+R="$(mkrepo index.ts 'package.json={"main": "index.ts"}')"; config "$R" '- **android package**: `com.example.app`'
+check "android: Expo index.ts gets past the entry check" 1 \
+  "no Android device attached" android-rig-check.sh --repo "$R"
+
+CASE_ENV=(); CASE_PATH="$NOADB_PATH"
+check "android: no adb anywhere" 1 \
+  "adb not found" android-rig-check.sh --repo "$R" --package com.example.app
+CASE_PATH=""
+
+echo
+echo "$PASS passed, $FAIL failed"
+(( FAIL == 0 ))
