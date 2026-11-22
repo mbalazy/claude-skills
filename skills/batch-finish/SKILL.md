@@ -320,7 +320,7 @@ verification block:
 - REFUTED:   <assumption> - evidence: <...> -> fixed in <commit>
 - UNVERIFIED: <assumption> - why + agreed risk
 - OBSERVED CONFIRMED: <worker reading> - re-observed: <what you saw> - controls: <pos>/<neg>
-- OBSERVED REFUTED:   <worker reading> - actual: <...> -> fixed in <commit> / journal sim-rig <id>
+- OBSERVED REFUTED:   <worker reading> - actual: <...> -> fixed in <commit> / journal <sim-rig|android-rig> <id>
 ```
 
 This is the audit trail: next time the executor's assumptions drift in some
