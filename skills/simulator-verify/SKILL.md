@@ -151,6 +151,7 @@ If WebDriverAgent will not come up, read the driver's diagnostics first - they a
 | file | read when |
 |---|---|
 | `references/config-template.md` | creating `.simulator-verify/config.md` |
+| `QUICKSTART.md` | the first run on a new machine or in a new app repo: config, driver, the first `RIG OK`, the five problems a first run meets |
 | `references/rig-check.md` | a rig check is not `RIG OK`, or you need its flags (`--launch-arg`, `--no-jslocation`, `--host`) |
 | `references/driver.md` | before your first batch in a session; a command surprised you; `rn-devtools.mjs` |
 | `references/device.md` | the target is a physical iPhone |

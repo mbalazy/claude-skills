@@ -99,12 +99,32 @@ Requirements:
 
 - Claude Code. The pm skills need [pm-cli](https://github.com/mbalazy/pm-cli)
   installed and registered as an MCP server.
-- `simulator-verify` and `figma-pp`: macOS with Xcode command-line tools
-  (`xcrun simctl`) and a booted simulator with WebDriverAgent installed. The
-  two measuring scripts need Pillow and sort that out themselves - on first run
-  they build a small venv at `~/.local/share/claude-skills/venv` (using `uv` if
-  it is on PATH, otherwise `python3 -m venv`) and re-exec into it, because
-  `pip install` into a Homebrew Python is refused under PEP 668.
+- `simulator-verify` on iOS: macOS with the **full Xcode app**, selected
+  (`xcode-select -p` points inside `Xcode.app`) - the command line tools alone
+  have no `xcrun simctl`, and the rig check says so. WebDriverAgent, which the
+  skill builds and installs itself: once `skills/simulator-verify/scripts/wda-sim.sh build`
+  (minutes, into `~/.cache/wda-device`), then `wda-sim.sh ensure <udid> --port <port>`
+  on each simulator. Python 3. Node >= 22.4 for `rn-devtools.mjs`, >= 23.6 for
+  its `tree` and `net` commands. The two measuring scripts need Pillow and sort
+  that out themselves - on first run they build a small venv at
+  `~/.local/share/claude-skills/venv` (using `uv` if it is on PATH, otherwise
+  `python3 -m venv`) and re-exec into it, because `pip install` into a Homebrew
+  Python is refused under PEP 668. A physical iPhone also needs `iproxy`
+  (libimobiledevice), an Apple team that can sign for it, and Developer Mode on
+  the phone (`skills/simulator-verify/references/device.md`).
+- `simulator-verify` on Android: the Android SDK's `adb` (from `$ANDROID_HOME`,
+  PATH, or `~/Library/Android/sdk`), an emulator from an AVD or a phone with USB
+  debugging on, Python 3, and npm for the one-time download of the UiAutomator2
+  server that `skills/simulator-verify/scripts/uia2-server.sh ensure` installs on
+  the device (`skills/simulator-verify/references/android.md`).
+- The first run on either platform: `skills/simulator-verify/QUICKSTART.md`.
+- `figma-pp`: a Figma MCP server for the repo's Figma account, ImageMagick
+  (`magick`) and `cwebp` for assets, `ffmpeg` for checking animations, and
+  `simulator-verify` working for the app - it verifies there.
+- `developing-features`: git and Node; its live check runs the runtime
+  verification skill its config names (e.g. `simulator-verify`).
+  `skills/developing-features/scripts/check-config.sh <repo>` checks that config
+  after you fill it.
 - `web-verify`: Node and a one-time `npm ci` in its directory.
 
 ## Per-repo configuration
@@ -149,8 +169,11 @@ leaving a placeholder is a valid answer and guessing is not.
   English.
 - Throwaway instrumentation is throwaway. Every overlay, log line and hardcoded
   prop comes out before the commit, and `git status` has to be clean.
-- Nothing here starts Metro, boots a simulator or installs a build. That is the
-  project's own tooling; these skills drive what is already running.
+- Nothing here starts Metro, boots a simulator or emulator, or builds the app.
+  That is the project's own tooling; these skills drive what is already
+  running. What they do install is their own driver (WebDriverAgent on a
+  simulator, the UiAutomator2 server on an Android device), and the rig checks
+  relaunch the app - on Android also pointing it at this tree's Metro.
 
 ## License
 

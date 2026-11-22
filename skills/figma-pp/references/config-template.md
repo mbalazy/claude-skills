@@ -1,7 +1,7 @@
 # .figma-pp config (per-repo, gitignored)
 
 Copy this file to `<repo-root>/.figma-pp/config.md` and fill it in.
-The `figma-pixel-perfect` skill reads this on every run. Keep it current.
+The `figma-pp` skill reads this on every run. Keep it current.
 
 ## Project
 

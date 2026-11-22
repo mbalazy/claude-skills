@@ -143,7 +143,7 @@ All commands below are `S=<skill-dir>/scripts/sim-ui.sh` (`<skill-dir>` = the di
 - `$S elements` is not a passive read: answering it makes `UITabBarController` instantiate every child controller, so it can mount the very screen you are testing for. Never use it to prove a screen was NOT mounted.
 
 ### 2b. Ask the app's JS runtime (`scripts/rn-devtools.mjs`)
-The accessibility tree shows what iOS exposes; the app's JS runtime knows the rest (state, globals, what React rendered). `scripts/rn-devtools.mjs` talks to it over Metro's CDP inspector, the channel `read-rn-logs-cdp.py` reads logs from. Node built-ins only (tested on Node 25.8; the global `WebSocket` needs Node >= 22.4), one-shot: every command connects, does its job, closes.
+The accessibility tree shows what iOS exposes; the app's JS runtime knows the rest (state, globals, what React rendered). `scripts/rn-devtools.mjs` talks to it over Metro's CDP inspector, the channel `read-rn-logs-cdp.py` reads logs from. Node built-ins only (tested on Node 25.8; the global `WebSocket` needs Node >= 22.4, and `tree` and `net` load the vendored Argent TypeScript directly, which needs Node >= 23.6 with type stripping), one-shot: every command connects, does its job, closes.
 ```
 RD=<skill-dir>/scripts/rn-devtools.mjs
 node $RD targets --port 8090                     # the runtime pages; * marks the one commands use

@@ -135,4 +135,11 @@ create it from a template on first run.
 
 These directories hold real account data and project specifics. Keep them out
 of git.
+
+simulator-verify, first run: skills/simulator-verify/QUICKSTART.md in this repo.
+  iOS:     full Xcode selected (xcode-select -p), then once:
+           skills/simulator-verify/scripts/wda-sim.sh build
+  Android: adb on PATH or in ~/Library/Android/sdk, an emulator or a phone, then
+           skills/simulator-verify/scripts/uia2-server.sh ensure
+web-verify, once: npm ci in skills/web-verify/
 EOF
