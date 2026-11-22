@@ -10,8 +10,8 @@
 #   wda-sim.sh check  <udid> --port <p>   # the same proof without installing or starting anything
 #
 # Why a gate and not "RIG OK": rig-check.sh proves the app runs the checkout's JS. A
-# simulator created for a run has no runner at all, and that was only discovered mid-shift
-# when sim-ui.sh could not start it (journal sim-rig 20260928-4ccb). Installed is not
+# simulator created for a run has no runner at all, and that was only discovered mid-run
+# when sim-ui.sh could not start it (2026-09-28). Installed is not
 # ready either: READY means the listener on <p> belongs to <udid> and an element tree
 # came back through it.
 #

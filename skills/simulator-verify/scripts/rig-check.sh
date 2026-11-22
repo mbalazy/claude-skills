@@ -253,7 +253,7 @@ while read -r cmd pid port; do
     elif [[ "$cmd" == node ]]; then
       # A node process serving this repo that will not say packager-status:running is a
       # Metro that WEDGED, not a stranger on the port - it keeps the socket open while the
-      # app finds no packager and comes up on a redbox (journal sim-rig 20260730-fd2d).
+      # app finds no packager and comes up on a redbox (2026-07-30).
       WEDGED_METRO="$port"
       note "listen:  :$port $cmd pid $pid  <- node serving this repo, but /status is silent: WEDGED Metro"
     else
@@ -419,8 +419,8 @@ fi
 # "No marker" has two very different causes: the app ran and did not execute your code, or
 # the app is not there at all because it died. Without telling them apart, an app that
 # aborts at launch (a JS/native version skew after an RN bump is the usual reason - pure
-# JS/TS changes cannot abort natively) reads as a mysteriously dead rig; journal sim-rig
-# 20260721-f19d cost a session to "the PR's code crashes the app".
+# JS/TS changes cannot abort natively) reads as a mysteriously dead rig; on 2026-07-21 that
+# cost a session to "the PR's code crashes the app".
 APP_PID=""
 
 app_alive() {
@@ -475,8 +475,7 @@ print(f"{ind} ({sig})".strip() if ind or sig else "", end="")
 # that cannot load takes the marker down with it. The usual reason is a native module the
 # JS requires that the installed binary does not carry (JS/native skew after a native
 # dependency landed in the tree). The redbox text lands in the same log subsystem as
-# console.log, so it is readable right here - journal sim-rig 20260820-baf2 is what it
-# costs not to: "neither the build nor Metro explains why", read as "not installed", read as
+# console.log, so it is readable right here - 2026-08-20 is what it costs not to: "neither the build nor Metro explains why", read as "not installed", read as
 # a 40-minute rebuild, when a newer build already sat in DerivedData.
 js_startup_error() {
   local lines pick

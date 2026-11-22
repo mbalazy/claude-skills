@@ -194,7 +194,8 @@ device_wda_port() {
 
 # A live WDA on the port proves something is listening - NOT that it drives the
 # simulator you asked for. When it does not, every element tree and every tap
-# silently goes to the other device (journal sim-rig 20260809-c2f3, 20260811-8beb).
+# silently goes to the other device (2026-08-09 and 2026-08-11: readings of one simulator
+# reported as another's).
 assert_wda_owner() {
   local want="$1" owner p other
   owner="$(port_owner_udid "$WDA_PORT")"
@@ -233,8 +234,8 @@ assert_wda_owner() {
 }
 
 # Is the runner on the target at all? Asked FIRST, because a simulator created for a run
-# has none, and the old answer to that - window advice - sent a night shift down a dead
-# end (journal sim-rig 20260928-4ccb). Prints what it found; returns 1 only for confirmed
+# has none, and the old answer to that - window advice - sent an unattended run down a
+# dead end (2026-09-28). Prints what it found; returns 1 only for confirmed
 # absence. An inspection that failed is reported as that, never as "missing".
 wda_install_diagnostics() {
   local want="$1" st src
@@ -264,7 +265,7 @@ wda_install_diagnostics() {
 
 # Why an INSTALLED runner may refuse to start. On Xcode 26 and earlier a sim with no
 # Simulator.app window failed with `XCTest 10300, failed to background test runner`
-# (journal sim-rig 20260811-8beb). Xcode 27 ships no Simulator.app at all, and WDA started
+# (2026-08-11). Xcode 27 ships no Simulator.app at all, and WDA started
 # on a headless sim there (2026-09-28/29), so window advice is printed only when
 # Simulator.app exists on this Mac, and as a possible cause, never as the proven one.
 # The booted-sim COUNT is printed as context only: three windowed sims hosted WDA fine
@@ -404,7 +405,7 @@ except Exception:
 }
 
 # WDA accepts an out-of-screen tap without complaining and nothing happens, which
-# reads exactly like a frozen app (journal sim-rig 20260803-8f3d). The usual source
+# reads exactly like a frozen app (2026-08-03: taps in pixels read as a stale screenshot). The usual source
 # is a coordinate measured on a screenshot, which is in pixels.
 assert_in_bounds() {
   local dims w h s x y
@@ -595,7 +596,7 @@ case "$cmd" in
     done
     # Answering this query makes UITabBarController instantiate EVERY child controller,
     # so a screen you never navigated to can mount just because you measured
-    # (journal sim-rig 20260730-74da). Never use it to prove a screen was not mounted.
+    # (2026-07-30: a lazy tab mounted by the read itself). Never use it to prove a screen was not mounted.
     echo "NOTE: reading the a11y tree mounts every tab's controller - it is not a passive read." >&2
     if [ "$SETTLED" -eq 0 ]; then
       curl -s -m 20 "$WDA/source?format=json" | python3 "$HERE/wda_tree.py" $ALL "${_fmt[@]+"${_fmt[@]}"}"
@@ -820,7 +821,7 @@ print(v)'
 
   # Alerts arrive on their own schedule and QUEUE UP. A single read a few seconds
   # after a tap that came back "no alert" is not evidence the tap did nothing
-  # (journal sim-rig 20260811-3699) - wait for one, and drain the queue afterwards.
+  # (2026-08-11) - wait for one, and drain the queue afterwards.
   alert)
     ensure_wda
     sub="${1:-text}"; shift || true

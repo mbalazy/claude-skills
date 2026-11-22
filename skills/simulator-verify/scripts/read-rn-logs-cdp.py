@@ -37,7 +37,7 @@ Notes:
   /json/list and reconnects; Runtime.enable on the new runtime replays what
   it logged while nobody was attached, so a relaunch loses nothing. Before
   2026-08-29 the script exited on the first close and a whole flow could run
-  unlogged (journal sim-rig). --no-follow restores the old behaviour.
+  unlogged. --no-follow restores the old behaviour.
 - One debugger per page: if React Native DevTools is already attached to the
   same runtime, the proxy may drop one of the clients. Disconnect DevTools
   first if the tap gets no events.

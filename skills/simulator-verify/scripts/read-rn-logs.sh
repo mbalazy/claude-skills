@@ -26,8 +26,8 @@
 # Device: --udid, else $SIMCTL_DEVICE, else $SIM_UDID (the variable sim-ui.sh takes),
 # else the only booted sim. With several booted and none of those set it REFUSES
 # instead of picking one - reading the wrong simulator returns an empty result that
-# looks exactly like "the instrumentation never fired" (journal sim-rig 20260805-9155,
-# 20260809-4464, 20260809-c2f3).
+# looks exactly like "the instrumentation never fired" (taken for that three times,
+# 2026-08-05 and twice on 2026-08-09).
 set -euo pipefail
 
 DEVICE="${SIMCTL_DEVICE:-${SIM_UDID:-}}"
