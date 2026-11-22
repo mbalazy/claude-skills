@@ -1,6 +1,6 @@
 ---
 name: simulator-verify
-description: Verify a view or feature on the live iOS simulator - or on a physical iPhone over USB, driven by the same scripts - or on an Android emulator or phone, of a React Native / Expo app. Launches the dev build, navigates to the target screen, inspects the accessibility element tree + screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "sprawdź na symulatorze", "sprawdź na telefonie", "zweryfikuj ekran X", "sprawdź na emulatorze", "czy to działa na symulatorze". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
+description: Verify a view or feature of a React Native / Expo app on a live device - iOS simulator, iPhone over USB, Android emulator or Android phone over USB. Proves the app runs the tree under test (rig check), launches the dev build, navigates to the target screen, reads the accessibility element tree (WebDriverAgent on iOS, UiAutomator2 on Android) and a screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "check it on the simulator", "check it on the emulator", "check it on the phone", "verify screen X", "does it work on Android". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
 ---
 
 # simulator-verify
