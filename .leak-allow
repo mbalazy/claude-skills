@@ -1,5 +1,6 @@
-# Fictional values that look like real ones. check-leaks.sh passes a match equal to a
-# line here. Only FICTIONAL values belong in this file - never a real one "just this once".
+# Fictional values that look like real ones, and public platform constants (protocol ids,
+# package names of Android itself and of open-source tools). check-leaks.sh passes a match
+# equal to a line here. Never a real work value (client app, device, host) "just this once".
 AAAA1111-BBBB-2222-CCCC-3333DDDD4444
 11111111-2222-3333-4444-555555555555
 11111111-1111-1111-1111-111111111111
@@ -7,3 +8,28 @@ AAAA1111-BBBB-2222-CCCC-3333DDDD4444
 00008101-000A1B2C3D4E5F60
 # RFC 6455 WebSocket GUID, a protocol constant
 258EAFA5-E914-47DA-95CA-C5AB0DC85B11
+# Android emulator host aliases (stock emulator, Genymotion)
+10.0.2.2
+10.0.3.2
+# Android system components
+com.android.commands.am.Am
+com.android.permissioncontroller
+com.google.android.permissioncontroller
+com.android.vending
+com.android.launcher3
+com.android.systemui
+com.android.permissioncontroller.permission.ui.GrantPermissionsActivity
+com.google.android
+com.android.internal.app.ResolverActivity
+com.google.android.apps.nexuslauncher
+com.android.documentsui
+com.android.documentsui.picker.PickActivity
+# Open-source driver servers and helpers (Appium UiAutomator2, Maestro, mobilecli, agent-device)
+io.appium.uiautomator2
+io.appium.uiautomator2.server
+io.appium.uiautomator2.server.test
+dev.mobile.maestro
+com.mobilenext.mobilecli.DeviceServer
+com.callstack.agentdevice
+com.callstack.agentdevice.imehelper
+com.callstack.agentdevice.snapshothelper

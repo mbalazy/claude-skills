@@ -21,6 +21,24 @@ here. The skill stays generic; this file is where the project knowledge lives.
   A phone is driven by the same scripts (`SIM_UDID=<phone udid>`); what it needs
   from this file is the section below.
 
+## Android emulator (fill in when one is used)
+
+- **android package**: `<com.example.app.dev>` - the debug build's application id,
+  what `android-ui.sh launch` and `android-rig-check.sh` take (the rig check reads
+  this line; when the line is absent it falls back to the `bundle id` line above -
+  delete it rather than leave the placeholder, which stops the check with exit 2).
+- **emulator**: `<AVD name>` and the serial it gets (`android-ui.sh devices`); pin it
+  with `ANDROID_SERIAL=<serial>` - with two attached the scripts refuse to pick.
+- **Metro: one per emulator.** The emulator reaches the Mac at `10.0.2.2:<port>`;
+  the app's Metro is the `debug_http_host` pref, which the cold start of
+  `android-rig-check.sh --port` writes and leaves set. Record which port serves which emulator only for the
+  current session - like a WebDriverAgent port, it is not stable.
+- **APK**: `<path under android/app/build/outputs/apk the build writes>` and the
+  install command; a flavor that embeds `index.android.bundle` runs frozen JS when
+  it finds no Metro (the rig check says so).
+- **Expo dev-client**: its `exp+<slug>` scheme; its first start after an install
+  shows the dev menu intro sheet (tap Continue once).
+
 ## Physical iPhone (fill in when one is used)
 
 - **udid**: `<0000XXXX-XXXXXXXXXXXXXXXX from xcrun devicectl list devices>`

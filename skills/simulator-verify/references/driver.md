@@ -4,6 +4,8 @@ Read before your first batch in a session, and whenever a command does something
 
 - **`scripts/sim-ui.sh`** - the driver for everything: observation and interaction via WebDriverAgent's HTTP API (localhost:8100), lifecycle via `xcrun simctl`. No MCP server needed. Run it with no args for the command list. It auto-starts WDA (`com.facebook.WebDriverAgentRunner.xctrunner` must be installed on the sim). **A physical iPhone on the cable is the same driver**: put the phone's udid in `SIM_UDID` and every command works unchanged - see `device.md`.
 
+- **Android emulator**: `scripts/android-ui.sh` is the counterpart of `sim-ui.sh` (the same command names and exit codes; no launch arguments, `openurl` needs a package); what differs per command is in `android.md`.
+
 - **`scripts/rn-devtools.mjs`** - asks the app's JS runtime over Metro's CDP inspector (runtime pages, evaluate JS, a log of the app's JS requests); see 2b. Its shared code is `scripts/devtools/`, Argent-derived files under `scripts/devtools/vendor/argent/` (Apache 2.0, see its NOTICE).
 
 - **In a throwaway `git worktree`, none of this exists locally.** Both the skill directory and `.simulator-verify/` are typically git-ignored, so a fresh worktree of the same repo has neither - and no amount of re-running will create them. Call the scripts by their absolute path from wherever the skill is installed and point them at the tree under test: `<skill-dir>/scripts/rig-check.sh --repo <worktree>`. `rig-check.sh` then reads the project config from the repo's MAIN worktree by itself, so `--bundle-id` is only needed when even that has no config. For `sim-ui.sh` in a hand session, export `SIM_UDID` and `WDA_PORT` - it derives nothing.

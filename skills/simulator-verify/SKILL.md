@@ -1,11 +1,11 @@
 ---
 name: simulator-verify
-description: Verify a view or feature on the live iOS simulator - or on a physical iPhone over USB, driven by the same scripts - of a React Native / Expo app (iOS only, no Android). Launches the dev build, navigates to the target screen, inspects the accessibility element tree + screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "sprawdź na symulatorze", "sprawdź na telefonie", "zweryfikuj ekran X", "czy to działa na symulatorze". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
+description: Verify a view or feature on the live iOS simulator - or on a physical iPhone over USB, driven by the same scripts - or on an Android emulator or phone, of a React Native / Expo app. Launches the dev build, navigates to the target screen, inspects the accessibility element tree + screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "sprawdź na symulatorze", "sprawdź na telefonie", "zweryfikuj ekran X", "sprawdź na emulatorze", "czy to działa na symulatorze". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
 ---
 
 # simulator-verify
 
-Reusable verification atom for any React Native / Expo app on the iOS simulator (iOS only - there is no Android path). Confirms a screen or feature renders and behaves correctly by observing the running app, not by reading code. Called standalone, or as the verify step inside a feature / bugfix flow.
+Reusable verification atom for any React Native / Expo app on the iOS simulator or an Android emulator. Confirms a screen or feature renders and behaves correctly by observing the running app, not by reading code. Called standalone, or as the verify step inside a feature / bugfix flow.
 
 The skill is generic: everything app-specific (bundle id, device, Metro port, screen map, deep links) lives in the per-repo config, never in here.
 
@@ -28,6 +28,10 @@ S=$SV/sim-ui.sh
 | `$SV/read-rn-logs-cdp.py`, `$SV/read-rn-logs.sh` | JS console logs (CDP for RN >= 0.77, os_log before) |
 | `$SV/measure-*.py`, `$SV/probe-collector.py` | pixel measurement and instrumentation |
 | `$SV/simbench.sh`, `$SV/regress.sh`, `$SV/test-wda-diagnostics.sh` | only when changing the driver itself |
+| `$SV/android-rig-check.sh` | the Rig gate on an Android emulator or phone |
+| `$SV/android-ui.sh` | the Android driver (UiAutomator2 server + `adb`): the commands and exit codes of `sim-ui.sh`, plus `button BACK`; no launch arguments, `openurl` needs a package (`references/android.md`) |
+| `$SV/uia2-server.sh` | the UiAutomator2 server on an emulator or phone (`ensure` = install + start + proof, before the first `android-ui.sh` call) |
+| `$SV/android-regress.sh` | only when changing the Android driver itself |
 
 The Metro port and the bundle id always come from `.simulator-verify/config.md` (`$PORT`, `$BUNDLE` below) - never from an example in this skill.
 
@@ -38,6 +42,7 @@ Look for `<repo-root>/.simulator-verify/config.md`. It holds everything project-
 - **Missing?** Copy `references/config-template.md` to `<repo-root>/.simulator-verify/config.md`, fill what you can infer from the repo (bundle id and scheme from the iOS project / `app.config.js`, Metro port from the start script), then ask the user to confirm the bundle id and device before driving anything. Also make sure `.simulator-verify/` is git-ignored - it accumulates real account data (test users, appointments, phone numbers) that must not be committed.
 - **Present?** Read it first. Keep it current: whenever you learn a new screen, deep link, route or gotcha, append it there rather than to this skill.
 - The app's dev build must be installed on a booted simulator; if it is not, or Metro is down, follow Cold start in `config.md`.
+- **Android emulator or phone:** set `ANDROID_SERIAL`, run `$SV/uia2-server.sh ensure`, and use `$SV/android-ui.sh` wherever this file says `$S` - without launch arguments (drop `-RCT_jsLocation`: the rig check points the app at its Metro) and with `openurl URL --package $PKG`; one Metro per emulator. Read `references/android.md` before the first Android run.
 
 ## Rig gate (second thing, every run) - no green rig check, no report
 
@@ -51,6 +56,7 @@ $SV/rig-check.sh --repo <worktree> --udid <udid> --port <n>
 
 - `RIG OK` = your tree reaches the app. `RIG DEAD` names the cause it found (no sim, app not installed, embedded bundle, wedged Metro, no Metro for this tree, app terminated, JS throwing at load, JS/native skew) - read it before rebuilding anything.
 - Exit **2** is a question, not a dead rig: several simulators booted and none identifiable. Answer with `--udid` / `SIM_UDID`.
+- **Android:** `$SV/android-rig-check.sh` (`--serial` / `ANDROID_SERIAL`, `--port`, `--repo`); same verdicts plus an embedded `index.android.bundle`, install consent pending, not debuggable, a locked screen (a PIN needs a person: `references/android.md`, "What only a person at the phone can do"). Its cold start sets the app's Metro host and leaves it set.
 - **The gate:** on `RIG DEAD` fix the rig and re-run. Do not navigate, do not screenshot, do not report - never report an observation, PASS, FAIL or "the screen looks right" from a session whose rig check did not pass. Silence from instrumentation is a suspicion about the rig, never evidence about the code.
 - Re-run it after anything that could swap what the app runs: a rebuild, a reinstall, a branch switch, a Metro restart.
 
@@ -58,7 +64,7 @@ What each verdict means: `references/rig-check.md`; the Metro, binary and store 
 
 **One driver at a time.** WebDriverAgent holds one session per simulator and Metro lets one debugger hold an app: two sessions on one simulator take turns, they do not overlap (nothing locks this - see `references/driver.md`).
 
-**Simulator or phone.** A physical iPhone on the USB cable is the same loop with the same scripts: put its udid in `SIM_UDID`. Read `references/device.md` before the first phone run.
+**Simulator, emulator or phone.** A physical iPhone on the USB cable is the same loop with the same scripts: put its udid in `SIM_UDID`. Read `references/device.md` before the first phone run. An Android emulator is the same loop with `android-ui.sh` and `android-rig-check.sh` (`references/android.md`); an Android phone on the USB cable runs the same driver and rig check, Metro through `adb reverse` (`references/android.md`, "A phone on the USB cable").
 
 ## The loop
 
@@ -147,6 +153,7 @@ If WebDriverAgent will not come up, read the driver's diagnostics first - they a
 | `references/rig-check.md` | a rig check is not `RIG OK`, or you need its flags (`--launch-arg`, `--no-jslocation`, `--host`) |
 | `references/driver.md` | before your first batch in a session; a command surprised you; `rn-devtools.mjs` |
 | `references/device.md` | the target is a physical iPhone |
+| `references/android.md` | the target is an Android emulator or phone: setup, the phone on USB and what only a person there can do, rig check verdicts, iOS vs Android command differences, tested versions, what is unverified, pitfalls |
 | `references/wda.md` | WebDriverAgent will not start, a new simulator, the pinned WDA version, updating WDA |
 | `references/measurement.md` | pixel-level alignment, overlap / collapse, anchored overlays, reading logs and layout numbers out of the app |
 | `references/gotchas.md` | a result surprised you; wrong Metro, stale binary, persisted store, deep links, typing traps, side effects, simulator limits |
