@@ -28,4 +28,6 @@ It injects a unique marker as the first line of the entry file, makes the app pi
 
 **The gate:** on `RIG DEAD`, fix the rig and re-run. Do not navigate, do not screenshot, do not report - and never report an observation, PASS, FAIL, or "the screen looks right", from a session whose rig check did not pass. Silence from instrumentation is never evidence about the code; it is a suspicion about the rig. Re-run the check after anything that could swap what the app runs (a rebuild, a reinstall, a branch switch, a Metro restart).
 
+**Native app** (the config's `app type` line says `native`): there is no entry file and no Metro, so both checks hand over to `scripts/native-rig-check.sh` before any of the above runs - same verdict lines, same exit codes. It compares the tree's content fingerprint and the installed app's hash with what `native-build.sh` recorded: `references/native.md`.
+
 **Android emulator:** `scripts/android-rig-check.sh` is the counterpart; its verdicts and what it changes on the device (the app's Metro host pref) are in `android.md`.

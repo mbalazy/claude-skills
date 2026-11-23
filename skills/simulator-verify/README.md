@@ -1,7 +1,7 @@
 # simulator-verify
 
-Lets Claude Code check a React Native / Expo screen on a live device instead of trusting
-the code: an iOS simulator, an iPhone on the USB cable, an Android emulator or an Android
+Lets Claude Code check a React Native / Expo screen - or a screen of a native Swift /
+Kotlin app - on a live device instead of trusting the code: an iOS simulator, an iPhone on the USB cable, an Android emulator or an Android
 phone on the cable. It proves the app runs the code of your tree, drives it to the screen,
 reads the accessibility tree and a screenshot, and reports PASS or a list of concrete
 discrepancies.
@@ -12,7 +12,9 @@ Two ideas carry it:
   tree under test: a JS bundle embedded at build time, a Metro serving another worktree, a
   stale binary. Every one of those gives a confident, false result. So before looking at
   anything, the skill writes a marker into the app's entry file, makes the app load JS
-  again and reads the marker back from the app's log. `RIG OK` or nothing.
+  again and reads the marker back from the app's log. `RIG OK` or nothing. A native app
+  has no JS to mark: there the skill proves by content that the installed app is byte for
+  byte the build of the tree as it is now (`references/native.md`).
 - **A number instead of an opinion.** A 1-2 pt offset is a real defect that nobody sees
   at a glance. When the eye is not enough, the skill measures off a full-resolution
   screenshot or asks the app's layout, and reports the number.
@@ -26,6 +28,7 @@ Claude Code
  |
  |- rig-check.sh / android-rig-check.sh
  |     marker -> entry file -> Metro -> app -> app log      => RIG OK | RIG DEAD: <cause>
+ |     native app: tree fingerprint + installed artifact hash (native-rig-check.sh)
  |
  |- sim-ui.sh      --HTTP-->  WebDriverAgent on the simulator / iPhone   (tree, taps, typing)
  |                 --------> xcrun simctl / devicectl                    (launch, deep link, screenshot)
@@ -42,8 +45,9 @@ Every verification runs the same loop: **rig gate -> reach the screen in one bat
 call -> observe (text first, screenshot last) -> assert -> report**. The report opens with
 the rig verdict; a report without it is not a result.
 
-What the skill does NOT do: build the app, start Metro, boot a simulator or an emulator.
-That is the project's own tooling. What it does touch:
+What the skill does NOT do: build an RN app, start Metro, boot a simulator or an emulator.
+That is the project's own tooling. A native app is the exception: `native-build.sh` runs
+the build command from the config, installs the result and records which tree it is. What it does touch:
 
 - it installs its own driver: WebDriverAgent on a simulator or iPhone, the UiAutomator2
   server on an Android device;
@@ -57,6 +61,7 @@ That is the project's own tooling. What it does touch:
 | | iOS simulator | iPhone (USB) | Android emulator | Android phone (USB) |
 |---|---|---|---|---|
 | rig check | `rig-check.sh`, marker from the simulator log | `rig-check.sh --udid <phone>`, marker over Metro's CDP; cannot see an embedded bundle or the build date | `android-rig-check.sh` | `android-rig-check.sh`, Metro through `adb reverse` |
+| rig check, native app (no Metro) | `rig-check.sh` -> `native-rig-check.sh` | no (a signed device build is outside `native-build.sh`) | `android-rig-check.sh` -> `native-rig-check.sh` | same as the emulator |
 | driver | `sim-ui.sh` + WebDriverAgent (`wda-sim.sh ensure`) | `sim-ui.sh` + WebDriverAgent (`wda-device.sh`, an Apple team that can sign for the phone) | `android-ui.sh` + UiAutomator2 (`uia2-server.sh ensure`) | same as the emulator |
 | launch arguments (`-RCT_jsLocation`) | yes | yes | no, the rig check sets the Metro host instead | no, same |
 | JS console logs | `read-rn-logs-cdp.py` (RN >= 0.77), `read-rn-logs.sh` (older RN) | `read-rn-logs-cdp.py --device iPhone` | `read-rn-logs-cdp.py` | `read-rn-logs-cdp.py` |
@@ -186,7 +191,8 @@ All in `skills/simulator-verify/scripts/`.
 
 | script | what it does |
 |---|---|
-| `rig-check.sh`, `android-rig-check.sh` | the rig gate: `RIG OK`, `RIG DEAD: <cause>`, or exit 2 for a setup gap or an ambiguous device |
+| `rig-check.sh`, `android-rig-check.sh` | the rig gate: `RIG OK`, `RIG DEAD: <cause>`, or exit 2 for a setup gap or an ambiguous device; a native app's config hands them over to `native-rig-check.sh` |
+| `native-build.sh` | a native app: build with the config's command, install, record the tree fingerprint and the artifact hash |
 | `sim-ui.sh` | iOS driver: tree, tap, type, swipe, alerts, screenshot, launch, deep links, `do` for a whole route in one call |
 | `android-ui.sh` | Android driver: the same commands and exit codes, plus `button BACK` |
 | `rn-devtools.mjs` | the app's JS runtime over Metro: `eval`, React component `tree`, JS `net` log |
@@ -219,6 +225,7 @@ situation:
 | `rig-check.md` | every iOS rig verdict, its flags, how the entry file is chosen |
 | `driver.md` | `sim-ui.sh` and `rn-devtools.mjs` in depth, and why a route is one call |
 | `device.md` | the iPhone on USB: what differs, the Local Network prompt, phone logs |
+| `native.md` | a native app (Swift / Kotlin, no Metro): what its rig check proves, config lines, verdicts, native logs |
 | `android.md` | emulator and phone: setup, rig verdicts, iOS vs Android per command, tested matrix, what is unverified |
 | `wda.md` | WebDriverAgent will not start; the pinned version and how to move it |
 | `measurement.md` | pixel measurement, instrumentation, reading logs and layout numbers |
@@ -240,7 +247,7 @@ The device-free suites run in about half a minute and touch nothing outside a te
 
 ```sh
 cd skills/simulator-verify/scripts
-./test-rig-check.sh                       # both rig checks' setup paths, on stubs
+./test-rig-check.sh                       # both rig checks' setup paths and the native mode, on stubs
 ./test-wda-diagnostics.sh                 # WebDriverAgent failure branches, on stubs
 python3 -m unittest test_u2_tree test_u2_client test_android_prefs
 node --test rn-devtools.test.mjs devtools/*.test.mjs

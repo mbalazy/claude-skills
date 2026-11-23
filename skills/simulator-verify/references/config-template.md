@@ -25,6 +25,17 @@ here. The skill stays generic; this file is where the project knowledge lives.
   A phone is driven by the same scripts (`SIM_UDID=<phone udid>`); what it needs
   from this file is the section below.
 
+## Native app (fill in only for an app WITHOUT React Native)
+
+A Swift / Kotlin app has no Metro and no entry file; the rig checks prove its build by
+content instead (`references/native.md`). Fill the three lines - each value in backticks,
+as the bundle id - and delete the `entry` line above. For an RN / Expo app leave the
+placeholders as they are (without backticks nothing reads them) or delete the section.
+
+- **app type**: <native>
+- **build**: <the build command, run from the repo root, e.g. ./gradlew assembleDebug --console=plain>
+- **artifact**: <the .app or .apk the build writes - repo-relative or absolute>
+
 ## Android emulator (fill in when one is used)
 
 - **android package**: `<com.example.app.dev>` - the debug build's application id,

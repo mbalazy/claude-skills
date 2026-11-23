@@ -1,11 +1,11 @@
 ---
 name: simulator-verify
-description: Verify a view or feature of a React Native / Expo app on a live device - iOS simulator, iPhone over USB, Android emulator or Android phone over USB. Proves the app runs the tree under test (rig check), launches the dev build, navigates to the target screen, reads the accessibility element tree (WebDriverAgent on iOS, UiAutomator2 on Android) and a screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "check it on the simulator", "check it on the emulator", "check it on the phone", "verify screen X", "does it work on Android". Generic across RN/Expo projects; reads per-repo config from .simulator-verify/.
+description: Verify a view or feature of a React Native / Expo app or a native iOS / Android app (Swift, Kotlin - no Metro) on a live device - iOS simulator, iPhone over USB, Android emulator or Android phone over USB. Proves the app runs the tree under test (rig check), launches the dev build, navigates to the target screen, reads the accessibility element tree (WebDriverAgent on iOS, UiAutomator2 on Android) and a screenshot, and reports PASS or concrete discrepancies. Use after implementing UI, as the verification step inside a feature or bugfix flow, or when the user says "/simulator-verify", "check it on the simulator", "check it on the emulator", "check it on the phone", "verify screen X", "does it work on Android". Generic across RN/Expo and native projects; reads per-repo config from .simulator-verify/.
 ---
 
 # simulator-verify
 
-Reusable verification atom for any React Native / Expo app on the iOS simulator or an Android emulator. Confirms a screen or feature renders and behaves correctly by observing the running app, not by reading code. Called standalone, or as the verify step inside a feature / bugfix flow.
+Reusable verification atom for any React Native / Expo app, or a native app without Metro (Swift / Kotlin - `references/native.md`), on the iOS simulator or an Android emulator. Confirms a screen or feature renders and behaves correctly by observing the running app, not by reading code. Called standalone, or as the verify step inside a feature / bugfix flow.
 
 The skill is generic: everything app-specific (bundle id, device, Metro port, screen map, deep links) lives in the per-repo config, never in here.
 
@@ -33,6 +33,8 @@ S=$SV/sim-ui.sh
 | `$SV/android-ui.sh` | the Android driver (UiAutomator2 server + `adb`): the commands and exit codes of `sim-ui.sh`, plus `button BACK`; no launch arguments, `openurl` needs a package (`references/android.md`) |
 | `$SV/uia2-server.sh` | the UiAutomator2 server on an emulator or phone (`ensure` = install + start + proof, before the first `android-ui.sh` call) |
 | `$SV/android-regress.sh` | only when changing the Android driver itself |
+| `$SV/native-build.sh` | a NATIVE app (config `app type: native`): build, install, record which tree the build is (`--install-only` puts the recorded build back) |
+| `$SV/native-rig-check.sh` | the Rig gate of a native app - both rig checks hand over to it by themselves (`references/native.md`) |
 
 The Metro port and the bundle id always come from `.simulator-verify/config.md` (`$PORT`, `$BUNDLE` below) - never from an example in this skill.
 
@@ -43,6 +45,7 @@ Look for `<repo-root>/.simulator-verify/config.md`. It holds everything project-
 - **Missing?** Copy `references/config-template.md` to `<repo-root>/.simulator-verify/config.md`, fill what you can infer from the repo (bundle id and scheme from the iOS project / `app.config.js`, Metro port from the start script), then ask the user to confirm the bundle id and device before driving anything. Also make sure `.simulator-verify/` is git-ignored - it accumulates real account data (test users, appointments, phone numbers) that must not be committed.
 - **Present?** Read it first. Keep it current: whenever you learn a new screen, deep link, route or gotcha, append it there rather than to this skill.
 - The app's dev build must be installed on a booted simulator; if it is not, or Metro is down, follow Cold start in `config.md`.
+- **Native app (Swift / Kotlin, no Metro):** the config has an `app type` line set to `native`, plus a `build` and an `artifact` line, and everything about Metro, entry files and `-RCT_jsLocation` falls away. Read `references/native.md` before the first run.
 - **Android emulator or phone:** set `ANDROID_SERIAL`, run `$SV/uia2-server.sh ensure`, and use `$SV/android-ui.sh` wherever this file says `$S` - without launch arguments (drop `-RCT_jsLocation`: the rig check points the app at its Metro) and with `openurl URL --package $PKG`; one Metro per emulator. Read `references/android.md` before the first Android run.
 
 ## Rig gate (second thing, every run) - no green rig check, no report
@@ -57,6 +60,7 @@ $SV/rig-check.sh --repo <worktree> --udid <udid> --port <n>
 
 - `RIG OK` = your tree reaches the app. `RIG DEAD` names the cause it found (no sim, app not installed, embedded bundle, wedged Metro, no Metro for this tree, app terminated, JS throwing at load, JS/native skew) - read it before rebuilding anything.
 - Exit **2** is never a dead rig: the check could not start. Either a question - several simulators booted and none identifiable, answer with `--udid` / `SIM_UDID` - or a setup gap it names in one line (no config, the template's placeholder still in the bundle id line, no entry file); fix that and re-run.
+- **Native app** (config `app type: native`): the same commands. Both rig checks hand over to `native-rig-check.sh`, which proves by content that the installed app is byte for byte the build `native-build.sh` recorded for this tree as it is now - same `RIG OK` / `RIG DEAD` / exit 2. A code change reaches a native app only through `$SV/native-build.sh` (build + install + record), never a reload; then the rig check again. `--no-relaunch` keeps the running app. Verdicts and limits: `references/native.md`.
 - **Android:** `$SV/android-rig-check.sh` (`--serial` / `ANDROID_SERIAL`, `--port`, `--repo`); same verdicts plus an embedded `index.android.bundle`, install consent pending, not debuggable, a locked screen (a PIN needs a person: `references/android.md`, "What only a person at the phone can do"). Its cold start sets the app's Metro host and leaves it set.
 - **The gate:** on `RIG DEAD` fix the rig and re-run. Do not navigate, do not screenshot, do not report - never report an observation, PASS, FAIL or "the screen looks right" from a session whose rig check did not pass. Silence from instrumentation is a suspicion about the rig, never evidence about the code.
 - Re-run it after anything that could swap what the app runs: a rebuild, a reinstall, a branch switch, a Metro restart.
@@ -112,9 +116,10 @@ Verify every instance with a **different code path or layout context** - not eve
   | what is on this screen, which ids | `elements --names` (`--all` for unlabelled containers) |
   | did the screen stop moving | `elements --settled` |
   | which app is in front | `foreground` |
-  | which React component renders testID X | `node $SV/rn-devtools.mjs tree --id X` |
-  | what a store, global or flag holds | `node $SV/rn-devtools.mjs eval EXPR` |
-  | which requests the JS sent | `node $SV/rn-devtools.mjs net start` ... `net read` |
+  | which React component renders testID X (RN only) | `node $SV/rn-devtools.mjs tree --id X` |
+  | what a store, global or flag holds (RN only) | `node $SV/rn-devtools.mjs eval EXPR` |
+  | which requests the JS sent (RN only) | `node $SV/rn-devtools.mjs net start` ... `net read` |
+  | what a native app logged | `log stream` / `logcat` (`references/native.md`) |
   | how does it LOOK - layout, spacing, colour, clipping | `screenshot`, and only then |
 
 - An element you can see but the filtered tree lacks: `elements --all` - RN rows, pressables, glass and icon-only buttons usually live there as `type: "Other"` with an exact rect.
@@ -155,6 +160,7 @@ If WebDriverAgent will not come up, read the driver's diagnostics first - they a
 | `references/rig-check.md` | a rig check is not `RIG OK`, or you need its flags (`--launch-arg`, `--no-jslocation`, `--host`) |
 | `references/driver.md` | before your first batch in a session; a command surprised you; `rn-devtools.mjs` |
 | `references/device.md` | the target is a physical iPhone |
+| `references/native.md` | the app is native (Swift / Kotlin, no Metro): what the native rig check proves, config lines, verdicts, native logs |
 | `references/android.md` | the target is an Android emulator or phone: setup, the phone on USB and what only a person there can do, rig check verdicts, iOS vs Android command differences, tested versions, what is unverified, pitfalls |
 | `references/wda.md` | WebDriverAgent will not start, a new simulator, the pinned WDA version, updating WDA |
 | `references/measurement.md` | pixel-level alignment, overlap / collapse, anchored overlays, reading logs and layout numbers out of the app |

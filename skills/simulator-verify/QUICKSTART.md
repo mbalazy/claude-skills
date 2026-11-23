@@ -29,6 +29,11 @@ SV=~/.claude/skills/simulator-verify/scripts     # or $CLAUDE_CONFIG_DIR/skills/
    belongs to. The directory stays out of git because it fills up with real account
    data as you work.
 
+   **A native app (Swift / Kotlin, no React Native)**: fill the `Native app` section
+   instead (`app type`, `build`, `artifact`), then in steps 3-4 below boot the simulator
+   or emulator and run `$SV/native-build.sh` (it builds, installs and records the tree)
+   instead of starting Metro; the rig check is the same command. `references/native.md`.
+
 ## iOS simulator
 
 3. **The app, the project's own way**: boot a simulator, install the app's Debug build,
