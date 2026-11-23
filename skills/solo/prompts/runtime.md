@@ -22,9 +22,20 @@ Slot ids and ports: in the MAIN checkout use the main checkout's runtime
 worktree slot's. In a pm worktree slot (SKILL.md, "Where a shift runs")
 use that slot's env from `pm executor show`, never the main checkout's. Export what the skill says a hand
 session must export (`SIM_UDID`, `WDA_PORT`, `WEB_PORT`) from the config,
-once, and write the values into the state file.
+once, and write the values into the state file. On Android that is
+`ANDROID_SERIAL` (and `U2_PORT`), and the rig check is `android-rig-check.sh`
+wherever this file says `rig-check.sh`.
 
 ## Rig gate - no green rig check, no reading
+
+**A native app** (the runtime config's `app type` line says `native`: Swift /
+Kotlin, no Metro): the same rig checks hand over to `native-rig-check.sh` and
+print the same `RIG OK` / `RIG DEAD`. A code change reaches the app only
+through `native-build.sh` (build + install + record), never a reload: run it
+after every change that the next observation round depends on, then the rig
+check. `RIG DEAD` naming a changed tree or another installed build is fixed by
+`native-build.sh` (or its `--install-only`, which it names) - that is the
+normal loop, not a dead rig, and does not use up the shift's one cold start.
 
 Before EVERY round of observation - not only the first one of the shift, and
 not only after something that could swap what the app runs (branch switch,
@@ -57,7 +68,9 @@ Every runtime command runs under `timeout` (`/opt/homebrew/bin/timeout`):
 `timeout 120` for a driver call, `timeout 600` for a build / install / dev
 server start - **600 is the ceiling for anything, a driver script of your
 own included**: a script that needs more is a loop that should be several
-commands with a look at the result between them. A command that times out
+commands with a look at the result between them. One exception: a native
+app's `native-build.sh` gets `timeout 1200`, because a cold Xcode build alone
+can pass 10 minutes. A command that times out
 is reported as such - once. Do not retry a hung command more than once;
 treat the second hang as rig down.
 

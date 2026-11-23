@@ -71,13 +71,63 @@ def run(cmd, cwd=None, stdin=None, timeout=60):
         return 127, "", str(exc)
 
 
-def wda_sim_script():
+def sv_script(name):
     here = os.path.dirname(os.path.realpath(__file__))
-    for cand in (os.path.join(here, "..", "..", "simulator-verify", "scripts", "wda-sim.sh"),
-                 os.path.expanduser("~/.claude/skills/simulator-verify/scripts/wda-sim.sh")):
+    for cand in (os.path.join(here, "..", "..", "simulator-verify", "scripts", name),
+                 os.path.expanduser(f"~/.claude/skills/simulator-verify/scripts/{name}")):
         if os.path.isfile(cand):
             return os.path.realpath(cand)
     return None
+
+
+def wda_sim_script():
+    return sv_script("wda-sim.sh")
+
+
+# The platform a --sim run drives. A native app's config names its artifact (.app = iOS
+# simulator, .apk = Android); an RN app runs on both, so an Android serial given without a
+# simulator udid is what says Android.
+def sim_platform(repo, sim_udid, android_serial):
+    cfg = os.path.join(repo, ".simulator-verify", "config.md")
+    try:
+        for ln in open(cfg, encoding="utf-8"):
+            m = re.match(r"\s*-\s+\*\*artifact\*\*:[^`]*`([^`]+)`", ln, re.I)
+            if m:
+                art = m.group(1).rstrip("/")
+                if art.endswith(".apk"):
+                    return "android"
+                if art.endswith(".app"):
+                    return "ios"
+    except OSError:
+        pass
+    return "android" if android_serial and not sim_udid else "ios"
+
+
+# The Android counterpart of wda_gate: `uia2-server.sh check` proves the UiAutomator2
+# server answers on the device (a real /source within 3 s) and installs nothing.
+def uia2_gate(rep, where, serial, port):
+    script = sv_script("uia2-server.sh")
+    if not script:
+        rep.err(where, "--sim run on Android but simulator-verify/scripts/uia2-server.sh was not found - driver readiness unproven")
+        return
+    if not serial:
+        rep.err(where, "--sim run on Android but no device: pass --android-serial (or export ANDROID_SERIAL) "
+                       f"after 'ANDROID_SERIAL=<serial> {script} ensure' printed READY")
+        return
+    env = dict(os.environ, ANDROID_SERIAL=serial)
+    if port:
+        env["U2_PORT"] = str(port)
+    try:
+        p = subprocess.run([script, "check", serial], capture_output=True, text=True, timeout=120, env=env)
+        code, out, err = p.returncode, p.stdout, p.stderr
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        code, out, err = 127, "", str(exc)
+    if code == 0:
+        rep.ok(where, f"UiAutomator2 READY on {serial} (uia2-server.sh check)")
+    else:
+        lines = [ln for ln in (err + out).splitlines() if ln.strip()]
+        why = next((ln for ln in reversed(lines) if "NOT READY" in ln), lines[-1] if lines else f"exit {code}")
+        rep.err(where, f"{why.strip()} - run 'ANDROID_SERIAL={serial} {script} ensure'")
 
 
 # A --sim run drives one simulator through WebDriverAgent. RIG OK proves the app runs the
@@ -266,6 +316,10 @@ def main():
                     help="simulator the --sim run will drive (default: $SIM_UDID)")
     ap.add_argument("--wda-port", default=os.environ.get("WDA_PORT", ""),
                     help="WebDriverAgent port on that simulator (default: $WDA_PORT)")
+    ap.add_argument("--android-serial", default=os.environ.get("ANDROID_SERIAL", ""),
+                    help="Android emulator or phone a --sim run drives (default: $ANDROID_SERIAL)")
+    ap.add_argument("--u2-port", default=os.environ.get("U2_PORT", ""),
+                    help="UiAutomator2 host port for that device (default: $U2_PORT)")
     args = ap.parse_args()
     rep = Report(args.verbose)
 
@@ -385,7 +439,10 @@ def main():
             if not os.path.isfile(os.path.join(repo, configs.get(skill, "__none__"))):
                 rep.err(P, f"no runtime flag: the run defaults to {skill}, whose repo config is missing")
     if runtime_flag == "--sim" or (runtime_flag is None and skill == "simulator-verify"):
-        wda_gate(rep, P, args.sim_udid, args.wda_port)
+        if sim_platform(repo, args.sim_udid, args.android_serial) == "android":
+            uia2_gate(rep, P, args.android_serial, args.u2_port)
+        else:
+            wda_gate(rep, P, args.sim_udid, args.wda_port)
     if (runtime_flag or skill) and not re.search(r"DECIDED:.*runtime", context, re.I):
         rep.warn(P, "parent '## Context' has no 'DECIDED: runtime ...' line")
 

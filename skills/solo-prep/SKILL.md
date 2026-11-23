@@ -55,7 +55,11 @@ of the repo, and one shared paragraph patched by hand in seven subs.
    port). Never uninstall or restart WDA on another session's simulator to
    make this pass. `scripts/check-queue.py` re-proves it with
    `--sim-udid/--wda-port` (or `SIM_UDID`/`WDA_PORT` in the environment) and
-   reports NOT READY without it.
+   reports NOT READY without it. **Android** (an RN queue on an emulator or
+   phone, or a native app whose config's `artifact` is an `.apk`): settle
+   `ANDROID_SERIAL` instead, run `ANDROID_SERIAL=<serial>
+   <simulator-verify>/scripts/uia2-server.sh ensure` and require `READY`;
+   `check-queue.py` re-proves it with `--android-serial/--u2-port`.
 6. Record it in the parent `## Context`:
    `DECIDED: runtime <--web|--sim|--no-runtime>, <who>, <date>`. Code-only:
    visual criteria stay in the AC, their recipes say UNVERIFIED, automated
@@ -155,6 +159,7 @@ never patched by hand.
 ```
 python3 ~/.claude/skills/solo-prep/scripts/check-queue.py <tracker-id>
 # --sim run: python3 ... check-queue.py <tracker-id> --sim-udid <SIM_UDID> --wda-port <WDA_PORT>
+# --sim run on Android: python3 ... check-queue.py <tracker-id> --android-serial <SERIAL> [--u2-port <PORT>]
 ```
 
 The script checks what can be checked mechanically: the heading contract, the
