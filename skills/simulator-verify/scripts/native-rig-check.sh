@@ -186,8 +186,9 @@ else
   fi
   INST_SHA="$(sh_dev sha256sum "$P" | cut -d' ' -f1)"
 fi
+[ -n "$INST_SHA" ] || verdict DEAD "could not hash the installed app$([ "$PLATFORM" = android ] && echo " ($P - does this device's shell have sha256sum?)") - without its hash nothing ties it to a build"
 if [ "$INST_SHA" != "$R_SHA" ]; then
-  note "installed: ${INST_SHA:0:12}, recorded build: ${R_SHA:0:12}"
+  note "installed:${INST_SHA:0:12}, recorded build: ${R_SHA:0:12}"
   verdict DEAD "the app installed on the device is NOT this checkout's recorded build - another checkout, branch or build was installed over it. Install this tree's build: $INSTALL_HINT"
 fi
 note "install: the installed app hashes the same as the recorded build (${INST_SHA:0:12}), installed $(nv_fmt_epoch "$R_INST")"
