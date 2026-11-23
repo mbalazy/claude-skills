@@ -46,6 +46,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # wrong error ("no device attached") to the right one.
 [ -n "$ADB" ] || exit 1
 . "$HERE/../lib/rig-config.sh"
+. "$HERE/../lib/native.sh"
+# A native app (config: `app type: native`) has no Metro and no entry file: the native check
+# proves it by content instead, with the same verdicts and exit codes (lib/native.sh).
+nv_dispatch android "$HERE/native-rig-check.sh" "$@"
 PREFS="$HERE/android_prefs.py"
 
 REPO=""; PKG=""; ENTRY=""; PORT=""; PORT_EXPLICIT=""; TRIGGER="cold"; TIMEOUT=30

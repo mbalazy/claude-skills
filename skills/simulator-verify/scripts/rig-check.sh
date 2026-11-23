@@ -64,6 +64,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 READ_LOGS="$SCRIPT_DIR/read-rn-logs.sh"
 READ_CDP="$SCRIPT_DIR/read-rn-logs-cdp.py"
 . "$SCRIPT_DIR/../lib/rig-config.sh"
+. "$SCRIPT_DIR/../lib/native.sh"
+# A native app (config: `app type: native`) has no Metro and no entry file: the native check
+# proves it by content instead, with the same verdicts and exit codes (lib/native.sh).
+nv_dispatch ios "$SCRIPT_DIR/native-rig-check.sh" "$@"
 
 REPO=""; BUNDLE_ID=""; ENTRY=""; UDID="${SIM_UDID:-}"; PORT=""; PORT_EXPLICIT=""; HOST=""
 KIND="sim"
