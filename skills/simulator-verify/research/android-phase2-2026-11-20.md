@@ -1,6 +1,6 @@
 # Android, faza 2: weryfikacja praktyczna (emulator, symulator iOS, telefon)
 
-Data: 2026-11-20 / 2026-11-21. Wejście: `skills/simulator-verify/references/android-analysis-2026-11-20.md` (faza 1, analiza bez urządzeń).
+Data: 2026-11-20 / 2026-11-21. Wejście: `skills/simulator-verify/research/android-analysis-2026-11-20.md` (faza 1, analiza bez urządzeń).
 Ten dokument jest samowystarczalny dla fazy 3 (implementacja w nowej sesji): każda decyzja ma tu liczbę lub dowód, każdy przepis ma dokładną komendę.
 
 Zakres fazy 2: testy, pomiary, analiza. Zero zmian w skryptach skilla. Kod napisany w fazie 2 to wyłącznie harness pomiarowy poza repo.

@@ -36,24 +36,14 @@ pm-cli **0.66.0** (see [`skills/solo/README.md`](skills/solo/README.md)).
 | `journal-review` | Reads a project's journals (the record of a repeatedly troublesome subsystem) before touching that subsystem. |
 | `pm` | The `/pm` dispatch layer over the pm MCP tools: context, add, update, brief, done. |
 
-### React Native / iOS
+### React Native (iOS and Android)
 
 | Skill | What it does |
 |---|---|
-| `simulator-verify` | iOS simulator, an iPhone over USB, or an Android emulator or phone over USB (`android-ui.sh`, `android-rig-check.sh`). Drives a booted iOS simulator or emulator so a UI claim can be verified against the running app: launch the dev build, read the accessibility element tree, tap and swipe, take screenshots, read the app's own console logs, and measure alignment or spacing off a full-resolution screenshot. The measuring part is the reason this exists: a 1-2pt offset is a real defect that is invisible at a glance. Rule learned the expensive way: **one round of looking that does not settle a visual claim becomes instrumentation, not a second round of looking.** |
+| `simulator-verify` | Verifies a screen of a React Native / Expo app on a live device - iOS simulator, iPhone over USB, Android emulator or Android phone over USB. First it proves the app runs the code of your tree (the rig check: a marker in the entry file read back from the app's log), then it drives the app to the screen, reads the accessibility tree and a screenshot, and reports PASS or concrete discrepancies. When the eye is not enough it measures: a 1-2pt offset is a real defect that is invisible at a glance. Rule learned the expensive way: **one round of looking that does not settle a visual claim becomes instrumentation, not a second round of looking.** Setup, platform matrix and scripts: [`skills/simulator-verify/README.md`](skills/simulator-verify/README.md). |
 | `rn-profile` | Profiles the running React Native app from the command line: records which React components re-render and how long each commit takes (with Hermes's CPU sampler alongside), and prints the commit count, the slowest commit and the heaviest components; later, from the saved file without the app, renders per component, the slowest commits and why a component rendered. A recording has a time limit and lives in the app between one-shot commands. On an iOS simulator it also records the app's native side with `xctrace` for a fixed time: CPU hotspots per thread, UI hangs, and leaks on request. |
 | `figma-pp` | Implements a Figma node as React Native code and verifies it on the simulator, with a mandatory step in the middle: every value from the design gets mapped onto something that already exists in the repo's design system before any code is written. |
 | `developing-features` | Takes a feature from a ticket to an open PR in three phases - spec, build, ship. A checkpoint-driven spec from code it actually read, one committable checkpoint at a time behind the project's validation gate, then runtime verification and the pre-PR gate. |
-
-Scripts worth knowing in `simulator-verify`:
-
-| Script | What it does |
-|---|---|
-| `sim-ui.sh` | Simulator driver - launch, tap, type, swipe, dump the element tree, screenshot. WebDriverAgent over HTTP plus `xcrun simctl`. No MCP server needed. |
-| `read-rn-logs.sh` | Reads the app's JavaScript console output straight from the simulator's system log. |
-| `rn-devtools.mjs` | Asks the running app's JavaScript runtime over Metro's debugger connection: evaluate an expression, print the React component tree of the screen (component names, testIDs, text, tap points). Node built-ins only. |
-| `measure-element.py` | Given a screenshot and a region, reports how far off-center the content is, in pixels and points. A number instead of an opinion. |
-| `measure-boxes.py` | For anchored overlays (popover, menu, picker): measures the anchor rectangle against the frame that actually rendered. |
 
 ### Web
 
@@ -99,25 +89,10 @@ Requirements:
 
 - Claude Code. The pm skills need [pm-cli](https://github.com/mbalazy/pm-cli)
   installed and registered as an MCP server.
-- `simulator-verify` on iOS: macOS with the **full Xcode app**, selected
-  (`xcode-select -p` points inside `Xcode.app`) - the command line tools alone
-  have no `xcrun simctl`, and the rig check says so. WebDriverAgent, which the
-  skill builds and installs itself: once `skills/simulator-verify/scripts/wda-sim.sh build`
-  (minutes, into `~/.cache/wda-device`), then `wda-sim.sh ensure <udid> --port <port>`
-  on each simulator. Python 3. Node >= 22.4 for `rn-devtools.mjs`, >= 23.6 for
-  its `tree` and `net` commands. The two measuring scripts need Pillow and sort
-  that out themselves - on first run they build a small venv at
-  `~/.local/share/claude-skills/venv` (using `uv` if it is on PATH, otherwise
-  `python3 -m venv`) and re-exec into it, because `pip install` into a Homebrew
-  Python is refused under PEP 668. A physical iPhone also needs `iproxy`
-  (libimobiledevice), an Apple team that can sign for it, and Developer Mode on
-  the phone (`skills/simulator-verify/references/device.md`).
-- `simulator-verify` on Android: the Android SDK's `adb` (from `$ANDROID_HOME`,
-  PATH, or `~/Library/Android/sdk`), an emulator from an AVD or a phone with USB
-  debugging on, Python 3, and npm for the one-time download of the UiAutomator2
-  server that `skills/simulator-verify/scripts/uia2-server.sh ensure` installs on
-  the device (`skills/simulator-verify/references/android.md`).
-- The first run on either platform: `skills/simulator-verify/QUICKSTART.md`.
+- `simulator-verify`: full Xcode for iOS, `adb` for Android, Python 3 and Node;
+  the details per platform and the first run are in
+  [`skills/simulator-verify/README.md`](skills/simulator-verify/README.md) and
+  `skills/simulator-verify/QUICKSTART.md`.
 - `figma-pp`: a Figma MCP server for the repo's Figma account, ImageMagick
   (`magick`) and `cwebp` for assets, `ffmpeg` for checking animations, and
   `simulator-verify` working for the app - it verifies there.

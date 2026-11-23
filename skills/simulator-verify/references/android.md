@@ -1,6 +1,6 @@
 # Android - emulators and a phone
 
-Read before the first Android run in a session, and whenever an Android command surprised you. The loop in SKILL.md is the same on both platforms: rig gate first, reach with `do`, observe text before a screenshot, assert, report. This file is what differs. The measurements behind it are in `android-phase2-2026-11-20.md` (and the phase-1 analysis `android-analysis-2026-11-20.md`); the dated numbers are collected in `benchmarks.md`.
+Read before the first Android run in a session, and whenever an Android command surprised you. The loop in SKILL.md is the same on both platforms: rig gate first, reach with `do`, observe text before a screenshot, assert, report. This file is what differs. The measurements behind it are in `../research/android-phase2-2026-11-20.md` (and the phase-1 analysis `../research/android-analysis-2026-11-20.md`); the dated numbers are collected in `benchmarks.md`.
 
 ## Setup
 

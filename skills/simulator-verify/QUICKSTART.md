@@ -5,7 +5,7 @@ or emulator runs the code of your tree. Everything after that - driving screens,
 the element tree, measuring - builds on it, and the skill refuses to report anything
 without it.
 
-Requirements per platform are in the repo's README ("Install"). Below, `SV` is the
+Requirements per platform are in `README.md` next to this file ("Install"). Below, `SV` is the
 skill's scripts directory after `install.sh`:
 
 ```sh

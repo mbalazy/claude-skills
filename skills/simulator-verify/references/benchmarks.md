@@ -36,7 +36,7 @@ trips stopped existing.
 Apple Silicon Mac (M5 Pro, 64 GB), API 34/35/36 `google_apis` arm64 emulators (Pixel 9
 profile, 420 dpi, scale 2.625), UiAutomator2 server 11.2.4 run without Appium, fixture app
 RN 0.88.1 (RN CLI and Expo SDK 58 dev-client) and a real RN 0.81.1 app. The phase-2
-measurements behind the design are in `android-phase2-2026-11-20.md`.
+measurements behind the design are in `../research/android-phase2-2026-11-20.md`.
 
 - **Server**: `uia2-server.sh ensure` 1.6 s from scratch, 0.45 s on a running server;
   repair after an adbd restart 4.7 s; a foreign UiAutomation client refused in ~1 s.
