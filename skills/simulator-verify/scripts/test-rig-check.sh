@@ -3,7 +3,8 @@
 # simulator, emulator, Metro or app: xcrun, xcode-select, lsof, curl and adb are stubs.
 #
 # What it covers is everything a rig check decides BEFORE it touches a device, plus one
-# stubbed happy path through rig-check.sh: config found or not, the bundle id / package
+# stubbed happy path through rig-check.sh, plus the native mode (native-build.sh and
+# native-rig-check.sh, reached through rig-check.sh) on a stub simulator: config found or not, the bundle id / package
 # line, the entry file, a Mac without full Xcode, several simulators, an app that is not
 # installed, no Metro, no adb. What a stub cannot answer (a real marker in a real log, a
 # real install) is regress.sh's and android-regress.sh's job on a live device.
@@ -26,7 +27,8 @@ trap cleanup EXIT
 
 # --- a copy of the skill whose log reader is a stub -------------------------------------
 mkdir -p "$T/skill/scripts" "$T/bin" "$T/home"
-cp "$HERE/rig-check.sh" "$HERE/android-rig-check.sh" "$HERE/android-lib.sh" "$HERE/android_prefs.py" "$T/skill/scripts/"
+cp "$HERE/rig-check.sh" "$HERE/android-rig-check.sh" "$HERE/android-lib.sh" "$HERE/android_prefs.py" \
+   "$HERE/native-build.sh" "$HERE/native-rig-check.sh" "$T/skill/scripts/"
 [[ -d "$SKILL/lib" ]] && cp -R "$SKILL/lib" "$T/skill/lib"
 [[ -d "$SKILL/references" ]] && cp -R "$SKILL/references" "$T/skill/references"
 cat > "$T/skill/scripts/read-rn-logs.sh" <<'EOF'
@@ -47,7 +49,8 @@ fi
 shift
 case "$1" in
   list) printf '== Devices ==\n'; [[ -n "${STUB_BOOTED:-}" ]] && printf '%s\n' "$STUB_BOOTED" ;;
-  get_app_container) [[ -n "${STUB_APP:-}" ]] && echo "$STUB_APP" || exit 2 ;;
+  get_app_container) [[ -n "${STUB_APP_UDID:-}" && "$2" != "$STUB_APP_UDID" ]] && exit 2
+                     [[ -n "${STUB_APP:-}" ]] && echo "$STUB_APP" || exit 2 ;;
   terminate) ;;
   launch) echo "$3: ${STUB_PID:-}" ;;
   spawn) ;;
@@ -268,6 +271,99 @@ CASE_ENV=(); CASE_PATH="$NOADB_PATH"; CASE_NOT="no Android device"
 check "android: no adb anywhere - one error, the right one" 1 \
   "adb not found" android-rig-check.sh --repo "$R" --package com.example.app
 CASE_PATH=""; CASE_NOT=""
+
+# ======================================================= native mode (no Metro, no entry)
+# A stub "build" writes a .app into a git-ignored out/; the stub simulator's
+# get_app_container answers STUB_APP, so pointing it at the built .app means "installed
+# byte for byte", and at any other .app means "another build is installed".
+plist() {   # plist <dir> <bundle id>
+  mkdir -p "$1"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>%s</string><key>CFBundleExecutable</key><string>Demo</string></dict></plist>\n' "$2" > "$1/Info.plist"
+  echo bin > "$1/Demo"
+}
+NATIVE_BUILD='mkdir -p out/Demo.app && cp src/Info.plist out/Demo.app/ && cat src/main.swift > out/Demo.app/Demo'
+native_repo() {   # native_repo [build command] - a native app repo with a filled config
+  local r
+  r="$(mkrepo 'src/main.swift=print("app")' '.gitignore=out/')"
+  plist "$r/src" com.example.app && rm -f "$r/src/Demo"
+  git -C "$r" add -A >/dev/null 2>&1 && git -C "$r" -c user.name=t -c user.email=t@example.com commit -qm plist
+  config "$r" "$OK_ID" '- **app type**: `native`' "- **build**: \`${1:-$NATIVE_BUILD}\`" '- **artifact**: `out/Demo.app`'
+  echo "$r"
+}
+sleep 120 & APP_PID=$!
+SIM1=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_PID=$APP_PID")
+
+R="$(native_repo)"
+CASE_ENV=("${SIM1[@]}" "STUB_APP=$R/out/Demo.app"); CASE_NOT="entry file not found"
+check "native: rig-check.sh hands a native config over - no build recorded yet" 1 \
+  "RIG DEAD: no native build is recorded for this checkout" rig-check.sh --repo "$R" --settle 1
+CASE_NOT=""
+check "native: native-build.sh builds, installs and records" 0 \
+  "INSTALLED on $SIM_A - byte for byte the build of this tree" native-build.sh --repo "$R"
+check "native: rig check on the recorded, installed build" 0 \
+  "RIG OK - the app is running code from $R" rig-check.sh --repo "$R" --settle 1
+check "native: Metro flags are ignored, --reload keeps the app" 0 \
+  "ignored: --port 8081" rig-check.sh --repo "$R" --port 8081 --reload --settle 1
+echo probe > "$R/new-file.txt"
+check "native: an untracked file changes the tree" 1 \
+  "RIG DEAD: the tree changed since the recorded build" rig-check.sh --repo "$R" --settle 1
+rm "$R/new-file.txt"
+echo 'print("edited")' > "$R/src/main.swift"
+check "native: an edited file changes the tree" 1 \
+  "RIG DEAD: the tree changed since the recorded build" rig-check.sh --repo "$R" --settle 1
+check "native: --install-only refuses a tree that changed" 1 \
+  "INSTALL REFUSED: the tree changed since the recorded build" native-build.sh --repo "$R" --install-only
+git -C "$R" checkout -q -- src/main.swift
+check "native: the same content again is the same build" 0 \
+  "RIG OK" rig-check.sh --repo "$R" --settle 1
+plist "$T/other/Demo.app" com.example.app
+CASE_ENV=("${SIM1[@]}" "STUB_APP=$T/other/Demo.app")
+check "native: another build installed over it" 1 \
+  "RIG DEAD: the app installed on the device is NOT this checkout's recorded build" rig-check.sh --repo "$R" --settle 1
+CASE_ENV=("${SIM1[@]}" "STUB_APP=$R/out/Demo.app")
+check "native: --install-only puts the recorded build back" 0 \
+  "artifact: still the recorded build of this tree" native-build.sh --repo "$R" --install-only
+echo tampered >> "$R/out/Demo.app/Demo"
+check "native: --install-only refuses an artifact another build overwrote" 1 \
+  "INSTALL REFUSED: .* is no longer the recorded build" native-build.sh --repo "$R" --install-only
+check "native: rebuilt after the overwrite" 0 "INSTALLED" native-build.sh --repo "$R"
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_PID=999999" "STUB_APP=$R/out/Demo.app")
+check "native: the app dies after the start" 1 \
+  "RIG DEAD: the app TERMINATED within 1s" rig-check.sh --repo "$R" --settle 1
+CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)
+    Other Sim ($SIM_B) (Booted)" "STUB_PID=$APP_PID" "STUB_APP=$R/out/Demo.app" "STUB_APP_UDID=$SIM_A")
+check "native: two simulators - the one the build was installed on" 0 \
+  "sim:     resolved via the last native install" rig-check.sh --repo "$R" --settle 1
+check "native: two simulators and --udid names the other one" 1 \
+  "RIG DEAD: com\.example\.app is not installed on $SIM_B" rig-check.sh --repo "$R" --udid "$SIM_B" --settle 1
+CASE_ENV=("${SIM1[@]}" "STUB_APP=$R/out/Demo.app")
+check "native: android-rig-check.sh on an iOS native config" 2 \
+  "describes an ios app .* run rig-check\.sh" android-rig-check.sh --repo "$R"
+
+# A linked worktree reads the main worktree's config but keeps its OWN build record.
+git -C "$R" worktree add -q "$T/nwt" >/dev/null 2>&1
+check "native: a worktree has no build until it builds" 1 \
+  "RIG DEAD: no native build is recorded for this checkout" rig-check.sh --repo "$T/nwt" --settle 1
+
+R="$(native_repo 'mkdir -p out/Demo.app && cp src/Info.plist out/Demo.app/ && echo x > stray.txt')"
+check "native: a build that writes into the tree is not recorded" 1 \
+  "BUILD NOT RECORDED: the tree changed while it built" native-build.sh --repo "$R"
+R="$(native_repo 'exit 3')"
+check "native: a failing build" 1 "BUILD FAILED \(exit 3" native-build.sh --repo "$R"
+R="$(native_repo)"; plist "$R/src" com.example.other; rm -f "$R/src/Demo"
+git -C "$R" -c user.name=t -c user.email=t@example.com commit -qam other
+check "native: the artifact is another app" 1 \
+  "WRONG ARTIFACT: .* is 'com\.example\.other'" native-build.sh --repo "$R"
+R="$(native_repo)"; config "$R" "$OK_ID" '- **app type**: `native`' "- **build**: \`$NATIVE_BUILD\`"
+check "native: no artifact line" 2 "no '- \*\*artifact\*\*: .path.' line" native-build.sh --repo "$R"
+R="$(mkrepo index.js)"; config "$R" "$OK_ID"
+check "native: native-build.sh refuses an RN config" 2 "has no '- \*\*app type\*\*: .native.' line" native-build.sh --repo "$R"
+R="$(mkrepo 'src/Main.kt=fun main() {}')"
+config "$R" "$OK_PKG" '- **app type**: `native`' '- **artifact**: `app/build/app.apk`'
+CASE_ENV=("ADB=$T/bin/adb")
+check "native: android-rig-check.sh hands a native config over" 1 \
+  "RIG DEAD: no native build is recorded" android-rig-check.sh --repo "$R"
+kill "$APP_PID" 2>/dev/null; APP_PID=""; CASE_ENV=()
 
 echo
 echo "$PASS passed, $FAIL failed"

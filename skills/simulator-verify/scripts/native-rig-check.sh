@@ -225,6 +225,17 @@ if [ "$PLATFORM" = ios ]; then
     note "process: launched, pid $PID"
   fi
   alive() { kill -0 "$PID" 2>/dev/null; }
+  # The newest crash report of THIS bundle written since the launch. A function, not inline
+  # in $(...): bash 3.2 cannot parse a `case` pattern's `)` inside a command substitution.
+  crash_report_since() {
+    local f h
+    while IFS= read -r f; do
+      IFS= read -r h < "$f" 2>/dev/null || continue
+      case "$h" in
+        *"\"bundleID\":\"$APP_ID\""*) echo "$f"; return 0 ;;
+      esac
+    done < <(find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -name '*.ips' -newer "$CRASH_REF" 2>/dev/null | sort -r)
+  }
 else
   PID=""
   if [ -z "$RELAUNCH" ]; then
@@ -267,10 +278,8 @@ alive || DIED=1
 if [ -n "$DIED" ]; then
   if [ "$PLATFORM" = ios ]; then
     REPORT=""
-    for _ in 1 2 3 4 5; do
-      REPORT="$(find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -name '*.ips' -newer "$CRASH_REF" 2>/dev/null \
-                | while IFS= read -r f; do IFS= read -r h < "$f" 2>/dev/null || continue
-                    case "$h" in *"\"bundleID\":\"$APP_ID\""*) echo "$f"; break ;; esac; done)"
+    for _ in 1 2 3 4 5; do   # ReportCrash writes the .ips a second or two after the death
+      REPORT="$(crash_report_since)"
       [ -n "$REPORT" ] && break
       sleep 1
     done
