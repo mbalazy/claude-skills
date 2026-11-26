@@ -250,7 +250,7 @@ cd skills/simulator-verify/scripts
 ./test-rig-check.sh                       # both rig checks' setup paths and the native mode, on stubs
 ./test-wda-diagnostics.sh                 # WebDriverAgent failure branches, on stubs
 ./test-reap-diagnose.sh                   # the orphaned devicectl collector is reaped however a phone's run ends
-python3 -m unittest test_u2_tree test_u2_client test_android_prefs
+python3 -m unittest test_wda_tree test_u2_tree test_u2_client test_android_prefs
 node --test rn-devtools.test.mjs devtools/*.test.mjs
 ```
 

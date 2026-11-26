@@ -59,6 +59,7 @@ EOF
 
 cat > "$BIN/ps" <<'EOF'
 #!/bin/bash
+case "$*" in *lstart*) [ -n "${FX_LSTART:-}" ] && echo "$FX_LSTART"; exit 0 ;; esac
 pid="${@: -1}"; port=$((pid - 50000))
 for l in $FX_LISTEN; do
   [ "${l%%:*}" = "$port" ] || continue
@@ -76,6 +77,8 @@ for l in $FX_LISTEN; do
   [ "${l%%:*}" = "$port" ] || continue
   case "$url" in
     */status) echo '{"value":{"ready":true}}' ;;
+    */session) echo '{"value":{"sessionId":"S1"}}' ;;
+    */wda/activeAppInfo) if [ -n "${FX_APPINFO:-}" ]; then echo "$FX_APPINFO"; else echo '{"value":{}}'; fi ;;
     */source*) echo '{"value":{"type":"XCUIElementTypeApplication","label":"Home","rect":{"x":0,"y":0,"width":402,"height":874},"isVisible":"1","children":[{"type":"XCUIElementTypeIcon","label":"Maps","rect":{"x":20,"y":80,"width":64,"height":64},"isVisible":"1"}]}}' ;;
     *) echo '{"value":{}}' ;;
   esac
@@ -166,6 +169,34 @@ case_ default_port_owned_by_other_names_missing_runner 1 "NOT installed on $TARG
 FX_INSTALL=installed FX_LISTEN="8107:$TARGET" \
 case_ healthy 0 '"label":"Maps"' "ERROR" -- \
   env SIM_UDID=$TARGET WDA_PORT=8107 "$S" elements --all
+
+# A tap on this repo's app after a source edit it only got through fast refresh. The app
+# "started" at FX_LSTART; one repo file is touched an hour later, one is not.
+HOT="$FX/hot-repo"; mkdir -p "$HOT/.simulator-verify" "$HOT/src" "$HOT/node_modules/x"
+printf -- '- **bundle id**: `com.example.app`\n' > "$HOT/.simulator-verify/config.md"
+echo 'x' > "$HOT/src/old.tsx"; echo 'x' > "$HOT/src/edited.tsx"; echo 'x' > "$HOT/node_modules/x/index.js"
+git -C "$HOT" init -q
+START="Mon Nov  2 10:00:00 2026"
+touch -t 202611020900 "$HOT/src/old.tsx"; touch -t 202611021100 "$HOT/src/edited.tsx" "$HOT/node_modules/x/index.js"
+HOT_APP='{"value":{"bundleId":"com.example.app","pid":777}}'
+FX_INSTALL=installed FX_LISTEN="8107:$TARGET" FX_APPINFO="$HOT_APP" FX_LSTART="$START" \
+case_ hot_tap_warns 0 "WARN: 1 source file\(s\) in .*hot-repo changed after com\.example\.app \(pid 777\) started at 10:00:00, e\.g\. src/edited\.tsx\.$" "node_modules|old\.tsx" -- \
+  env SIM_UDID=$TARGET WDA_PORT=8107 SIMUI_REPO="$HOT" "$S" tap 100 100
+FX_INSTALL=installed FX_LISTEN="8107:$TARGET" FX_APPINFO="$HOT_APP" FX_LSTART="$START" \
+case_ hot_warns_once_per_batch 0 "^tapped 100,100$" "" -- \
+  env SIM_UDID=$TARGET WDA_PORT=8107 SIMUI_REPO="$HOT" "$S" do 'tap 100 100' 'tap 120 120'
+FX_INSTALL=installed FX_LISTEN="8107:$TARGET" FX_APPINFO="$HOT_APP" FX_LSTART="Mon Nov  2 12:00:00 2026" \
+case_ hot_cold_start_is_quiet 0 "^tapped 100,100$" "WARN: .*source file" -- \
+  env SIM_UDID=$TARGET WDA_PORT=8107 SIMUI_REPO="$HOT" "$S" tap 100 100
+FX_INSTALL=installed FX_LISTEN="8107:$TARGET" FX_APPINFO='{"value":{"bundleId":"com.apple.springboard","pid":55}}' FX_LSTART="$START" \
+case_ hot_other_app_is_quiet 0 "^tapped 100,100$" "WARN: .*source file" -- \
+  env SIM_UDID=$TARGET WDA_PORT=8107 SIMUI_REPO="$HOT" "$S" tap 100 100
+FX_INSTALL=installed FX_LISTEN="8107:$TARGET" FX_APPINFO="$HOT_APP" FX_LSTART="$START" \
+case_ hot_check_off 0 "^tapped 100,100$" "WARN: .*source file" -- \
+  env SIM_UDID=$TARGET WDA_PORT=8107 SIMUI_REPO="$HOT" SIMUI_HOT_CHECK=0 "$S" tap 100 100
+FX_INSTALL=installed FX_LISTEN="8107:$TARGET" FX_APPINFO="$HOT_APP" FX_LSTART="$START" \
+case_ hot_no_repo_is_quiet 0 "^tapped 100,100$" "WARN: .*source file" -- \
+  env SIM_UDID=$TARGET WDA_PORT=8107 SIMUI_REPO="$FX/empty" "$S" tap 100 100
 
 FX_INSTALL=absent FX_LISTEN="" FX_ROOT="$FX/empty" \
 case_ gate_no_source 1 "WDA NOT READY on $TARGET: no usable runner bundle to install" "WDA READY" -- \

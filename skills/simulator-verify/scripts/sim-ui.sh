@@ -14,6 +14,7 @@
 #   sim-ui.sh el ID                         # type/label/value/rect/displayed of every element with that testID
 #   sim-ui.sh typeid ID TEXT [--append] [--expect VALUE]   # replace a field's text by testID, then read it back (exit 1 if it differs)
 #   sim-ui.sh tap X Y                       # coordinates in pt
+#                                           # (tap and tapid WARN when this repo's app in front predates a source edit = fast refresh)
 #   sim-ui.sh doubletap X Y
 #   sim-ui.sh longpress X Y [DURATION_MS]
 #   sim-ui.sh swipe X1 Y1 X2 Y2 [DURATION_MS]
@@ -558,6 +559,53 @@ except Exception:
   _WDA_RESP="$resp"
 }
 
+# A tap on an app that fast refresh changed under it. 2026-11-21: a run screen's pause
+# button "stopped working" three times, each right after a JS file was edited (or restored
+# with `git checkout --`) while the run was on screen; after a cold relaunch the same code
+# paused every time. State from before the refresh (a listener holding its old closure)
+# ignored the tap, and the change under test got the blame. So before the first tap of a
+# call: when the app in front is THIS repo's app (bundle id from .simulator-verify/config.md
+# of the repo at $SIMUI_REPO, else of the current directory; a worktree reads the main
+# checkout's, like rig-check.sh) and a source file there is newer than the app's process,
+# say so - once per call, so a `do` batch pays it once. Simulator only: a phone's process
+# start is not readable from the Mac. ~0.1 s (measured 2026-11-26). SIMUI_HOT_CHECK=0 = off.
+_HOT_CHECKED=""
+warn_if_hot_reloaded() {
+  [ -z "$_HOT_CHECKED" ] && [ "${SIMUI_HOT_CHECK:-1}" != 0 ] || return 0
+  _HOT_CHECKED=1
+  [ "$(kind)" = sim ] || return 0
+  local repo cfg bundle front pid lstart started ref changed n
+  repo="$(git -C "${SIMUI_REPO:-$PWD}" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  cfg="$repo/.simulator-verify/config.md"
+  [ -f "$cfg" ] || cfg="$(cd "$repo" && cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)/.simulator-verify/config.md"
+  bundle="$(grep -m1 -E '^[[:space:]]*- \*\*bundle id\*\*' "$cfg" 2>/dev/null | grep -oE '`[^`]+`' | head -1 | tr -d '`')"
+  [ -n "$bundle" ] || return 0
+  front="$(curl -s -m 5 "$WDA/wda/activeAppInfo" | python3 -c '
+import sys, json
+try:
+    v = json.load(sys.stdin).get("value") or {}
+    print(v.get("bundleId") or "", v.get("pid") or "")
+except Exception:
+    pass' 2>/dev/null)"
+  pid="${front#* }"
+  [ "${front%% *}" = "$bundle" ] && [ -n "$pid" ] || return 0
+  lstart="$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null)"
+  started="$(LC_ALL=C date -j -f '%a %b %e %T %Y' "$(echo $lstart)" +%s 2>/dev/null)" || return 0
+  [ -n "$started" ] || return 0
+  ref="$(mktemp -t simui-hot)" || return 0
+  touch -t "$(date -r "$started" +%Y%m%d%H%M.%S)" "$ref"
+  changed="$(cd "$repo" && find . \( -name node_modules -o -name .git -o -name ios -o -name android \
+      -o -name build -o -name dist -o -name coverage -o -name '.*' ! -name . \) -prune -o -type f \
+      \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.json' \) \
+      -newer "$ref" -print 2>/dev/null | sed 's#^\./##')"
+  rm -f "$ref"
+  [ -n "$changed" ] || return 0
+  n="$(printf '%s\n' "$changed" | grep -c .)"
+  echo "WARN: $n source file(s) in $repo changed after $bundle (pid $pid) started at $(date -r "$started" +%H:%M:%S), e.g. $(printf '%s\n' "$changed" | head -2 | paste -sd, - | sed 's/,/, /g')." >&2
+  echo "      The app runs them through fast refresh, and state from before it can ignore this tap - judge a" >&2
+  echo "      result only after a cold start (relaunch $bundle)." >&2
+}
+
 pointer_actions() {
   session
   wda_post "/session/$_MEMO_SID/actions" \
@@ -648,6 +696,7 @@ case "$cmd" in
       esac
     done
     session
+    [ "$cmd" = tapid ] && warn_if_hot_reloaded
     case "$cmd" in waitid) _sub=wait ;; tapid) _sub=tap ;; *) _sub=info ;; esac
     run_child python3 "$HERE/wda_el.py" --port "$WDA_PORT" --sid "$_MEMO_SID" "$_sub" "$_id" "${_el_args[@]+"${_el_args[@]}"}"
     ;;
@@ -682,6 +731,7 @@ case "$cmd" in
   tap)
     ensure_wda
     assert_in_bounds "${1:-}" "${2:-}"
+    warn_if_hot_reloaded
     pointer_actions "[{\"type\":\"pointerMove\",\"duration\":0,\"x\":$1,\"y\":$2},{\"type\":\"pointerDown\",\"button\":0},{\"type\":\"pause\",\"duration\":100},{\"type\":\"pointerUp\",\"button\":0}]"
     echo "tapped $1,$2"
     ;;

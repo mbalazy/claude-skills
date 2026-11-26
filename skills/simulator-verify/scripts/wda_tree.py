@@ -48,11 +48,31 @@ def fetch(port, timeout=20):
 #     predicate polls, 16 tree polls, 8.2s).
 #
 # Left here so the next person does not re-derive it. The poll interval is what to tune.
+# A Live Activity on the lock screen is a remote view: inside `activity-content-view` the
+# widget's own root restarts at [0,0] in the widget's coordinate space, and it is scaled to
+# fit the card (2026-11-23, iPhone 17 Pro sim: card [19,395,364,156], widget root
+# [0,0,374,160], its Pause pill [20,104,334,45] - on the screenshot the pill sat at
+# [38,496,325,44]). A tap at the raw rect lands in the wallpaper above the clock and
+# "the card's buttons do nothing". So a node at the origin inside a card whose host is NOT at
+# the origin opens ONE local frame, and every rect below it is mapped back onto the screen.
+CARD = "activity-content-view"
+
+
 def elements(src, show_all):
     out, seen = [], set()
 
-    def walk(n):
-        r = n.get("rect", {})
+    def walk(n, frame=(0.0, 0.0, 1.0, 1.0), in_card=False, host=None):
+        raw = n.get("rect", {})
+        ox, oy, sx, sy = frame
+        if in_card and frame == (0.0, 0.0, 1.0, 1.0) and host and raw.get("x") == 0 and raw.get("y") == 0 \
+                and (host.get("x", 0), host.get("y", 0)) != (0, 0) and raw.get("width") and raw.get("height"):
+            ox, oy = host["x"], host["y"]
+            sx, sy = host["width"] / raw["width"], host["height"] / raw["height"]
+            frame = (ox, oy, sx, sy)
+        r = dict(raw)
+        if raw and frame != (0.0, 0.0, 1.0, 1.0):
+            r = {"x": ox + raw.get("x", 0) * sx, "y": oy + raw.get("y", 0) * sy,
+                 "width": raw.get("width", 0) * sx, "height": raw.get("height", 0) * sy}
         visible = n.get("isVisible") == "1" and r.get("width", 0) > 0 and r.get("height", 0) > 0
         labeled = n.get("label") or n.get("name") or n.get("rawIdentifier")
         if n.get("type") in ("TextField", "SearchField"):
@@ -70,8 +90,9 @@ def elements(src, show_all):
             if key not in seen:
                 seen.add(key)
                 out.append(e)
+        in_card = in_card or CARD in (n.get("name"), n.get("rawIdentifier"))
         for c in n.get("children") or []:
-            walk(c)
+            walk(c, frame, in_card, r)
 
     walk(src)
     return out
