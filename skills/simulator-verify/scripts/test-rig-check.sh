@@ -28,7 +28,7 @@ trap cleanup EXIT
 # --- a copy of the skill whose log reader is a stub -------------------------------------
 mkdir -p "$T/skill/scripts" "$T/bin" "$T/home"
 cp "$HERE/rig-check.sh" "$HERE/android-rig-check.sh" "$HERE/android-lib.sh" "$HERE/android_prefs.py" \
-   "$HERE/native-build.sh" "$HERE/native-rig-check.sh" "$T/skill/scripts/"
+   "$HERE/native-build.sh" "$HERE/native-rig-check.sh" "$HERE/read-rn-logs-cdp.py" "$T/skill/scripts/"
 [[ -d "$SKILL/lib" ]] && cp -R "$SKILL/lib" "$T/skill/lib"
 [[ -d "$SKILL/references" ]] && cp -R "$SKILL/references" "$T/skill/references"
 cat > "$T/skill/scripts/read-rn-logs.sh" <<'EOF'
@@ -42,6 +42,17 @@ chmod +x "$T/skill/scripts/"*.sh
 # --- stubs ------------------------------------------------------------------------------
 cat > "$T/bin/xcrun" <<'EOF'
 #!/bin/bash
+if [[ "$1" == devicectl && -n "${STUB_PHONE:-}" ]]; then
+  # a plugged-in phone with the app installed and running (pid 77); --json-output names the file
+  out=""; prev=""; for a in "$@"; do [[ "$prev" == --json-output ]] && out="$a"; prev="$a"; done
+  case "$*" in
+    *"list devices"*) echo "Phone   $STUB_PHONE (UDID)   connected   iPhone 12 (iPhone13,2)   physical" ;;
+    *"info apps"*) echo '{"result":{"apps":[{"url":"file:///private/var/containers/Bundle/Application/X/Demo.app/"}]}}' > "$out" ;;
+    *"info processes"*) echo '{"result":{"runningProcesses":[{"processIdentifier":77,"executable":"file:///private/var/containers/Bundle/Application/X/Demo.app/Demo"}]}}' > "$out" ;;
+    *"process launch"*) echo "Launched application with com.example.app bundle identifier." ;;
+  esac
+  exit 0
+fi
 [[ "$1" == simctl ]] || { echo "xcrun stub: $*" >&2; exit 1; }
 if [[ -n "${STUB_NO_SIMCTL:-}" ]]; then
   echo 'xcrun: error: unable to find utility "simctl", not a developer tool or in PATH' >&2; exit 72
@@ -73,6 +84,7 @@ exit 0
 EOF
 cat > "$T/bin/curl" <<'EOF'
 #!/bin/bash
+[[ -n "${STUB_REAL_CURL:-}" ]] && exec /usr/bin/curl "$@"
 case "$*" in *"/status"*) echo "${STUB_STATUS:-packager-status:running}" ;; esac
 exit 0
 EOF
@@ -233,6 +245,88 @@ CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app
 check "ios: worktree reads the main worktree's config" 0 \
   "read from main worktree" rig-check.sh --repo "$WT" --timeout 6
 kill "$APP_PID" 2>/dev/null; APP_PID=""
+
+# ============================================== rig-check.sh: who else is on this Metro
+# A fake Metro with an inspector: /status, /json/list from FAKE_TARGETS and a CDP websocket
+# per page that "logs" the marker currently in the entry file - every client on a Metro
+# picks the marked bundle up, which is how a simulator answered for a phone on 2026-11-25.
+cat > "$T/fake-metro.py" <<'EOF'
+import base64, hashlib, json, os, re, socket, struct, sys, threading, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+PORT = int(sys.argv[1]); ENTRY = sys.argv[2]; TARGETS = sys.argv[3]
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        if self.headers.get("Upgrade", "").lower() == "websocket":
+            return self.ws()
+        if self.path.startswith("/status"):
+            body = b"packager-status:running"
+        elif self.path.startswith("/json/list"):
+            body = open(TARGETS).read().replace("PORT", str(PORT)).encode()
+        else:
+            body = b"OK"
+        self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+        self.wfile.write(body)
+    def ws(self):
+        acc = base64.b64encode(hashlib.sha1((self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % acc).encode())
+        m = re.search(r"RIGCHECK_[0-9_]+", open(ENTRY).read())
+        if m:
+            p = json.dumps({"method": "Runtime.consoleAPICalled", "params": {"type": "log", "timestamp": time.time() * 1000,
+                            "args": [{"type": "string", "value": m.group(0)}]}}).encode()
+            self.wfile.write(bytes([0x81, 126]) + struct.pack(">H", len(p)) + p if len(p) > 125 else bytes([0x81, len(p)]) + p)
+            self.wfile.flush()
+        time.sleep(8)
+ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+EOF
+# A port the real Mac has free, in the range the rig check scans (8080-8110).
+FAKE_PORT=""
+for p in $(seq 8110 -1 8095); do
+  lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 || { FAKE_PORT="$p"; break; }
+done
+target() { # target <deviceName> <page>
+  printf '{"type":"node","appId":"com.example.app","deviceName":"%s","description":"Demo","webSocketDebuggerUrl":"ws://127.0.0.1:PORT/inspector/debug?device=%s&page=%s","reactNative":{"capabilities":{"prefersFuseboxFrontend":true}}}' "$1" "$2" "$2"
+}
+PHONE="0000AAAA-BBBBBBBBBBBBBBBB"
+# metro_case <name> <exit> <regex> <not-regex> <targets json> [rig-check args...]
+metro_case() {
+  local name="$1" want="$2" re="$3" not="$4" json="$5"; shift 5
+  local R; R="$(mkrepo index.js)"; config "$R" "$OK_ID"
+  printf '%s' "$json" > "$T/targets.json"
+  python3 "$T/fake-metro.py" "$FAKE_PORT" "$R/index.js" "$T/targets.json" & local FM=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/curl -s -m 1 "http://127.0.0.1:$FAKE_PORT/status" >/dev/null && break; sleep 0.3; done
+  CASE_ENV+=("STUB_METRO_PORT=$FAKE_PORT" "STUB_METRO_CWD=$R" "STUB_REAL_CURL=1" "STUB_ENTRY_FILE=$R/index.js")
+  CASE_NOT="$not" check "$name" "$want" "$re" rig-check.sh --repo "$R" "$@"
+  kill "$FM" 2>/dev/null; wait "$FM" 2>/dev/null
+}
+if [[ -z "$FAKE_PORT" ]]; then
+  FAIL=$((FAIL + 1)); echo "FAIL  shared Metro cases: no free port in 8095-8110 for the fake Metro"
+else
+  SIM_T="$(target 'iPhone 17 Pro' 1)"; PHONE_T="$(target iPhone 2)"; DEMO_T="$(target 'Demo Sim' 3)"
+
+  CASE_ENV=("STUB_PHONE=$PHONE")
+  metro_case "phone: a simulator on the same Metro does not answer for a phone that is not there" 1 \
+    "RIG DEAD.*|the phone is not on this Metro" "RIG OK" "[$SIM_T]" --udid "$PHONE" --host 127.0.0.1 --timeout 4
+  CASE_ENV=("STUB_PHONE=$PHONE")
+  metro_case "phone: names the simulator it found instead" 1 \
+    "no 'iPhone' target for com\.example\.app on :[0-9]+ .*iPhone 17 Pro" "RIG OK" "[$SIM_T]" --udid "$PHONE" --host 127.0.0.1 --timeout 4
+  CASE_ENV=("STUB_PHONE=$PHONE")
+  metro_case "phone: on Metro with a simulator - OK, and the simulator is named as sharing it" 0 \
+    "WARN:    shared Metro :[0-9]+ - also attached: iPhone 17 Pro \(com\.example\.app\)" "" "[$SIM_T,$PHONE_T]" \
+    --udid "$PHONE" --host 127.0.0.1 --timeout 6
+  CASE_ENV=("STUB_PHONE=$PHONE")
+  metro_case "phone: alone on its Metro - OK, no shared warning" 0 \
+    "RIG OK" "shared Metro" "[$PHONE_T]" --udid "$PHONE" --host 127.0.0.1 --timeout 6
+
+  sleep 120 & APP_PID=$!
+  CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app" "STUB_PID=$APP_PID" "STUB_LOGS_MARKER=1")
+  metro_case "sim: a phone on the same Metro is named as sharing it" 0 \
+    "WARN:    shared Metro :[0-9]+ - also attached: iPhone \(com\.example\.app\)" "also attached: .*Demo Sim" "[$DEMO_T,$PHONE_T]" --timeout 6
+  CASE_ENV=("STUB_BOOTED=    Demo Sim ($SIM_A) (Booted)" "STUB_APP=$T/app/Demo.app" "STUB_PID=$APP_PID" "STUB_LOGS_MARKER=1")
+  metro_case "sim: alone on its Metro - no shared warning" 0 "RIG OK" "shared Metro" "[$DEMO_T]" --timeout 6
+  kill "$APP_PID" 2>/dev/null; APP_PID=""
+fi
+CASE_ENV=(); CASE_NOT=""
 
 # ================================================================ android-rig-check.sh
 CASE_ENV=("ADB=$T/bin/adb")

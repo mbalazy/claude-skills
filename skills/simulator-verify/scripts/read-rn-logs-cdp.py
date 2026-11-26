@@ -11,13 +11,14 @@ events.
 
 Usage:
   read-rn-logs-cdp.py [--port 8081] [--seconds 10] [--grep PATTERN]
-                      [--device SUBSTRING] [--app BUNDLE_ID] [--page N]
+                      [--device SUBSTRING [--exact-device]] [--app BUNDLE_ID] [--page N]
                       [--all-runtimes] [--json]
 
   --port          Metro port (default: $METRO_PORT or 8081)
   --seconds       how long to listen; 0 = until Ctrl-C (default 10)
   --grep          only print lines whose message matches this regex
   --device        pick the target whose deviceName contains this substring
+  --exact-device  --device must equal the deviceName - no substring fallback
   --app           pick the target whose appId equals this bundle id
   --page          connect to an explicit page id (skips target selection)
   --all-runtimes  include worklet runtimes (Reanimated UI, etc.), not just
@@ -44,7 +45,10 @@ Notes:
 - With several simulators on one Metro this refuses to guess: pass --device.
   A physical iPhone shows up as deviceName "iPhone" - an exact --device match
   beats the substring match, so `--device iPhone` picks the phone and not
-  "iPhone 17".
+  "iPhone 17" - but only while the phone is on that Metro. When it is not
+  (an unanswered "Local Network" prompt keeps it off), the substring match
+  quietly picks the simulator instead (2026-11-25: a simulator's log passed a
+  phone's rig check). When it must be the phone, add --exact-device.
 """
 
 import argparse
@@ -86,7 +90,10 @@ def pick_target(targets, args, quiet=False):
         # A physical iPhone registers on Metro as plain "iPhone", which is also a
         # substring of every simulator's name ("iPhone 17"), so an exact name wins
         # over the substring match whenever there is one.
-        candidates = exact or [t for t in candidates if wanted in t.get("deviceName", "").lower()]
+        if args.exact_device:
+            candidates = exact
+        else:
+            candidates = exact or [t for t in candidates if wanted in t.get("deviceName", "").lower()]
 
     if not args.all_runtimes:
         main = [
@@ -233,6 +240,7 @@ def main():
     parser.add_argument("--seconds", type=float, default=10)
     parser.add_argument("--grep")
     parser.add_argument("--device")
+    parser.add_argument("--exact-device", action="store_true")
     parser.add_argument("--app")
     parser.add_argument("--page", type=int)
     parser.add_argument("--all-runtimes", action="store_true")

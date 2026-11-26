@@ -15,7 +15,7 @@ Everything above and below applies to a phone on the USB cable, with the same sc
 | `screenshot` | `simctl io` | `devicectl device capture screenshot` (WDA's own `/screenshot` returned a stale frame on a device) |
 | `type` | one request per string | **one character per request, 0.35 s apart** - a burst drops characters (`5125550199` arrived as `(519) 9`); `SIMUI_TYPE_DELAY` forces this on a sim too |
 | `rig-check.sh` | marker read from the simulator log | marker read over Metro's CDP inspector (`read-rn-logs-cdp.py --device iPhone`); the launch carries `-RCT_jsLocation <mac-usb-address>:<port>` because the phone cannot reach `localhost` |
-| JS console | `read-rn-logs-cdp.py` | the same, with `--device iPhone` - a phone registers on Metro as plain `iPhone`, and the reader prefers that exact name over the "iPhone 17" substring matches |
+| JS console | `read-rn-logs-cdp.py` | the same, with `--device iPhone --exact-device` - a phone registers on Metro as plain `iPhone`; without `--exact-device` a phone that is not on Metro (an unanswered 'Local Network' prompt) falls back to the substring match and a simulator on the same Metro answers for it. `rig-check.sh` passes it, says when the phone is not on Metro, and names every other app attached to that Metro (a reload reaches them too) |
 
 `rig-check.sh --udid <phone udid>` is the same gate as on a simulator and passes in ~12 s. What it cannot see on a phone it says instead of guessing: whether the binary embeds a `main.jsbundle`, and when it was built. The Mac's address on the USB link (`169.254.x.x`) is derived from the phone's existing connection to Metro, else from the only link-local interface; `--host` overrides.
 

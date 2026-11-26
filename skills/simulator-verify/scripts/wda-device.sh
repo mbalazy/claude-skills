@@ -42,8 +42,10 @@
 # CoreDevice DeviceFS mount - and from then on EVERY `lsof` and `ps -o args` on the Mac
 # hangs in uninterruptible wait (2026-09-25: 15 minutes of "WDA hangs", it was lsof inside
 # sim-ui.sh). Both --stop and a fresh start kill that collector for this phone, and keep
-# killing it for ~10 s after quitting a run, because quitting is what spawns it. A phone
-# unplugged without --stop can still leave one behind: `pkill -f 'devicectl diagnose'`.
+# killing it for ~10 s after quitting a run, because quitting is what spawns it. A run that
+# ends by itself (the runner crashed, the phone was unplugged) never passes through --stop,
+# so every run also gets reap-diagnose.sh next to it: it kills the collector while the run
+# lives and for ~10 s after, whatever ended it. Its kills go to <home>/wda-<udid>-reaper.log.
 #
 # Signing, learned the hard way: automatic signing with an existing Xcode-managed wildcard
 # profile ("iOS Team Provisioning Profile: *") that already lists the phone needs no Apple
@@ -248,6 +250,15 @@ screen -dmS "$SCREEN_WDA" bash -c "cd '$BUILD_PKG' && xcodebuild -project WebDri
   -destination 'id=$UDID' -derivedDataPath '$DD' CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM='$TEAM' \
   CODE_SIGN_IDENTITY='Apple Development' PRODUCT_BUNDLE_IDENTIFIER='$BUNDLE' test > '$LOG' 2>&1"
 screen -dmS "$SCREEN_PROXY" bash -c "iproxy $PORT 8100 -u $UDID"
+# The run's guard against the orphaned collector (see the header): it follows the screen's pid,
+# so it ends with this run and never outlives it by more than its tail.
+RUN_PID="$({ screen -ls 2>/dev/null || true; } | grep -oE "[0-9]+\.$SCREEN_WDA[[:space:]]" | head -1 | cut -d. -f1)"
+if [[ -n "$RUN_PID" ]]; then
+  nohup "$HERE/reap-diagnose.sh" "$UDID" "$RUN_PID" >> "$HOME_DIR/wda-$UDID-reaper.log" 2>&1 < /dev/null &
+  disown 2>/dev/null || true
+else
+  echo "WARN: no pid for screen $SCREEN_WDA - this run has no diagnose reaper; after it ends: pkill -f 'devicectl diagnose --devices $UDID'" >&2
+fi
 echo "started screens $SCREEN_WDA (xcodebuild test, log $LOG) and $SCREEN_PROXY (iproxy $PORT -> phone:8100)"
 echo "waiting up to ${TIMEOUT}s for WebDriverAgent to answer on :$PORT ..."
 

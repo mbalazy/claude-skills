@@ -206,7 +206,7 @@ All in `skills/simulator-verify/scripts/`.
 | script | what it does |
 |---|---|
 | `wda-sim.sh` | WebDriverAgent on a simulator: `build` once per machine, `ensure <udid> --port <p>` per simulator, `status`, `check` |
-| `wda-device.sh` | WebDriverAgent on an iPhone: `<udid> --team <id>` to bring it up, `--status` |
+| `wda-device.sh` | WebDriverAgent on an iPhone: `<udid> --team <id>` to bring it up, `--status`; each run gets `reap-diagnose.sh` next to it, which kills the orphaned `devicectl diagnose` collector however the run ends |
 | `uia2-server.sh` | the UiAutomator2 server on an Android device: `ensure`, `check`, `stop`, `fetch` |
 
 **Only when changing the skill itself**: `regress.sh`, `android-regress.sh` (the whole
@@ -249,6 +249,7 @@ The device-free suites run in about half a minute and touch nothing outside a te
 cd skills/simulator-verify/scripts
 ./test-rig-check.sh                       # both rig checks' setup paths and the native mode, on stubs
 ./test-wda-diagnostics.sh                 # WebDriverAgent failure branches, on stubs
+./test-reap-diagnose.sh                   # the orphaned devicectl collector is reaped however a phone's run ends
 python3 -m unittest test_u2_tree test_u2_client test_android_prefs
 node --test rn-devtools.test.mjs devtools/*.test.mjs
 ```

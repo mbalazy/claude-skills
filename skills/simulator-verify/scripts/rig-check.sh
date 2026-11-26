@@ -535,12 +535,15 @@ TAP_PID=""
 # is started AFTER the launch (before it, the page it attached to dies with the old
 # process) and retried until the new runtime registers; Runtime.enable then replays the
 # console history, so a marker logged before the tap attached is not lost. The phone
-# registers on Metro as plain "iPhone", an exact name the reader prefers over "iPhone 17".
+# registers on Metro as plain "iPhone", and ONLY that name may answer: every simulator on
+# the same Metro picks the marked bundle up too, and with a substring match one of them
+# ("iPhone 17 Pro") answered for a phone that was not on Metro at all (2026-11-25, the
+# phone was waiting on its 'Local Network' prompt) - a RIG OK for an app that never ran.
 start_device_tap() {
   (
     deadline=$(( SECONDS + TIMEOUT + 5 ))
     while (( SECONDS < deadline )); do
-      python3 "$READ_CDP" --port "$PORT" --device iPhone --app "$BUNDLE_ID" --seconds "$TIMEOUT" >> "$TAP_FILE" 2>/dev/null && break
+      python3 "$READ_CDP" --port "$PORT" --device iPhone --exact-device --app "$BUNDLE_ID" --seconds "$TIMEOUT" >> "$TAP_FILE" 2>/dev/null && break
       sleep 1
     done
   ) &
@@ -618,6 +621,46 @@ done
 restore
 trap - EXIT INT TERM
 stop_device_tap
+# Who is on this Metro, read now - the clean relaunch below takes the app off the list for a
+# moment. Metro's own inspector list is what a /reload is broadcast to, so it names every app
+# a reload, a branch switch or an npm ci in this tree reaches, not only the one under test
+# (2026-11-21: six reloads also changed another session's simulator, unnoticed for a shift).
+METRO_TARGETS="$(curl -s -m 3 "http://localhost:$PORT/json/list" 2>/dev/null)"
+if [[ "$KIND" == device ]]; then
+  OWN_NAME="iPhone"   # what a phone registers as on Metro
+else
+  OWN_NAME="$(xcrun simctl list devices 2>/dev/null | grep -F "($UDID)" | head -1 | sed -E 's/^ *//; s/ \([0-9A-Fa-f-]{36}\).*//')"
+fi
+# metro_clients other|own|all - "<deviceName> (<appId>), ..." for the clients that are not the app
+# under test, that are it, or all of them
+metro_clients() {
+  printf '%s' "$METRO_TARGETS" | python3 -c '
+import json, sys
+mode, own, app = sys.argv[1:4]
+try:
+    targets = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+seen, out = [], []
+for t in targets if isinstance(targets, list) else []:
+    if t.get("type") != "node":
+        continue
+    key = (t.get("deviceName") or "?", t.get("appId") or "?")
+    if key in seen:
+        continue
+    seen.append(key)
+    if mode == "all" or (key == (own, app)) == (mode == "own"):
+        out.append(f"{key[0]} ({key[1]})")
+print(", ".join(out))
+' "$1" "$OWN_NAME" "$BUNDLE_ID" 2>/dev/null
+}
+if [[ -n "$OWN_NAME" ]]; then
+  OTHERS="$(metro_clients other)"
+  if [[ -n "$OTHERS" ]]; then
+    note "WARN:    shared Metro :$PORT - also attached: $OTHERS"
+    note "         a reload, a branch switch or an npm ci in this tree reaches them too"
+  fi
+fi
 # The reference file outlives restore() - the crash lookup below still needs it - so it
 # gets its own cleanup covering every exit path, verdicts included.
 trap 'rm -f "$CRASH_REF" "$TAP_FILE"' EXIT INT TERM
@@ -716,6 +759,11 @@ else
   fi
   note "HINT:    if the app needs launch arguments to reach this Metro, pass them with --launch-arg"
   note "         (a launch here replaces the one that started the app, arguments included)."
+  if [[ "$KIND" == device && -n "$METRO_TARGETS" && -z "$(metro_clients own)" ]]; then
+    ALL="$(metro_clients all)"
+    note "metro:   no 'iPhone' target for $BUNDLE_ID on :$PORT (targets there: ${ALL:-none})"
+    verdict DEAD "the phone is not on this Metro - its app never connected to :$PORT. A fresh install waits on the iOS 'Local Network' prompt until a human taps Allow; an app pointed at another Metro does the same. Answer the prompt (or fix -RCT_jsLocation) and re-run."
+  fi
   if [[ "$KIND" == device ]]; then
     if lsof -nP -iTCP:"$PORT" -sTCP:ESTABLISHED 2>/dev/null | grep '169\.254\.' >/dev/null; then
       note "HINT:    the phone DOES hold a connection to :$PORT, so JS is being served - suspect a Release"
